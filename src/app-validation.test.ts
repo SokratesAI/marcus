@@ -507,6 +507,13 @@ describe("goals", () => {
       const { ctx } = loadApp();
       expect(ctx.goalProgress(goal(), "2027-06-01").elapsedPct).toBe(100);
       expect(ctx.goalProgress(goal(), "2025-06-01").elapsedPct).toBe(0);
+    });
+
+    it("lets daysLeft go negative rather than clamping it too", () => {
+      // The clock bar stops at 100% because a bar cannot be more than full.
+      // The countdown deliberately does not: "2 days over" is information, and
+      // clamping it to 0 would say "target day is today" forever.
+      const { ctx } = loadApp();
       expect(ctx.goalProgress(goal(), "2027-01-02").daysLeft).toBe(-2);
     });
   });
@@ -553,6 +560,20 @@ describe("goals", () => {
       expect(html).toContain("1 of 2");
       expect(html).toContain("182 days left");
       expect(html).not.toContain("chip--alert");
+    });
+
+    it("words the countdown for a passed, same-day and last-day target", () => {
+      // A goal outlives its target date -- nothing deletes it on the day -- so
+      // these three branches are the ones a real user hits and the 182-day case
+      // above is the one that never needed grammar.
+      const { ctx } = loadApp();
+      const g = (target: string) => ({
+        id: "g1", text: "Olympic triathlon", created: "2026-01-01", targetDate: target,
+        milestones: [{ id: "m1", label: "Base", date: target, done: true }],
+      });
+      expect(ctx.goalProgressCard(g("2026-12-31"), "2027-01-02")).toContain("target date passed");
+      expect(ctx.goalProgressCard(g("2026-12-31"), "2026-12-31")).toContain("target day is today");
+      expect(ctx.goalProgressCard(g("2026-12-31"), "2026-12-30")).toContain("1 day left");
     });
 
     it("marks an overdue goal with the alert chip, not with colour alone", () => {
