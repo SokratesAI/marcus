@@ -475,6 +475,20 @@ function renderProgress() {
     renderProgress();
   });
 
+  // Chart.js is loaded async so a stalled CDN can never hold the app, which
+  // means it may genuinely not be here yet. Everything above this line works
+  // without it -- logging a weight is the useful half of this tab -- so draw
+  // that, say so where the graphs go, and redraw once the library arrives.
+  if (typeof Chart === 'undefined') {
+    view.querySelectorAll('.chart-wrap').forEach(el => {
+      el.innerHTML = '<div class="empty">Graphs are still loading.</div>';
+    });
+    window.addEventListener('chartjs-ready', () => {
+      if (currentTab === 'progress') renderProgress();
+    }, { once: true });
+    return;
+  }
+
   const axisColor = getComputedStyle(document.body).getPropertyValue('--md-on-surface-variant').trim();
   const gridColor = 'rgba(128,128,128,.15)';
   const common = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
