@@ -158,8 +158,6 @@ function searchFoods(query, limit) {
   return starts.concat(contains).slice(0, limit == null ? 6 : limit);
 }
 
-const foodUnitLabel = (food) => (food.unit === 'g' ? 'g' : (food.name.toLowerCase().endsWith('s') ? '' : 'x'));
-
 // Values are per 100 g for a weighed food and per one of the thing otherwise,
 // so the scale factor is the only difference between the two kinds.
 function portionFrom(food, rawAmount) {
