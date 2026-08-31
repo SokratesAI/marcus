@@ -100,6 +100,83 @@ function validateBodyweight(rawKg) {
   return r.ok ? { ok: true, kg: r.value } : r;
 }
 
+// ---------- goals ----------
+// A goal is Edvard's own sentence plus a date. Marcus does not interpret the
+// sentence yet -- turning "Olympic triathlon next summer" into actual sessions
+// needs a model and is filed separately. What it can do with no model at all is
+// honest arithmetic: split the time you actually have into the four phases every
+// endurance and strength block uses, so a goal arrives with dated checkpoints
+// instead of one far-off day you cannot steer by.
+const GOAL_MAX_CHARS = 200;
+const GOAL_MAX_DAYS = 3653; // ten years -- a mistyped 2226 should not become a plan
+
+function daysBetween(fromISO, toISO) {
+  return Math.round((new Date(toISO + 'T00:00') - new Date(fromISO + 'T00:00')) / 86400000);
+}
+
+const GOAL_PHASES = [
+  { label: 'Base',  share: 0.40, note: 'Build the foundation — volume over intensity.' },
+  { label: 'Build', share: 0.35, note: 'Add intensity while the volume holds.' },
+  { label: 'Peak',  share: 0.17, note: 'Sharpen — the hardest quality work of the block.' },
+  { label: 'Taper', share: 0.08, note: 'Cut volume, keep intensity, arrive fresh.' }
+];
+
+// Phase ends are cumulative shares of the whole window rather than per-phase
+// lengths added up, so the last one lands exactly on the target date instead of
+// four roundings away from it.
+function buildMilestones(startISO, targetISO) {
+  const span = daysBetween(startISO, targetISO);
+  if (!Number.isFinite(span) || span < 1) return [];
+  if (span < 28) {
+    return [{ id: uid(), label: 'Build', note: 'Too short to periodise — one straight run at it.', date: targetISO, done: false }];
+  }
+  const start = new Date(startISO + 'T00:00');
+  let cumulative = 0;
+  return GOAL_PHASES.map((phase, i) => {
+    cumulative += phase.share;
+    const offset = i === GOAL_PHASES.length - 1 ? span : Math.round(span * cumulative);
+    const end = new Date(start);
+    end.setDate(end.getDate() + offset);
+    return { id: uid(), label: phase.label, note: phase.note, date: fmtDate(end), done: false };
+  });
+}
+
+function validateGoal(rawText, rawDate, todayISO) {
+  const text = String(rawText == null ? '' : rawText).trim();
+  if (!text) return { ok: false, message: 'Say what you are training for.' };
+  if (text.length > GOAL_MAX_CHARS) return { ok: false, message: `Keep the goal under ${GOAL_MAX_CHARS} characters.` };
+  const today = todayISO || todayStr();
+  const date = String(rawDate == null ? '' : rawDate).trim();
+  if (!date) return { ok: false, message: 'Give it a target date — that is what the phases are cut from.' };
+  // A date input cannot produce this, but a paste can -- and `2027-02-31` does
+  // not throw, it rolls forward to 3 March. Comparing the parsed components back
+  // against what was typed is what catches the roll.
+  const [y, mo, d] = date.split('-').map(Number);
+  const parsed = new Date(date + 'T00:00');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime())
+      || parsed.getFullYear() !== y || parsed.getMonth() + 1 !== mo || parsed.getDate() !== d) {
+    return { ok: false, message: 'That target date is not a real date.' };
+  }
+  const span = daysBetween(today, date);
+  if (span < 1) return { ok: false, message: 'The target date has to be in the future.' };
+  if (span > GOAL_MAX_DAYS) return { ok: false, message: 'That target is more than ten years out — check the year.' };
+  return { ok: true, goal: { id: uid(), text, targetDate: date, created: today, milestones: buildMilestones(today, date) } };
+}
+
+// Sorted by how soon they are, so "next up" is always the first one.
+function goalsSorted() {
+  return store.get('goals', []).slice().sort((a, b) => a.targetDate.localeCompare(b.targetDate));
+}
+
+function goalCountdown(targetISO, todayISO) {
+  const days = daysBetween(todayISO || todayStr(), targetISO);
+  if (days < 0) return 'target date passed';
+  if (days === 0) return 'today';
+  if (days === 1) return '1 day to go';
+  if (days < 70) return `${days} days to go`;
+  return `${Math.round(days / 7)} weeks to go`;
+}
+
 // ---------- telling the user something went wrong ----------
 function toast(message) {
   const host = document.getElementById('toast');
@@ -257,6 +334,10 @@ function renderHome() {
   const delta = lastWeight && firstWeight ? (lastWeight.kg - firstWeight.kg).toFixed(1) : '—';
   const meals = store.get('meals', []).filter(m => m.date === todayStr());
   const kcal = meals.reduce((s, m) => s + m.calories, 0);
+  // The nearest goal, and the first phase of it still outstanding -- that pair is
+  // what turns a far-off date into something today can be measured against.
+  const nextGoal = goalsSorted()[0];
+  const nextPhase = nextGoal && nextGoal.milestones.find(m => !m.done);
 
   view.innerHTML = `
     <div class="card">
@@ -271,6 +352,14 @@ function renderHome() {
       <div class="stat"><div class="stat__value">${delta}kg</div><div class="stat__label">weight change</div></div>
     </div>
 
+    ${nextGoal ? `
+    <div class="section-title">Next goal</div>
+    <div class="card">
+      <div class="card__title-row"><h2>${esc(nextGoal.text)}</h2><span class="chip chip--primary">${esc(goalCountdown(nextGoal.targetDate))}</span></div>
+      ${nextPhase ? `<div class="exercise-line"><span>${esc(nextPhase.label)} phase</span><span>through ${niceDate(nextPhase.date)}</span></div>`
+                  : `<div class="empty">Every phase ticked off — target day is the only thing left.</div>`}
+    </div>` : ``}
+
     <div class="section-title">Today's nutrition</div>
     <div class="card">
       <div class="card__title-row"><h2>${kcal} kcal logged</h2><button class="btn btn--tonal" onclick="switchTab('nutrition')">Add meal</button></div>
@@ -280,10 +369,35 @@ function renderHome() {
 }
 
 // ---------- plan ----------
+// Goals sit above the week because the week is supposed to serve them. The
+// phases under a goal are arithmetic on the dates the user typed -- Marcus says
+// so on the card rather than passing them off as coaching.
 function renderPlan() {
   const plan = store.get('plan');
   const todayName = planDayName();
+  const goals = goalsSorted();
   view.innerHTML = `
+    <div class="section-title">Goals</div>
+    ${goals.length ? goals.map(g => `
+      <div class="card" style="display:block">
+        <div class="card__title-row"><h2>${esc(g.text)}</h2><span class="chip chip--primary">${esc(goalCountdown(g.targetDate))}</span></div>
+        <div style="font-size:12px;color:var(--md-on-surface-variant);margin:2px 0 8px">Target ${niceDate(g.targetDate)} · phases are cut from your dates, not coached yet</div>
+        ${g.milestones.map(m => `
+          <div class="exercise-line">
+            <span><button class="icon-btn" onclick="toggleMilestone('${g.id}','${m.id}')"><span class="material-icons-round">${m.done ? 'check_box' : 'check_box_outline_blank'}</span></button>${esc(m.label)} — ${esc(m.note)}</span>
+            <span>${niceDate(m.date)}</span>
+          </div>`).join('')}
+        <button class="btn btn--tonal btn--block" style="margin-top:12px" onclick="deleteGoal('${g.id}')">Remove goal</button>
+      </div>`).join('') : `<div class="empty">No goal yet — tell Marcus what you are training for and he will date the phases.</div>`}
+
+    <div class="card">
+      <h2>Add a goal</h2>
+      <div class="field"><label>What are you training for</label><input id="goalText" type="text" placeholder="e.g. Olympic triathlon next summer"></div>
+      <div class="field"><label>Target date</label><input id="goalDate" type="date"></div>
+      <button class="btn btn--filled btn--block" id="addGoal"><span class="material-icons-round">flag</span> Set goal</button>
+    </div>
+
+    <div class="section-title">This week</div>
     <div class="card">
       <h2>${plan.blockName}</h2>
       <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Prepared by Marcus</div>
@@ -298,6 +412,30 @@ function renderPlan() {
       </div>
     `).join('')}
   `;
+
+  document.getElementById('addGoal').addEventListener('click', () => {
+    const result = validateGoal(document.getElementById('goalText').value, document.getElementById('goalDate').value);
+    if (!result.ok) { toast(result.message); return; }
+    const all = store.get('goals', []);
+    all.push(result.goal);
+    if (!store.set('goals', all)) return;
+    renderPlan();
+  });
+}
+
+function toggleMilestone(goalId, milestoneId) {
+  const all = store.get('goals', []);
+  const goal = all.find(g => g.id === goalId);
+  const milestone = goal && goal.milestones.find(m => m.id === milestoneId);
+  if (!milestone) return;
+  milestone.done = !milestone.done;
+  if (!store.set('goals', all)) return;
+  renderPlan();
+}
+
+function deleteGoal(id) {
+  store.set('goals', store.get('goals', []).filter(g => g.id !== id));
+  renderPlan();
 }
 
 // ---------- log ----------
