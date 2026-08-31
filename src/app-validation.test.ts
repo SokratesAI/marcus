@@ -421,6 +421,163 @@ describe("goals", () => {
     });
   });
 
+  describe("goalProgress", () => {
+    // One goal shape reused across the verdicts: a year-long window whose four
+    // phases fall on known dates, so "overdue" is a date comparison I can check
+    // by hand rather than a percentage I have to trust.
+    const goal = () => ({
+      id: "g1",
+      text: "Olympic triathlon",
+      created: "2026-01-01",
+      targetDate: "2026-12-31",
+      milestones: [
+        { id: "m1", label: "Base", date: "2026-05-31", done: false },
+        { id: "m2", label: "Build", date: "2026-09-13", done: false },
+        { id: "m3", label: "Peak", date: "2026-11-14", done: false },
+        { id: "m4", label: "Taper", date: "2026-12-31", done: false },
+      ],
+    });
+
+    it("reports the clock and the ticks as two separate numbers", () => {
+      const { ctx } = loadApp();
+      const g = goal();
+      g.milestones[0].done = true;
+      // 2026-07-02 is day 182 of a 364-day window: half the time gone, one of
+      // four phases ticked. A single merged "percent complete" could not say
+      // both of those, which is why there are two bars.
+      const p = ctx.goalProgress(g, "2026-07-02");
+      expect(p.elapsedPct).toBe(50);
+      expect(p.donePct).toBe(25);
+      expect(p.doneCount).toBe(1);
+      expect(p.total).toBe(4);
+      expect(p.daysLeft).toBe(182);
+    });
+
+    it("calls a passed-but-unticked phase overdue, and names how many", () => {
+      const { ctx } = loadApp();
+      // Base was due 31 May and Build 13 September; on 14 September with
+      // neither ticked, two dates have gone by.
+      const p = ctx.goalProgress(goal(), "2026-09-14");
+      expect(p.overdue).toBe(2);
+      expect(p.verdict).toBe("behind");
+      expect(ctx.goalVerdictLabel(p)).toBe("2 phases overdue");
+    });
+
+    it("says one phase in the singular", () => {
+      const { ctx } = loadApp();
+      const p = ctx.goalProgress(goal(), "2026-06-01");
+      expect(p.overdue).toBe(1);
+      expect(ctx.goalVerdictLabel(p)).toBe("1 phase overdue");
+    });
+
+    it("is on track when every phase whose date has passed is ticked", () => {
+      const { ctx } = loadApp();
+      const g = goal();
+      g.milestones[0].done = true;
+      const p = ctx.goalProgress(g, "2026-06-01");
+      expect(p.overdue).toBe(0);
+      expect(p.verdict).toBe("on track");
+      expect(ctx.goalVerdictLabel(p)).toBe("on track");
+    });
+
+    it("is ahead only when something not yet due is ticked", () => {
+      const { ctx } = loadApp();
+      const g = goal();
+      g.milestones[0].done = true;
+      g.milestones[1].done = true; // Build is not due until 13 September
+      const p = ctx.goalProgress(g, "2026-06-01");
+      expect(p.verdict).toBe("ahead");
+      expect(ctx.goalVerdictLabel(p)).toBe("ahead of the dates");
+    });
+
+    it("judges nothing when the goal carries no phases", () => {
+      // A goal stored before phases existed would otherwise read 0% ticked and
+      // look permanently behind, which is a verdict on my own data model rather
+      // than on the user.
+      const { ctx } = loadApp();
+      const p = ctx.goalProgress({ created: "2026-01-01", targetDate: "2026-12-31", milestones: [] }, "2026-07-02");
+      expect(p.total).toBe(0);
+      expect(p.donePct).toBe(0);
+      expect(p.overdue).toBe(0);
+      expect(p.verdict).toBe("no phases");
+      expect(ctx.goalVerdictLabel(p)).toBe("no phases to judge");
+    });
+
+    it("clamps the clock at both ends instead of running past 100", () => {
+      const { ctx } = loadApp();
+      expect(ctx.goalProgress(goal(), "2027-06-01").elapsedPct).toBe(100);
+      expect(ctx.goalProgress(goal(), "2025-06-01").elapsedPct).toBe(0);
+      expect(ctx.goalProgress(goal(), "2027-01-02").daysLeft).toBe(-2);
+    });
+  });
+
+  describe("the Progress tab", () => {
+    it("puts a goal-progress card above the graphs, and none when there is no goal", () => {
+      // goalProgressCard being right is worth nothing if the tab never calls it,
+      // and that wiring is one line of a template literal -- the exact kind of
+      // line a unit test on the function alone cannot pin.
+      const { ctx } = loadApp();
+      // `view` is a top-level const, so it never lands on the vm's global -- the
+      // same node comes back through the document stub's own id cache.
+      const viewHtml = () => ctx.document.getElementById("view").innerHTML;
+      ctx.store.set("goals", []);
+      ctx.switchTab("progress");
+      expect(viewHtml()).not.toContain("Goal progress");
+      expect(viewHtml()).toContain("Bodyweight");
+
+      ctx.store.set("goals", [{
+        id: "g1", text: "Olympic triathlon", created: "2026-01-01", targetDate: "2099-12-31",
+        milestones: [{ id: "m1", label: "Base", date: "2099-05-31", done: false }],
+      }]);
+      ctx.switchTab("progress");
+      expect(viewHtml()).toContain("Goal progress");
+      expect(viewHtml()).toContain("Olympic triathlon");
+      expect(viewHtml()).toContain("Bodyweight");
+    });
+  });
+
+  describe("goalProgressCard", () => {
+    it("puts the verdict, both meters and the target date on the card", () => {
+      const { ctx } = loadApp();
+      const g = {
+        id: "g1", text: "Olympic triathlon", created: "2026-01-01", targetDate: "2026-12-31",
+        milestones: [
+          { id: "m1", label: "Base", date: "2026-05-31", done: true },
+          { id: "m2", label: "Build", date: "2026-09-13", done: false },
+        ],
+      };
+      const html = ctx.goalProgressCard(g, "2026-07-02");
+      expect(html).toContain("Olympic triathlon");
+      expect(html).toContain("on track");
+      expect(html).toContain('style="width:50%"');
+      expect(html).toContain("1 of 2");
+      expect(html).toContain("182 days left");
+      expect(html).not.toContain("chip--alert");
+    });
+
+    it("marks an overdue goal with the alert chip, not with colour alone", () => {
+      const { ctx } = loadApp();
+      const g = {
+        id: "g1", text: "Olympic triathlon", created: "2026-01-01", targetDate: "2026-12-31",
+        milestones: [{ id: "m1", label: "Base", date: "2026-05-31", done: false }],
+      };
+      const html = ctx.goalProgressCard(g, "2026-07-02");
+      expect(html).toContain("chip--alert");
+      expect(html).toContain("1 phase overdue");
+    });
+
+    it("escapes the goal text it was given", () => {
+      const { ctx } = loadApp();
+      const g = {
+        id: "g1", text: '<img src=x onerror="alert(1)">', created: "2026-01-01",
+        targetDate: "2026-12-31", milestones: [],
+      };
+      const html = ctx.goalProgressCard(g, "2026-07-02");
+      expect(html).not.toContain("<img");
+      expect(html).toContain("&lt;img");
+    });
+  });
+
   describe("toggleMilestone", () => {
     it("flips one milestone and leaves the rest alone", () => {
       const { ctx } = loadApp();
