@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Marcus — Personal Training</title>
+<meta name="theme-color" content="#2E7D32">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Flex:opsz,wght@10..144,400..700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Round">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar__title">
+    <span class="topbar__logo material-icons-round">fitness_center</span>
+    <div>
+      <div class="topbar__name">Marcus</div>
+      <div class="topbar__sub">your personal trainer</div>
+    </div>
+  </div>
+</header>
+
+<main id="view" class="view"></main>
+
+<button id="chatFab" class="fab" aria-label="Chat with Marcus">
+  <span class="material-icons-round">chat</span>
+</button>
+
+<nav class="bottomnav">
+  <button class="bottomnav__item is-active" data-tab="home">
+    <span class="material-icons-round">home</span><span>Today</span>
+  </button>
+  <button class="bottomnav__item" data-tab="plan">
+    <span class="material-icons-round">event_note</span><span>Plan</span>
+  </button>
+  <button class="bottomnav__item" data-tab="log">
+    <span class="material-icons-round">add_task</span><span>Log</span>
+  </button>
+  <button class="bottomnav__item" data-tab="nutrition">
+    <span class="material-icons-round">restaurant</span><span>Food</span>
+  </button>
+  <button class="bottomnav__item" data-tab="progress">
+    <span class="material-icons-round">show_chart</span><span>Progress</span>
+  </button>
+</nav>
+
+<div id="chatSheet" class="chat-sheet" hidden>
+  <div class="chat-sheet__scrim"></div>
+  <div class="chat-sheet__panel" role="dialog" aria-label="Chat with Marcus">
+    <div class="chat-sheet__header">
+      <span class="chat-avatar material-icons-round">fitness_center</span>
+      <div class="chat-sheet__headertext">
+        <div class="chat-sheet__title">Marcus</div>
+        <div class="chat-sheet__status" id="chatStatus">online</div>
+      </div>
+      <button id="chatClose" class="icon-btn" aria-label="Close chat">
+        <span class="material-icons-round">close</span>
+      </button>
+    </div>
+    <div id="chatMessages" class="chat-sheet__messages"></div>
+    <form id="chatForm" class="chat-sheet__input">
+      <input id="chatInput" type="text" placeholder="Message Marcus…" autocomplete="off">
+      <button type="submit" class="icon-btn icon-btn--filled" aria-label="Send">
+        <span class="material-icons-round">send</span>
+      </button>
+    </form>
+  </div>
+</div>
+
+<template id="tpl-log-exercise-row">
+  <div class="exercise-row">
+    <input class="ex-name" type="text" placeholder="Exercise">
+    <input class="ex-sets" type="number" min="1" placeholder="Sets" value="3">
+    <input class="ex-reps" type="number" min="1" placeholder="Reps" value="10">
+    <input class="ex-weight" type="number" min="0" step="0.5" placeholder="kg">
+    <button type="button" class="icon-btn ex-remove" aria-label="Remove exercise"><span class="material-icons-round">close</span></button>
+  </div>
+</template>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
