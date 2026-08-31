@@ -266,3 +266,4 @@ body{
   background:var(--md-primary);color:var(--md-on-primary);
   padding:8px 16px;font-size:14px;font-weight:600;
 }
+.card__note{margin:8px 0 12px;font-size:13px;line-height:1.45;color:var(--md-on-surface-variant);}

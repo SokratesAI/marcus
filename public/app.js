@@ -877,6 +877,15 @@ function renderProgress() {
       <h2>Daily calories</h2>
       <div class="chart-wrap"><canvas id="calChart"></canvas></div>
     </div>
+    <div class="section-title">Your data</div>
+    <div class="card">
+      <h2>Backup</h2>
+      <p class="card__note">Everything Marcus knows is kept in this browser and nowhere else. Clearing site data or changing phone loses it. Save a copy you keep.</p>
+      <button class="btn btn--filled btn--block" id="exportData"><span class="material-icons-round">download</span> Save a backup file</button>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+      <button class="btn btn--tonal btn--block" id="importData" style="margin-top:10px"><span class="material-icons-round">upload</span> Restore from a file</button>
+      <div id="restorePreview"></div>
+    </div>
   `;
 
   document.getElementById('addWeight').addEventListener('click', () => {
@@ -887,6 +896,8 @@ function renderProgress() {
     if (!store.set('weights', all)) return;
     renderProgress();
   });
+
+  wireBackup();
 
   // Chart.js is loaded async so a stalled CDN can never hold the app, which
   // means it may genuinely not be here yet. Everything above this line works
@@ -923,6 +934,148 @@ function renderProgress() {
     data: { labels: calEntries.map(([d]) => niceDate(d)), datasets: [{ data: calEntries.map(([,v]) => v), borderColor: '#5B8DEF', backgroundColor: 'rgba(91,141,239,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
+}
+
+// ---------- backup: export and restore ----------
+// Everything Marcus knows lives in this browser's localStorage and nowhere
+// else, so clearing site data, switching phone or reinstalling loses all of
+// it. Idea #198 asks for a nightly export of Marcus's database to a repo; there
+// is no database and no server yet (issue #153), so this is the half that can
+// exist today -- a file the user holds -- and it is deliberately the same
+// shape the server-side job would write, so the later one can read these.
+const BACKUP_VERSION = 1;
+// Every store key the app writes. `chat` is in here because the coach's memory
+// of the conversation is data the user would miss, not chrome.
+const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'meals', 'goals', 'chat'];
+
+function buildBackup(nowISO) {
+  const data = {};
+  BACKUP_KEYS.forEach(k => {
+    const v = store.get(k, null);
+    if (v !== null && v !== undefined) data[k] = v;
+  });
+  return { app: 'marcus', version: BACKUP_VERSION, exportedAt: nowISO || new Date().toISOString(), data };
+}
+
+function backupFilename(nowISO) {
+  return 'marcus-backup-' + String(nowISO || new Date().toISOString()).slice(0, 10) + '.json';
+}
+
+// Counts what a restore would actually put back, so the confirm step can say
+// it out loud. A key holding an array counts its entries; `plan` is a single
+// object, so it counts as one thing.
+function backupSummary(data) {
+  return BACKUP_KEYS.filter(k => k in data).map(k => ({
+    key: k,
+    count: Array.isArray(data[k]) ? data[k].length : 1,
+  }));
+}
+
+// Refuses rather than guesses. A file that is not ours, or is from a newer
+// Marcus than this one, would be restored as garbage that silently replaces
+// real training history -- so the only accepted outcome is a payload this
+// version knows how to write back.
+function parseBackup(text) {
+  let raw;
+  try { raw = JSON.parse(text); }
+  catch { return { ok: false, message: 'That file is not valid JSON.' }; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, message: 'That file does not look like a Marcus backup.' };
+  if (raw.app !== 'marcus') return { ok: false, message: 'That file does not look like a Marcus backup.' };
+  if (typeof raw.version !== 'number' || !Number.isFinite(raw.version)) return { ok: false, message: 'That backup has no version, so it cannot be read safely.' };
+  if (raw.version > BACKUP_VERSION) return { ok: false, message: 'That backup was written by a newer Marcus (version ' + raw.version + '). Update the app first.' };
+  const src = raw.data;
+  if (!src || typeof src !== 'object' || Array.isArray(src)) return { ok: false, message: 'That backup has no data in it.' };
+  const data = {};
+  BACKUP_KEYS.forEach(k => {
+    if (!(k in src)) return;
+    const v = src[k];
+    if (v === null || v === undefined) return;
+    if (k === 'plan' ? typeof v !== 'object' || Array.isArray(v) : !Array.isArray(v)) return;
+    data[k] = v;
+  });
+  if (Object.keys(data).length === 0) return { ok: false, message: 'That backup has no data in it.' };
+  return { ok: true, version: raw.version, exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : null, data };
+}
+
+// A restore replaces, it does not merge -- two copies of the same session
+// merged by id is a guess about which one is right, and the user asked for the
+// file they picked. Keys the file does not carry are left alone.
+function restoreBackup(parsed) {
+  const restored = [];
+  const failed = [];
+  Object.keys(parsed.data).forEach(k => {
+    if (store.set(k, parsed.data[k])) restored.push(k); else failed.push(k);
+  });
+  return { restored, failed };
+}
+
+// A restore is destructive, so the file is parsed and described before
+// anything is written -- the user confirms against a count of what is in the
+// file, not against the word "restore".
+let pendingRestore = null;
+
+function renderRestorePreview() {
+  const host = document.getElementById('restorePreview');
+  if (!host) return;
+  if (!pendingRestore) { host.innerHTML = ''; return; }
+  const lines = backupSummary(pendingRestore.data)
+    .map(s => '<div class="exercise-line"><span>' + esc(s.key) + '</span><span>' + s.count + '</span></div>')
+    .join('');
+  host.innerHTML = '<div class="card__note" style="margin-top:14px">This will replace what is in the app now. From ' +
+    esc(pendingRestore.exportedAt ? pendingRestore.exportedAt.slice(0, 10) : 'an unknown date') + ':</div>' + lines +
+    '<button class="btn btn--filled btn--block" id="confirmRestore" style="margin-top:10px">Replace everything</button>' +
+    '<button class="btn btn--tonal btn--block" id="cancelRestore" style="margin-top:8px">Cancel</button>';
+  document.getElementById('confirmRestore')?.addEventListener('click', () => {
+    const result = restoreBackup(pendingRestore);
+    pendingRestore = null;
+    if (result.failed.length) toast('Restored ' + result.restored.length + ' of ' + (result.restored.length + result.failed.length) + ' -- this browser refused the rest.');
+    else toast('Restored. ' + result.restored.length + ' section(s) put back.');
+    renderProgress();
+  });
+  document.getElementById('cancelRestore')?.addEventListener('click', () => { pendingRestore = null; renderRestorePreview(); });
+}
+
+function wireBackup() {
+  pendingRestore = null;
+  document.getElementById('exportData')?.addEventListener('click', () => {
+    const payload = buildBackup();
+    let url = null;
+    try {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = backupFilename(payload.exportedAt);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast('Backup saved to your downloads.');
+    } catch {
+      toast('This browser would not let Marcus save a file.');
+    } finally {
+      if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  });
+
+  const picker = document.getElementById('importFile');
+  document.getElementById('importData')?.addEventListener('click', () => picker?.click());
+  picker?.addEventListener('change', () => {
+    const file = picker.files && picker.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseBackup(String(reader.result));
+      // The same file has to be pickable twice -- `change` does not fire on an
+      // unchanged value, so a user who cancels and retries would get nothing.
+      picker.value = '';
+      if (!parsed.ok) { toast(parsed.message); return; }
+      pendingRestore = parsed;
+      renderRestorePreview();
+    };
+    reader.onerror = () => { picker.value = ''; toast('That file could not be read.'); };
+    reader.readAsText(file);
+  });
+  renderRestorePreview();
 }
 
 // ---------- chat ----------
