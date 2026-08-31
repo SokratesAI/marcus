@@ -43,6 +43,9 @@ function fromNetwork(request) {
 function respond(request) {
   const sameOrigin = new URL(request.url).origin === self.location.origin;
   const network = fromNetwork(request);
+  // the rejection is handled below, but only once the cache lookup resolves --
+  // mark it handled now so a fast failure does not fire unhandledrejection.
+  network.catch(() => {});
   return caches.match(request).then((cached) => {
     const timeout = sameOrigin ? SAME_ORIGIN_TIMEOUT_MS : CROSS_ORIGIN_TIMEOUT_MS;
     const fallback = () => cached || new Response('', { status: 504, statusText: 'Offline or too slow' });
