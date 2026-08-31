@@ -826,6 +826,112 @@ function weeklyVolumes() {
   return Object.entries(buckets).sort(([a],[b]) => a.localeCompare(b));
 }
 
+// ---------- training load: fitness, fatigue, form (idea #194) ----------
+// TrainingPeaks' CTL/ATL shape, computed on the one load signal Marcus
+// actually holds: kilograms lifted per day. Two exponentially weighted
+// averages over the same daily series -- 42 days for fitness, 7 for fatigue.
+//
+// The verdict is the ACUTE:CHRONIC RATIO (fatigue / fitness), deliberately not
+// the TSB subtraction the same methodology usually reports. TSB's published
+// bands (+25 fresh, -30 overreached) are in TSS units and say nothing about
+// kilograms; a ratio is unit-free, so it survives the fact that this app
+// measures load in a unit that research was not written in.
+const LOAD_FITNESS_DAYS = 42;
+const LOAD_FATIGUE_DAYS = 7;
+// Below this much history the two averages have not separated yet -- one
+// session on day one gives a ratio of 5.6 and a "load spike" chip nobody has
+// earned. Say "too early" instead of inventing an alarm.
+const LOAD_MIN_DAYS = 28;
+
+// Day keys are done in UTC on purpose. `fmtDate` runs a local Date through
+// toISOString, which in any zone east of Greenwich moves midnight back a day.
+const dayKey = (iso) => new Date(iso + 'T00:00:00Z').toISOString().slice(0, 10);
+const shiftDay = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 86400000).toISOString().slice(0, 10);
+
+function dailyLoads(sessions) {
+  const byDay = {};
+  (sessions || []).forEach(s => {
+    if (!s || !s.date) return;
+    const vol = (s.exercises || []).reduce(
+      (sum, e) => sum + (e.sets || []).reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
+    const k = dayKey(s.date);
+    byDay[k] = (byDay[k] || 0) + vol;
+  });
+  return byDay;
+}
+
+// Walks every calendar day from the first logged session to today, so a rest
+// day contributes a real zero rather than being skipped. Skipping rest days is
+// what turns "trained once a week" into "trained every day" in the average.
+function trainingLoad(sessions, todayISO) {
+  const today = dayKey(todayISO || todayStr());
+  const byDay = dailyLoads(sessions);
+  const days = Object.keys(byDay).sort();
+  if (!days.length) {
+    return { fitness: 0, fatigue: 0, ratio: 0, days: 0, trend: 'none', verdict: 'nothing logged' };
+  }
+
+  const fitAlpha = 1 - Math.exp(-1 / LOAD_FITNESS_DAYS);
+  const fatAlpha = 1 - Math.exp(-1 / LOAD_FATIGUE_DAYS);
+  const span = Math.max(0, Math.round((new Date(today + 'T00:00:00Z') - new Date(days[0] + 'T00:00:00Z')) / 86400000));
+  let fitness = 0, fatigue = 0;
+  let fitnessWeekAgo = null;
+  let cursor = days[0];
+  for (let i = 0; i <= span; i++) {
+    const load = byDay[cursor] || 0;
+    fitness += (load - fitness) * fitAlpha;
+    fatigue += (load - fatigue) * fatAlpha;
+    if (i === span - 7) fitnessWeekAgo = fitness;
+    cursor = shiftDay(cursor, 1);
+  }
+
+  const ratio = fitness > 0 ? fatigue / fitness : 0;
+  const covered = span + 1;
+  let trend = 'none';
+  if (fitnessWeekAgo !== null) {
+    const delta = fitness - fitnessWeekAgo;
+    trend = Math.abs(delta) < fitness * 0.02 ? 'flat' : (delta > 0 ? 'rising' : 'falling');
+  }
+
+  return { fitness, fatigue, ratio, days: covered, trend, verdict: loadVerdict(ratio, covered) };
+}
+
+// The band edges are the acute:chronic ratio literature's, not mine: under 0.8
+// is detraining, 0.8-1.3 is the range that builds fitness without an injury
+// cost, and above 1.5 is where injury rates climb sharply. They are the
+// product decision in this whole card, so they live in one named function
+// rather than inline in the arithmetic.
+function loadVerdict(ratio, coveredDays) {
+  if (coveredDays < LOAD_MIN_DAYS) return 'too early';
+  if (ratio < 0.8) return 'backing off';
+  if (ratio <= 1.3) return 'building';
+  if (ratio <= 1.5) return 'overreaching';
+  return 'load spike';
+}
+
+function loadVerdictLabel(load) {
+  if (load.verdict === 'nothing logged') return 'no sessions logged';
+  if (load.verdict === 'too early') return 'too early to judge';
+  if (load.verdict === 'load spike') return 'load spike — ease off';
+  return load.verdict;
+}
+
+function trainingLoadCard(load) {
+  const alert = load.verdict === 'load spike' || load.verdict === 'overreaching';
+  const kg = (n) => Math.round(n).toLocaleString() + ' kg/day';
+  const trendWord = load.trend === 'rising' ? 'rising' : load.trend === 'falling' ? 'falling'
+                  : load.trend === 'flat' ? 'holding' : 'not enough history';
+  return `
+    <div class="card">
+      <div class="card__title-row"><h2>Training load</h2><span class="chip ${alert ? 'chip--alert' : 'chip--primary'}">${esc(loadVerdictLabel(load))}</span></div>
+      <div class="exercise-line"><span>Fitness — 42-day average</span><span>${kg(load.fitness)}</span></div>
+      <div class="exercise-line"><span>Fatigue — 7-day average</span><span>${kg(load.fatigue)}</span></div>
+      <div class="exercise-line"><span>Fatigue vs fitness</span><span>${load.ratio.toFixed(2)}</span></div>
+      <div class="exercise-line"><span>Fitness over the last week</span><span>${trendWord}</span></div>
+      <p class="card__note">Fitness is what you have built up; fatigue is what you are carrying right now. Between 0.8 and 1.3 you are training hard enough to improve without digging a hole. Above 1.5 is the range injuries cluster in.</p>
+    </div>`;
+}
+
 // Goals go at the top of Progress because the graphs below are supposed to
 // serve them. Drawn in plain CSS, not Chart.js: the library is loaded async so
 // a stalled CDN can leave it absent, and the one thing on this tab that
@@ -859,6 +965,8 @@ function renderProgress() {
 
   view.innerHTML = `
     ${goals.length ? `<div class="section-title">Goal progress</div>` + goals.map(g => goalProgressCard(g)).join('') : ''}
+    <div class="section-title">Where you stand</div>
+    ${trainingLoadCard(trainingLoad(store.get('sessions', [])))}
     <div class="card">
       <h2>Bodyweight</h2>
       <div class="field" style="margin-top:10px"><label>Log today's weight (kg)</label>
