@@ -1,10 +1,28 @@
 // ---------- storage helpers ----------
 const store = {
+  // Anything localStorage refused stays here so the app keeps working for the
+  // rest of the session instead of rendering against an empty store. It is
+  // deliberately not a cache: a successful write drops the copy, so
+  // localStorage stays the single source of truth whenever it is available.
+  _unsaved: Object.create(null),
   get(key, fallback) {
+    if (key in this._unsaved) return this._unsaved[key];
     try { const v = localStorage.getItem('marcus.' + key); return v ? JSON.parse(v) : fallback; }
     catch { return fallback; }
   },
-  set(key, val) { localStorage.setItem('marcus.' + key, JSON.stringify(val)); }
+  set(key, val) {
+    try {
+      localStorage.setItem('marcus.' + key, JSON.stringify(val));
+      delete this._unsaved[key];
+      return true;
+    } catch (err) {
+      this._unsaved[key] = val;
+      const full = err && (err.name === 'QuotaExceededError' || err.code === 22);
+      toast(full ? 'Storage is full, so that was not saved. Delete some old entries.'
+                 : 'This browser is blocking storage, so nothing will be kept after you close the app.');
+      return false;
+    }
+  }
 };
 const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -12,6 +30,85 @@ const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','
 const fmtDate = (d) => new Date(d).toISOString().slice(0, 10);
 const todayStr = () => fmtDate(new Date());
 const niceDate = (iso) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+// ---------- one source of truth for "what day is it" ----------
+function planDayName(date) { return DAY_NAMES[(date || new Date()).getDay()]; }
+
+// ---------- input validation ----------
+// Bounds are deliberately wide: they exist to catch a typo, not to argue with a
+// strong person or a big meal. Anything inside them is the user's business.
+const BOUNDS = {
+  sets: { min: 1, max: 50, label: 'Sets', unit: '' },
+  reps: { min: 1, max: 500, label: 'Reps', unit: '' },
+  weight: { min: 0, max: 1000, label: 'Weight', unit: 'kg' },
+  calories: { min: 1, max: 10000, label: 'Calories', unit: 'kcal' },
+  bodyweight: { min: 20, max: 400, label: 'Weight', unit: 'kg' }
+};
+
+function checkNumber(raw, kind) {
+  const b = BOUNDS[kind];
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text) return { ok: false, message: `${b.label} is required.` };
+  const value = Number(text);
+  if (!Number.isFinite(value)) return { ok: false, message: `${b.label} must be a number.` };
+  if (value < b.min || value > b.max) {
+    return { ok: false, message: `${b.label} must be between ${b.min} and ${b.max}${b.unit ? ' ' + b.unit : ''}.` };
+  }
+  return { ok: true, value };
+}
+
+// The name is what says "I did this one". The Log tab prefills a row per planned
+// exercise, so clearing the name is how you skip one, and a nameless row is
+// skipped rather than rejected -- it cannot produce a bad number either way.
+// A row you did name has to be complete: that is where the silent garbage came
+// from, a blank reps box saved as 1 rep at 0 kg.
+function validateExerciseRow(row) {
+  const name = String(row.name == null ? '' : row.name).trim();
+  if (!name) return { ok: true, skip: true };
+  const parsed = {};
+  for (const kind of ['sets', 'reps', 'weight']) {
+    const r = checkNumber(row[kind], kind);
+    if (!r.ok) return { ok: false, message: `${name}: ${r.message}` };
+    parsed[kind] = r.value;
+  }
+  const setCount = Math.round(parsed.sets);
+  const reps = Math.round(parsed.reps);
+  return { ok: true, exercise: { name, sets: Array.from({ length: setCount }, () => ({ reps, weight: parsed.weight })) } };
+}
+
+function validateSession(rows) {
+  const exercises = [];
+  for (const row of rows) {
+    const r = validateExerciseRow(row);
+    if (!r.ok) return r;
+    if (r.exercise) exercises.push(r.exercise);
+  }
+  if (!exercises.length) return { ok: false, message: 'Fill in at least one exercise before saving.' };
+  return { ok: true, exercises };
+}
+
+function validateMeal(name, rawCalories) {
+  const trimmed = String(name == null ? '' : name).trim();
+  if (!trimmed) return { ok: false, message: 'Give the meal a name.' };
+  const r = checkNumber(rawCalories, 'calories');
+  if (!r.ok) return { ok: false, message: r.message };
+  return { ok: true, meal: { name: trimmed, calories: r.value } };
+}
+
+function validateBodyweight(rawKg) {
+  const r = checkNumber(rawKg, 'bodyweight');
+  return r.ok ? { ok: true, kg: r.value } : r;
+}
+
+// ---------- telling the user something went wrong ----------
+function toast(message) {
+  const host = document.getElementById('toast');
+  if (!host) return;
+  host.textContent = message;
+  host.hidden = false;
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { host.hidden = true; }, 4000);
+}
 
 // ---------- seed data ----------
 function seed() {
@@ -152,7 +249,7 @@ function streak() {
 
 function renderHome() {
   const plan = store.get('plan');
-  const todayName = DAY_NAMES[new Date().getDay()];
+  const todayName = planDayName();
   const todayPlan = plan.days.find(d => d.day === todayName);
   const weights = store.get('weights', []);
   const lastWeight = weights[weights.length - 1];
@@ -185,7 +282,7 @@ function renderHome() {
 // ---------- plan ----------
 function renderPlan() {
   const plan = store.get('plan');
-  const todayName = DAY_NAMES[new Date().getDay()];
+  const todayName = planDayName();
   view.innerHTML = `
     <div class="card">
       <h2>${plan.blockName}</h2>
@@ -237,7 +334,7 @@ function renderLog() {
     node.querySelector('.ex-remove').addEventListener('click', (e) => e.target.closest('.exercise-row').remove());
     rows.appendChild(node);
   }
-  const todayName = DAY_NAMES[new Date().getDay()];
+  const todayName = planDayName();
   const todayPlan = plan.days.find(d => d.day === todayName) || plan.days[0];
   (todayPlan.exercises.length ? todayPlan.exercises : [{ name: '', sets: 3, reps: 10 }]).forEach(addRow);
 
@@ -249,17 +346,16 @@ function renderLog() {
   document.getElementById('addExercise').addEventListener('click', () => addRow());
 
   document.getElementById('saveSession').addEventListener('click', () => {
-    const exercises = [...rows.querySelectorAll('.exercise-row')].map(r => {
-      const name = r.querySelector('.ex-name').value.trim();
-      const sets = parseInt(r.querySelector('.ex-sets').value) || 1;
-      const reps = parseInt(r.querySelector('.ex-reps').value) || 1;
-      const weight = parseFloat(r.querySelector('.ex-weight').value) || 0;
-      return { name, sets: Array.from({ length: sets }, () => ({ reps, weight })) };
-    }).filter(e => e.name);
-    if (!exercises.length) return;
+    const result = validateSession([...rows.querySelectorAll('.exercise-row')].map(r => ({
+      name: r.querySelector('.ex-name').value,
+      sets: r.querySelector('.ex-sets').value,
+      reps: r.querySelector('.ex-reps').value,
+      weight: r.querySelector('.ex-weight').value
+    })));
+    if (!result.ok) { toast(result.message); return; }
     const sessions = store.get('sessions', []);
-    sessions.push({ id: uid(), date: document.getElementById('logDate').value, day: document.getElementById('logDay').value, exercises });
-    store.set('sessions', sessions);
+    sessions.push({ id: uid(), date: document.getElementById('logDate').value, day: document.getElementById('logDay').value, exercises: result.exercises });
+    if (!store.set('sessions', sessions)) return;
     switchTab('log');
   });
 
@@ -313,13 +409,12 @@ function renderNutrition() {
   `;
 
   document.getElementById('addMeal').addEventListener('click', () => {
-    const name = document.getElementById('mealName').value.trim();
-    const cal = parseInt(document.getElementById('mealCal').value);
-    if (!name || !cal) return;
+    const result = validateMeal(document.getElementById('mealName').value, document.getElementById('mealCal').value);
+    if (!result.ok) { toast(result.message); return; }
     const all = store.get('meals', []);
     const now = new Date();
-    all.push({ id: uid(), date: todayStr(), time: `${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`, name, calories: cal, protein: 0, carbs: 0, fat: 0 });
-    store.set('meals', all);
+    all.push({ id: uid(), date: todayStr(), time: `${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`, name: result.meal.name, calories: result.meal.calories, protein: 0, carbs: 0, fat: 0 });
+    if (!store.set('meals', all)) return;
     renderNutrition();
   });
 }
@@ -372,11 +467,11 @@ function renderProgress() {
   `;
 
   document.getElementById('addWeight').addEventListener('click', () => {
-    const kg = parseFloat(document.getElementById('weightInput').value);
-    if (!kg) return;
+    const result = validateBodyweight(document.getElementById('weightInput').value);
+    if (!result.ok) { toast(result.message); return; }
     const all = store.get('weights', []);
-    all.push({ date: todayStr(), kg });
-    store.set('weights', all);
+    all.push({ date: todayStr(), kg: result.kg });
+    if (!store.set('weights', all)) return;
     renderProgress();
   });
 
@@ -430,7 +525,7 @@ function marcusReply(text) {
   const plan = store.get('plan');
   const weights = store.get('weights', []);
   const meals = store.get('meals', []).filter(m => m.date === todayStr());
-  const todayName = DAY_NAMES[new Date().getDay()];
+  const todayName = planDayName();
   const todayPlan = plan.days.find(d => d.day === todayName);
 
   if (/plan|today.*(do|training)|workout/.test(t)) {
