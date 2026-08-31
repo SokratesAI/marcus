@@ -234,3 +234,22 @@ body{
   box-shadow:0 6px 20px rgba(0,0,0,.35);
 }
 .toast[hidden]{display:none;}
+
+/* Sits at the top, clear of the toast at the bottom and of the bottom nav --
+   the two can be on screen at once and neither should cover the other. */
+.update-banner{
+  position:fixed;left:50%;transform:translateX(-50%);
+  top:calc(12px + env(safe-area-inset-top));
+  z-index:70;max-width:min(420px,calc(100vw - 32px));
+  display:flex;align-items:center;gap:12px;
+  background:var(--md-surface-container-high);color:var(--md-on-surface);
+  border:1px solid var(--md-surface-variant);border-radius:12px;
+  padding:10px 12px 10px 16px;font-size:14px;line-height:1.35;
+  box-shadow:0 6px 20px rgba(0,0,0,.35);
+}
+.update-banner[hidden]{display:none;}
+.update-banner__btn{
+  flex:none;border:0;border-radius:999px;cursor:pointer;
+  background:var(--md-primary);color:var(--md-on-primary);
+  padding:8px 16px;font-size:14px;font-weight:600;
+}
