@@ -1,0 +1,137 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One pipeline at a time per branch, because update-manifest below is a blind
+# `sed` of whichever digest its own run produced. Two merges to main in quick
+# succession otherwise run their pipelines in parallel and the LAST one to
+# finish wins -- which is not the same as the newest commit.
+#
+# Measured 2026-08-12 on agora-claude-bridge, an instance of this template.
+# Two PRs merged three seconds apart, at 00:18:38Z and 00:18:41Z, the newer
+# carrying the older one's commit as its parent -- so two pipelines ran
+# concurrently. The paired config repo took exactly one commit out of that
+# window, pinning the deployment to an image that did not contain the newer
+# merge, and the pod that came up served a 404 for the endpoint that PR had
+# just added. Every check was green throughout.
+#
+# Deliberately NOT claimed, because two primary sources disagree and a
+# template comment is not the place to pick a winner: which of the two
+# commits' builds produced the digest that landed (the registry tags and the
+# build-push job logs contradict each other), and which build finished first.
+# An earlier draft of this comment asserted both -- it said the merges were
+# four seconds apart and that the older build pushed "one second later".
+# Nobody measured either; they were plausible numbers that became facts by
+# being written down and copied into four repositories, which is what this
+# wording exists to undo. Neither ambiguity touches the fix: two unserialised
+# pipelines both blind-`sed` the same manifest, and only one commit landed.
+#
+# cancel-in-progress stays false deliberately: killing a run partway through
+# update-manifest is the exact failure this is meant to prevent.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: sokratesai/${{ github.event.repository.name }}
+  CONFIG_REPO: SokratesAI/${{ github.event.repository.name }}-config
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        # gitleaks/gitleaks-action@v2 requires a paid GITLEAKS_LICENSE for org repos —
+        # the underlying gitleaks CLI is free/OSS, run that directly instead.
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks detect --source . --no-banner --redact
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: npm install
+      - run: npm run build
+      - run: npm test
+
+  build-push:
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # Commits the new image digest to this service's paired config repo, which
+  # ArgoCD's SCM Provider generator auto-deploys — no platform-config PR, no
+  # manual step. Authenticates as a GitHub App installation, scoped by this
+  # step to ONLY this repo's own -config repo (never broader). ORG_APP_ID/
+  # ORG_APP_PRIVATE_KEY are repo-scoped Actions secrets that this Composition
+  # itself provisions on every source repo it creates (see the
+  # source-actions-secret-* resources in this Composition) — not org-level
+  # secrets, which GitHub gates behind a paid plan for private repos. See
+  # Platform-Product-Catalog's _context.md in the vault for why a GitHub App
+  # instead of a PAT. Byte-identical across every service template instance —
+  # nothing here is per-service except GitHub's own repository context, so
+  # nothing needed substituting at repo-creation time.
+  update-manifest:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate installation token scoped to the config repo only
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ORG_APP_ID }}
+          private-key: ${{ secrets.ORG_APP_PRIVATE_KEY }}
+          owner: SokratesAI
+          repositories: ${{ github.event.repository.name }}-config
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.CONFIG_REPO }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Update image digest in manifest.yaml
+        run: |
+          sed -i "s|image: .*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}|" manifest.yaml
+          git config user.name "sokratesai-repo-committer[bot]"
+          git config user.email "sokratesai-repo-committer[bot]@users.noreply.github.com"
+          git add manifest.yaml
+          if git diff --staged --quiet; then
+            echo "no manifest change, skipping commit"
+          else
+            git commit -m "Update image to ${{ needs.build-push.outputs.digest }}"
+            git push
+          fi
