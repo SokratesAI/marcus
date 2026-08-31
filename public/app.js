@@ -604,8 +604,48 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
   }, 650 + Math.random() * 500);
 });
 
+// ---------- updates ----------
+// A deploy is invisible to an already-open app: the new service worker installs
+// and takes over (sw.js calls skipWaiting + clients.claim), but this page keeps
+// running the app.js it loaded. controllerchange is the moment of the swap, and
+// it only means "a new version" when this page already had a controller --
+// on a first visit it fires because the very first worker claimed us.
+function watchForUpdate(sw, onUpdate) {
+  if (!sw || typeof sw.addEventListener !== 'function') return;
+  // `let`, not `const`: on a first-ever visit this starts false and the initial
+  // claim is correctly silent, but the page now HAS a controller. A second
+  // deploy in the same sitting is a real update and must announce itself.
+  let hadController = !!sw.controller;
+  sw.addEventListener('controllerchange', () => {
+    if (hadController) onUpdate();
+    hadController = true;
+  });
+}
+
+// The browser only re-checks sw.js on navigation, and an installed PWA that is
+// left open and switched back to never navigates. Asking on every return to the
+// foreground is what makes the banner appear without a manual reload.
+function recheckOnVisible(doc, registration) {
+  if (!doc || typeof doc.addEventListener !== 'function') return;
+  doc.addEventListener('visibilitychange', () => {
+    if (doc.visibilityState !== 'visible') return;
+    try { Promise.resolve(registration.update()).catch(() => {}); } catch { /* a stub or a browser that throws synchronously */ }
+  });
+}
+
+function showUpdateBanner() {
+  const host = document.getElementById('updateBanner');
+  if (host) host.hidden = false;
+}
+
 // ---------- boot ----------
 switchTab('home');
+document.getElementById('updateReload')?.addEventListener('click', () => window.location.reload());
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  watchForUpdate(navigator.serviceWorker, showUpdateBanner);
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then((reg) => { if (reg) recheckOnVisible(document, reg); })
+      .catch(() => {});
+  });
 }
