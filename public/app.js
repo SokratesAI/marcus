@@ -288,6 +288,51 @@ function goalCountdown(targetISO, todayISO) {
   return `${Math.round(days / 7)} weeks to go`;
 }
 
+// Distance to goal. The two numbers here are deliberately separate and the
+// card shows both: how much of the window has gone, and how much of the plan
+// is ticked. Merging them into one "percent complete" would be the same
+// dishonesty as coaching a sentence nobody parsed -- the clock is a fact and
+// the ticks are the user's own claim, and the gap between them is the finding.
+//
+// The verdict is arithmetic on dates rather than a tuned threshold: a phase
+// whose date has passed and is not ticked is overdue, full stop. Ahead means
+// nothing is overdue and something not yet due has been ticked. A goal with no
+// phases (an old row, or a window too short to periodise) reports its clock and
+// says it has nothing to judge, rather than reporting 0% done and looking late.
+function goalProgress(goal, todayISO) {
+  const today = todayISO || todayStr();
+  const milestones = (goal && goal.milestones) || [];
+  const start = (goal && goal.created) || today;
+  const target = goal && goal.targetDate;
+  const span = target ? daysBetween(start, target) : 0;
+  const gone = daysBetween(start, today);
+  const elapsedPct = span > 0 ? Math.max(0, Math.min(100, Math.round((gone / span) * 100))) : 100;
+  const total = milestones.length;
+  const doneCount = milestones.filter(m => m.done).length;
+  const donePct = total ? Math.round((doneCount / total) * 100) : 0;
+  const overdue = milestones.filter(m => !m.done && m.date < today).length;
+  const earlyTicks = milestones.filter(m => m.done && m.date >= today).length;
+
+  let verdict = 'on track';
+  if (!total) verdict = 'no phases';
+  else if (overdue > 0) verdict = 'behind';
+  else if (earlyTicks > 0) verdict = 'ahead';
+
+  const daysLeft = target ? daysBetween(today, target) : 0;
+  return { elapsedPct, donePct, doneCount, total, overdue, daysLeft, verdict };
+}
+
+// The label spells the verdict out rather than leaning on the colour -- a
+// reader who does not know the colour code has to be told what was said.
+function goalVerdictLabel(progress) {
+  if (progress.verdict === 'no phases') return 'no phases to judge';
+  if (progress.verdict === 'behind') {
+    return progress.overdue === 1 ? '1 phase overdue' : progress.overdue + ' phases overdue';
+  }
+  if (progress.verdict === 'ahead') return 'ahead of the dates';
+  return 'on track';
+}
+
 // ---------- telling the user something went wrong ----------
 function toast(message) {
   const host = document.getElementById('toast');
@@ -781,6 +826,27 @@ function weeklyVolumes() {
   return Object.entries(buckets).sort(([a],[b]) => a.localeCompare(b));
 }
 
+// Goals go at the top of Progress because the graphs below are supposed to
+// serve them. Drawn in plain CSS, not Chart.js: the library is loaded async so
+// a stalled CDN can leave it absent, and the one thing on this tab that
+// answers "am I on track" should not be the thing that disappears.
+function goalProgressCard(goal, todayISO) {
+  const p = goalProgress(goal, todayISO);
+  const left = p.daysLeft < 0 ? 'target date passed'
+             : p.daysLeft === 0 ? 'target day is today'
+             : p.daysLeft === 1 ? '1 day left'
+             : p.daysLeft + ' days left';
+  return `
+    <div class="card">
+      <div class="card__title-row"><h2>${esc(goal.text)}</h2><span class="chip ${p.verdict === 'behind' ? 'chip--alert' : 'chip--primary'}">${esc(goalVerdictLabel(p))}</span></div>
+      <div class="meter-row"><span>Time gone</span><span>${p.elapsedPct}%</span></div>
+      <div class="meter"><div class="meter__fill meter__fill--time" style="width:${p.elapsedPct}%"></div></div>
+      <div class="meter-row"><span>Phases ticked</span><span>${p.total ? p.doneCount + ' of ' + p.total : 'none set'}</span></div>
+      <div class="meter"><div class="meter__fill" style="width:${p.donePct}%"></div></div>
+      <div class="exercise-line"><span>Target ${niceDate(goal.targetDate)}</span><span>${esc(left)}</span></div>
+    </div>`;
+}
+
 function renderProgress() {
   const weights = store.get('weights', []);
   const meals = store.get('meals', []);
@@ -789,7 +855,10 @@ function renderProgress() {
   const calEntries = Object.entries(calByDay).sort(([a],[b]) => a.localeCompare(b));
   const vols = weeklyVolumes();
 
+  const goals = goalsSorted();
+
   view.innerHTML = `
+    ${goals.length ? `<div class="section-title">Goal progress</div>` + goals.map(g => goalProgressCard(g)).join('') : ''}
     <div class="card">
       <h2>Bodyweight</h2>
       <div class="field" style="margin-top:10px"><label>Log today's weight (kg)</label>

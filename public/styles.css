@@ -126,6 +126,12 @@ body{
 }
 .chip--primary{background:var(--md-primary-container);color:var(--md-on-primary-container);}
 
+.chip--alert{background:var(--md-error);color:#fff;}
+.meter-row{display:flex;justify-content:space-between;font-size:12px;color:var(--md-on-surface-variant);margin:10px 0 4px;}
+.meter{height:8px;border-radius:4px;background:var(--md-surface-container-high);overflow:hidden;}
+.meter__fill{height:100%;background:var(--md-primary);border-radius:4px;}
+.meter__fill--time{background:var(--md-on-surface-variant);opacity:.55;}
+
 .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
 .stat{background:var(--md-surface-container-high);border-radius:12px;padding:10px;text-align:center;}
 .stat__value{font-size:20px;font-weight:700;color:var(--md-primary);}
