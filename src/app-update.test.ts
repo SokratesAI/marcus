@@ -96,10 +96,25 @@ describe("watchForUpdate", () => {
     expect(announced).toBe(0);
   });
 
+  it("announces every later takeover in a session that started with no controller", () => {
+    const ctx = loadApp();
+    const sw = stubSw(null);
+    let announced = 0;
+    ctx.watchForUpdate(sw, () => { announced += 1; });
+    sw.fire("controllerchange"); // the very first worker claiming the page
+    sw.fire("controllerchange"); // a real deploy, same sitting
+    sw.fire("controllerchange");
+    expect(announced).toBe(2);
+  });
+
   it("does nothing at all when the browser has no service worker support", () => {
     const ctx = loadApp();
-    expect(() => ctx.watchForUpdate(undefined, () => {})).not.toThrow();
-    expect(() => ctx.watchForUpdate({}, () => {})).not.toThrow();
+    let announced = 0;
+    const bump = () => { announced += 1; };
+    expect(() => ctx.watchForUpdate(undefined, bump)).not.toThrow();
+    expect(() => ctx.watchForUpdate({}, bump)).not.toThrow();
+    expect(() => ctx.watchForUpdate({ controller: {} }, bump)).not.toThrow();
+    expect(announced).toBe(0);
   });
 });
 

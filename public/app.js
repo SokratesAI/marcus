@@ -612,9 +612,13 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
 // on a first visit it fires because the very first worker claimed us.
 function watchForUpdate(sw, onUpdate) {
   if (!sw || typeof sw.addEventListener !== 'function') return;
-  const hadController = !!sw.controller;
+  // `let`, not `const`: on a first-ever visit this starts false and the initial
+  // claim is correctly silent, but the page now HAS a controller. A second
+  // deploy in the same sitting is a real update and must announce itself.
+  let hadController = !!sw.controller;
   sw.addEventListener('controllerchange', () => {
     if (hadController) onUpdate();
+    hadController = true;
   });
 }
 
@@ -625,7 +629,7 @@ function recheckOnVisible(doc, registration) {
   if (!doc || typeof doc.addEventListener !== 'function') return;
   doc.addEventListener('visibilitychange', () => {
     if (doc.visibilityState !== 'visible') return;
-    try { Promise.resolve(registration.update()).catch(() => {}); } catch (e) { /* nothing to do */ }
+    try { Promise.resolve(registration.update()).catch(() => {}); } catch { /* a stub or a browser that throws synchronously */ }
   });
 }
 
