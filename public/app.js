@@ -42,7 +42,9 @@ const BOUNDS = {
   reps: { min: 1, max: 500, label: 'Reps', unit: '' },
   weight: { min: 0, max: 1000, label: 'Weight', unit: 'kg' },
   calories: { min: 1, max: 10000, label: 'Calories', unit: 'kcal' },
-  bodyweight: { min: 20, max: 400, label: 'Weight', unit: 'kg' }
+  bodyweight: { min: 20, max: 400, label: 'Weight', unit: 'kg' },
+  grams: { min: 1, max: 5000, label: 'Amount', unit: 'g' },
+  servings: { min: 0.25, max: 50, label: 'How many', unit: '' }
 };
 
 function checkNumber(raw, kind) {
@@ -93,6 +95,117 @@ function validateMeal(name, rawCalories) {
   const r = checkNumber(rawCalories, 'calories');
   if (!r.ok) return { ok: false, message: r.message };
   return { ok: true, meal: { name: trimmed, calories: r.value } };
+}
+
+// ---------- food library ----------
+// Typing a calorie number for every meal means guessing one, so the number in
+// the app is only as good as the guess. This is the smallest thing that removes
+// the guess without a model or a network call: a short table of foods Edvard
+// actually eats, with the amount doing the arithmetic. It is deliberately not a
+// nutrition database -- a real one is thousands of rows and belongs behind an
+// API (idea #205). Anything not in here still goes in by hand, which is why the
+// free-text path below is kept rather than replaced.
+//
+// `unit: 'g'` rows carry values per 100 g. `unit: 'each'` rows carry values per
+// one of the thing. Sources are the standard published values for the raw or
+// cooked form named; they are round numbers on purpose, because a meal logged
+// to one decimal is false precision.
+const FOODS = [
+  { name: 'Chicken breast, cooked', unit: 'g', kcal: 165, protein: 31, carbs: 0, fat: 3.6 },
+  { name: 'Salmon, cooked', unit: 'g', kcal: 208, protein: 20, carbs: 0, fat: 13 },
+  { name: 'Beef mince, 5% fat, cooked', unit: 'g', kcal: 176, protein: 26, carbs: 0, fat: 8 },
+  { name: 'Cod, cooked', unit: 'g', kcal: 105, protein: 23, carbs: 0, fat: 1 },
+  { name: 'Tuna, canned in water', unit: 'g', kcal: 116, protein: 26, carbs: 0, fat: 1 },
+  { name: 'Egg', unit: 'each', kcal: 78, protein: 6.3, carbs: 0.6, fat: 5.3 },
+  { name: 'Greek yoghurt, 2%', unit: 'g', kcal: 73, protein: 10, carbs: 4, fat: 2 },
+  { name: 'Cottage cheese', unit: 'g', kcal: 98, protein: 11, carbs: 3.4, fat: 4.3 },
+  { name: 'Milk, semi-skimmed', unit: 'g', kcal: 50, protein: 3.4, carbs: 4.8, fat: 1.8 },
+  { name: 'Whey protein powder', unit: 'g', kcal: 400, protein: 80, carbs: 8, fat: 6 },
+  { name: 'Rice, cooked', unit: 'g', kcal: 130, protein: 2.7, carbs: 28, fat: 0.3 },
+  { name: 'Pasta, cooked', unit: 'g', kcal: 158, protein: 5.8, carbs: 31, fat: 0.9 },
+  { name: 'Potato, boiled', unit: 'g', kcal: 87, protein: 2, carbs: 20, fat: 0.1 },
+  { name: 'Sweet potato, baked', unit: 'g', kcal: 90, protein: 2, carbs: 21, fat: 0.2 },
+  { name: 'Oats, dry', unit: 'g', kcal: 379, protein: 13, carbs: 67, fat: 7 },
+  { name: 'Bread, wholemeal slice', unit: 'each', kcal: 82, protein: 4, carbs: 14, fat: 1.1 },
+  { name: 'Crispbread (knekkebrod)', unit: 'each', kcal: 35, protein: 1, carbs: 7, fat: 0.3 },
+  { name: 'Banana', unit: 'each', kcal: 105, protein: 1.3, carbs: 27, fat: 0.4 },
+  { name: 'Apple', unit: 'each', kcal: 95, protein: 0.5, carbs: 25, fat: 0.3 },
+  { name: 'Blueberries', unit: 'g', kcal: 57, protein: 0.7, carbs: 14, fat: 0.3 },
+  { name: 'Broccoli, cooked', unit: 'g', kcal: 35, protein: 2.4, carbs: 7, fat: 0.4 },
+  { name: 'Mixed salad', unit: 'g', kcal: 17, protein: 1.4, carbs: 3, fat: 0.2 },
+  { name: 'Avocado', unit: 'each', kcal: 240, protein: 3, carbs: 13, fat: 22 },
+  { name: 'Almonds', unit: 'g', kcal: 579, protein: 21, carbs: 22, fat: 50 },
+  { name: 'Peanut butter', unit: 'g', kcal: 588, protein: 25, carbs: 20, fat: 50 },
+  { name: 'Olive oil', unit: 'g', kcal: 884, protein: 0, carbs: 0, fat: 100 },
+  { name: 'Cheese, brown (brunost)', unit: 'g', kcal: 466, protein: 9, carbs: 41, fat: 30 },
+  { name: 'Cheese, yellow', unit: 'g', kcal: 371, protein: 25, carbs: 1.3, fat: 30 },
+  { name: 'Beans, kidney, cooked', unit: 'g', kcal: 127, protein: 8.7, carbs: 23, fat: 0.5 },
+  { name: 'Protein bar', unit: 'each', kcal: 200, protein: 20, carbs: 20, fat: 6 }
+];
+
+// A name-start match is what someone typing "ch" is after; a mid-word match is
+// a fallback, not a peer, so the two are ranked rather than merged.
+function searchFoods(query, limit) {
+  const q = String(query == null ? '' : query).trim().toLowerCase();
+  if (!q) return [];
+  const starts = [];
+  const contains = [];
+  FOODS.forEach((food, index) => {
+    const name = food.name.toLowerCase();
+    if (name.startsWith(q)) starts.push({ food, index });
+    else if (name.includes(q)) contains.push({ food, index });
+  });
+  return starts.concat(contains).slice(0, limit == null ? 6 : limit);
+}
+
+const foodUnitLabel = (food) => (food.unit === 'g' ? 'g' : (food.name.toLowerCase().endsWith('s') ? '' : 'x'));
+
+// Values are per 100 g for a weighed food and per one of the thing otherwise,
+// so the scale factor is the only difference between the two kinds.
+function portionFrom(food, rawAmount) {
+  const kind = food.unit === 'g' ? 'grams' : 'servings';
+  const r = checkNumber(rawAmount, kind);
+  if (!r.ok) return r;
+  const factor = food.unit === 'g' ? r.value / 100 : r.value;
+  const round1 = (n) => Math.round(n * 10) / 10;
+  const amountText = food.unit === 'g' ? `${r.value} g` : `${r.value}x`;
+  return {
+    ok: true,
+    meal: {
+      name: `${food.name} (${amountText})`,
+      calories: Math.round(food.kcal * factor),
+      protein: round1(food.protein * factor),
+      carbs: round1(food.carbs * factor),
+      fat: round1(food.fat * factor)
+    }
+  };
+}
+
+// The foods someone actually eats are a much better list than any table I can
+// ship, and the app already has them: they are in the log. Most recent first,
+// one row per name, so re-logging yesterday's breakfast is one tap.
+function recentMeals(meals, limit) {
+  const sorted = (meals || []).slice().sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  const seen = Object.create(null);
+  const out = [];
+  for (const m of sorted) {
+    const key = String(m.name).toLowerCase();
+    if (key in seen) continue;
+    seen[key] = true;
+    out.push({ name: m.name, calories: m.calories, protein: m.protein || 0, carbs: m.carbs || 0, fat: m.fat || 0 });
+    if (out.length >= (limit == null ? 6 : limit)) break;
+  }
+  return out;
+}
+
+function macroTotals(meals) {
+  const round1 = (n) => Math.round(n * 10) / 10;
+  return (meals || []).reduce((t, m) => ({
+    calories: t.calories + (m.calories || 0),
+    protein: round1(t.protein + (m.protein || 0)),
+    carbs: round1(t.carbs + (m.carbs || 0)),
+    fat: round1(t.fat + (m.fat || 0))
+  }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
 
 function validateBodyweight(rawKg) {
@@ -274,7 +387,7 @@ function seed() {
       const count = 2 + Math.floor(Math.random() * 2);
       for (let m = 0; m < count; m++) {
         const [name, cal, p, c, f] = sample[Math.floor(Math.random() * sample.length)];
-        meals.push({ id: uid(), date: fmtDate(d), time: `${7 + m * 4}:00`, name, calories: cal, protein: p, carbs: c, fat: f });
+        meals.push({ id: uid(), date: fmtDate(d), time: `${String(7 + m * 4).padStart(2, '0')}:00`, name, calories: cal, protein: p, carbs: c, fat: f });
       }
     }
     store.set('meals', meals);
@@ -515,30 +628,57 @@ function deleteSession(id) {
 }
 
 // ---------- nutrition ----------
+// Which food is picked and which recent meals are on screen are UI state, not
+// stored data, so they live here rather than in `store`.
+let foodPickIndex = null;
+let recentMealCache = [];
+
+function saveMeal(meal) {
+  const all = store.get('meals', []);
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  all.push({
+    id: uid(), date: todayStr(), time,
+    name: meal.name, calories: meal.calories,
+    protein: meal.protein || 0, carbs: meal.carbs || 0, fat: meal.fat || 0
+  });
+  return store.set('meals', all);
+}
+
 function renderNutrition() {
   const meals = store.get('meals', []);
   const today = meals.filter(m => m.date === todayStr()).sort((a, b) => a.time.localeCompare(b.time));
   const goal = 2400;
-  const kcal = today.reduce((s, m) => s + m.calories, 0);
-  const pct = Math.min(100, Math.round((kcal / goal) * 100));
+  const totals = macroTotals(today);
+  const pct = Math.min(100, Math.round((totals.calories / goal) * 100));
+  recentMealCache = recentMeals(meals, 6);
 
   view.innerHTML = `
     <div class="card">
-      <div class="card__title-row"><h2>Today</h2><span class="chip chip--primary">${kcal} / ${goal} kcal</span></div>
+      <div class="card__title-row"><h2>Today</h2><span class="chip chip--primary">${totals.calories} / ${goal} kcal</span></div>
       <div style="height:8px;border-radius:4px;background:var(--md-surface-variant);overflow:hidden">
         <div style="height:100%;width:${pct}%;background:var(--md-secondary)"></div>
       </div>
+      <div class="macro-row"><span>Protein ${totals.protein} g</span><span>Carbs ${totals.carbs} g</span><span>Fat ${totals.fat} g</span></div>
     </div>
     <div class="card">
       <h2>Add a meal</h2>
-      <div class="field"><label>What did you eat</label><input id="mealName" type="text" placeholder="e.g. Chicken, rice, broccoli"></div>
-      <div class="field"><label>Calories (kcal)</label><input id="mealCal" type="number" min="0" placeholder="e.g. 600"></div>
-      <button class="btn btn--filled btn--block" id="addMeal"><span class="material-icons-round">add</span> Add meal</button>
+      ${recentMealCache.length ? `<div class="chip-row">${recentMealCache.map((r, i) =>
+        `<button class="chip" onclick="addRecentMeal(${i})">${esc(r.name)} · ${r.calories} kcal</button>`).join('')}</div>` : ''}
+      <div class="field"><label>Search foods</label><input id="foodSearch" type="text" autocomplete="off" placeholder="e.g. chicken, oats, banana"></div>
+      <div id="foodResults"></div>
+      <div id="foodPicked"></div>
+      <details class="manual-meal">
+        <summary>Not in the list? Type it in yourself</summary>
+        <div class="field"><label>What did you eat</label><input id="mealName" type="text" placeholder="e.g. Chicken, rice, broccoli"></div>
+        <div class="field"><label>Calories (kcal)</label><input id="mealCal" type="number" min="0" placeholder="e.g. 600"></div>
+        <button class="btn btn--filled btn--block" id="addMeal"><span class="material-icons-round">add</span> Add meal</button>
+      </details>
     </div>
     <div class="section-title">Logged today</div>
     <div id="mealList">${today.length ? today.map(m => `
       <div class="list-item">
-        <div><div>${esc(m.name)}</div><div class="list-item__meta">${esc(m.time)}</div></div>
+        <div><div>${esc(m.name)}</div><div class="list-item__meta">${esc(m.time)} · P ${m.protein || 0} g · C ${m.carbs || 0} g · F ${m.fat || 0} g</div></div>
         <div style="display:flex;align-items:center;gap:8px">
           <span>${m.calories} kcal</span>
           <button class="icon-btn" onclick="deleteMeal('${m.id}')"><span class="material-icons-round">delete</span></button>
@@ -546,16 +686,84 @@ function renderNutrition() {
       </div>`).join('') : `<div class="empty">No meals logged today.</div>`}</div>
   `;
 
+  const search = document.getElementById('foodSearch');
+  search.addEventListener('input', () => {
+    foodPickIndex = null;
+    renderFoodResults(search.value);
+    renderFoodPick();
+  });
+  renderFoodResults('');
+  renderFoodPick();
+
   document.getElementById('addMeal').addEventListener('click', () => {
     const result = validateMeal(document.getElementById('mealName').value, document.getElementById('mealCal').value);
     if (!result.ok) { toast(result.message); return; }
-    const all = store.get('meals', []);
-    const now = new Date();
-    all.push({ id: uid(), date: todayStr(), time: `${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`, name: result.meal.name, calories: result.meal.calories, protein: 0, carbs: 0, fat: 0 });
-    if (!store.set('meals', all)) return;
+    if (!saveMeal(result.meal)) return;
     renderNutrition();
   });
 }
+
+function renderFoodResults(query) {
+  const box = document.getElementById('foodResults');
+  if (!box) return;
+  const hits = searchFoods(query);
+  if (!hits.length) {
+    box.innerHTML = String(query || '').trim()
+      ? `<div class="list-item__meta">Nothing matched. Type it in yourself below.</div>` : '';
+    return;
+  }
+  box.innerHTML = hits.map(h => `
+    <div class="list-item">
+      <div><div>${esc(h.food.name)}</div><div class="list-item__meta">${h.food.kcal} kcal ${h.food.unit === 'g' ? 'per 100 g' : 'each'}</div></div>
+      <button class="btn btn--tonal" onclick="pickFood(${h.index})">Pick</button>
+    </div>`).join('');
+}
+
+function renderFoodPick() {
+  const box = document.getElementById('foodPicked');
+  if (!box) return;
+  if (foodPickIndex == null) { box.innerHTML = ''; return; }
+  const food = FOODS[foodPickIndex];
+  box.innerHTML = `
+    <div class="food-pick">
+      <div class="card__title-row"><h2>${esc(food.name)}</h2>
+        <button class="icon-btn" onclick="clearFoodPick()"><span class="material-icons-round">close</span></button></div>
+      <div class="field"><label>${food.unit === 'g' ? 'Amount (g)' : 'How many'}</label>
+        <input id="foodAmount" type="number" min="0" step="${food.unit === 'g' ? '10' : '1'}" value="${food.unit === 'g' ? 100 : 1}"></div>
+      <div class="list-item__meta" id="foodPreview"></div>
+      <button class="btn btn--filled btn--block" id="addPicked"><span class="material-icons-round">add</span> Add to today</button>
+    </div>`;
+
+  const amount = document.getElementById('foodAmount');
+  const preview = document.getElementById('foodPreview');
+  const update = () => {
+    const r = portionFrom(food, amount.value);
+    preview.textContent = r.ok
+      ? `${r.meal.calories} kcal · P ${r.meal.protein} g · C ${r.meal.carbs} g · F ${r.meal.fat} g`
+      : r.message;
+  };
+  amount.addEventListener('input', update);
+  update();
+
+  document.getElementById('addPicked').addEventListener('click', () => {
+    const r = portionFrom(food, amount.value);
+    if (!r.ok) { toast(r.message); return; }
+    if (!saveMeal(r.meal)) return;
+    foodPickIndex = null;
+    renderNutrition();
+  });
+}
+
+function pickFood(index) { foodPickIndex = index; renderFoodPick(); }
+function clearFoodPick() { foodPickIndex = null; renderFoodPick(); }
+
+function addRecentMeal(index) {
+  const meal = recentMealCache[index];
+  if (!meal) return;
+  if (!saveMeal(meal)) return;
+  renderNutrition();
+}
+
 function deleteMeal(id) {
   store.set('meals', store.get('meals', []).filter(m => m.id !== id));
   renderNutrition();
