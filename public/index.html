@@ -9,8 +9,19 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Flex:opsz,wght@10..144,400..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Round">
+<!-- Every third-party asset below loads without blocking the parser, and that is
+     the whole point rather than a performance tweak. A render-blocking
+     stylesheet also blocks the scripts after it, because a script may read
+     computed style -- so with fonts.googleapis.com stalled (connected, never
+     answering) app.js never ran, the static shell painted anyway, and nothing
+     on the page responded to a tap. Measured 2026-08-31 in Chromium at
+     360x697: dead for the whole 45s budget, `typeof switchTab === "undefined"`.
+     sw.js bounds this from the second visit on; a worker cannot rescue the
+     first one, which is the visit this markup has to survive on its own.
+     media="print" is the standard trick: not applied at parse time, therefore
+     not blocking, then switched to all once it has arrived. -->
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Flex:opsz,wght@10..144,400..700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -84,7 +95,10 @@
   </div>
 </template>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<!-- async, so a stalled CDN cannot stop app.js from ever executing. The Progress
+     tab is the only thing that needs Chart, it checks for it, and this event is
+     how it redraws itself if the library turns up after the tab is already open. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" async onload="window.dispatchEvent(new Event('chartjs-ready'))"></script>
 <script src="app.js"></script>
 </body>
 </html>
