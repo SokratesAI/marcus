@@ -44,8 +44,17 @@ const BOUNDS = {
   calories: { min: 1, max: 10000, label: 'Calories', unit: 'kcal' },
   bodyweight: { min: 20, max: 400, label: 'Weight', unit: 'kg' },
   grams: { min: 1, max: 5000, label: 'Amount', unit: 'g' },
-  servings: { min: 0.25, max: 50, label: 'How many', unit: '' }
+  servings: { min: 0.25, max: 50, label: 'How many', unit: '' },
+  minutes: { min: 1, max: 1440, label: 'Duration', unit: 'min' },
+  distance: { min: 0.1, max: 500, label: 'Distance', unit: 'km' }
 };
+
+// A session is either strength (exercises, sets, kilograms) or cardio (one
+// activity, a duration, sometimes a distance). Sessions written before this
+// existed carry no `kind` at all, so absent means strength -- that keeps every
+// stored session readable without a migration.
+const CARDIO_ACTIVITIES = ['Run', 'Bike', 'Swim', 'Row', 'Ski', 'Walk', 'Other'];
+function sessionKind(session) { return session && session.kind === 'cardio' ? 'cardio' : 'strength'; }
 
 function checkNumber(raw, kind) {
   const b = BOUNDS[kind];
@@ -87,6 +96,41 @@ function validateSession(rows) {
   }
   if (!exercises.length) return { ok: false, message: 'Fill in at least one exercise before saving.' };
   return { ok: true, exercises };
+}
+
+// Distance is optional on purpose: a pool swim, a spin class and a treadmill
+// walk are all real sessions with no kilometres attached, and demanding one
+// would push the user to invent a number. Duration is what every cardio
+// session has, so that is the required field.
+function validateCardio(rawActivity, rawMinutes, rawDistance) {
+  const activity = String(rawActivity == null ? '' : rawActivity).trim();
+  if (!activity) return { ok: false, message: 'Pick what you did.' };
+  const m = checkNumber(rawMinutes, 'minutes');
+  if (!m.ok) return { ok: false, message: m.message };
+  const distText = String(rawDistance == null ? '' : rawDistance).trim();
+  let distance = null;
+  if (distText) {
+    const d = checkNumber(distText, 'distance');
+    if (!d.ok) return { ok: false, message: d.message };
+    distance = d.value;
+  }
+  return { ok: true, cardio: { activity, minutes: m.value, distance } };
+}
+
+// Pace is minutes per kilometre, written the way a watch writes it. It needs
+// both numbers, so a session with no distance has no pace rather than a zero.
+function paceLabel(minutes, distance) {
+  if (!(minutes > 0) || !(distance > 0)) return null;
+  const seconds = Math.round((minutes / distance) * 60);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} /km`;
+}
+
+function cardioSummary(session) {
+  const parts = [`${session.minutes} min`];
+  if (session.distance > 0) parts.push(`${session.distance} km`);
+  const pace = paceLabel(session.minutes, session.distance);
+  if (pace) parts.push(pace);
+  return parts.join(' \u00b7 ');
 }
 
 function validateMeal(name, rawCalories) {
@@ -595,15 +639,39 @@ function deleteGoal(id) {
 }
 
 // ---------- log ----------
+// Which kind of session the Log tab is showing is UI state, not stored data,
+// so it lives here beside the food picker's own index.
+let logKind = 'strength';
+
 function renderLog() {
   const plan = store.get('plan');
+  const cardio = logKind === 'cardio';
   view.innerHTML = `
     <div class="card">
       <h2>Log a session</h2>
+      <div class="seg" id="logKind" role="tablist">
+        <button type="button" class="seg__btn ${cardio ? '' : 'seg__btn--on'}" id="logKindStrength" role="tab" aria-selected="${cardio ? 'false' : 'true'}">Strength</button>
+        <button type="button" class="seg__btn ${cardio ? 'seg__btn--on' : ''}" id="logKindCardio" role="tab" aria-selected="${cardio ? 'true' : 'false'}">Cardio</button>
+      </div>
       <div class="field">
         <label>Date</label>
         <input type="date" id="logDate" value="${todayStr()}">
       </div>
+      ${cardio ? `
+      <div class="field">
+        <label>Activity</label>
+        <select id="cardioActivity">${CARDIO_ACTIVITIES.map(a => `<option value="${a}">${a}</option>`).join('')}</select>
+      </div>
+      <div class="field">
+        <label>Duration (minutes)</label>
+        <input type="number" id="cardioMinutes" min="1" step="1" placeholder="e.g. 45">
+      </div>
+      <div class="field">
+        <label>Distance (km) — optional</label>
+        <input type="number" id="cardioDistance" min="0" step="0.01" placeholder="leave blank for a pool swim or a class">
+      </div>
+      <button type="button" class="btn btn--filled btn--block" id="saveCardio" style="margin-top:14px">Save session</button>
+      ` : `
       <div class="field">
         <label>Day / focus</label>
         <select id="logDay">${plan.days.map(d => `<option value="${d.day}">${d.day} — ${d.focus}</option>`).join('')}</select>
@@ -611,10 +679,31 @@ function renderLog() {
       <div id="exerciseRows"></div>
       <button type="button" class="btn btn--tonal" id="addExercise"><span class="material-icons-round">add</span> Add exercise</button>
       <button type="button" class="btn btn--filled btn--block" id="saveSession" style="margin-top:14px">Save session</button>
+      `}
     </div>
     <div class="section-title">Recent sessions</div>
     <div id="recentSessions"></div>
   `;
+
+  document.getElementById('logKindStrength').addEventListener('click', () => { logKind = 'strength'; renderLog(); });
+  document.getElementById('logKindCardio').addEventListener('click', () => { logKind = 'cardio'; renderLog(); });
+
+  if (cardio) {
+    document.getElementById('saveCardio').addEventListener('click', () => {
+      const result = validateCardio(
+        document.getElementById('cardioActivity').value,
+        document.getElementById('cardioMinutes').value,
+        document.getElementById('cardioDistance').value
+      );
+      if (!result.ok) { toast(result.message); return; }
+      const sessions = store.get('sessions', []);
+      sessions.push({ id: uid(), date: document.getElementById('logDate').value, kind: 'cardio', ...result.cardio });
+      if (!store.set('sessions', sessions)) return;
+      renderLog();
+    });
+    renderRecentSessions();
+    return;
+  }
 
   const tpl = document.getElementById('tpl-log-exercise-row');
   const rows = document.getElementById('exerciseRows');
@@ -648,22 +737,36 @@ function renderLog() {
     })));
     if (!result.ok) { toast(result.message); return; }
     const sessions = store.get('sessions', []);
-    sessions.push({ id: uid(), date: document.getElementById('logDate').value, day: document.getElementById('logDay').value, exercises: result.exercises });
+    sessions.push({ id: uid(), date: document.getElementById('logDate').value, kind: 'strength', day: document.getElementById('logDay').value, exercises: result.exercises });
     if (!store.set('sessions', sessions)) return;
     switchTab('log');
   });
 
-  const recent = store.get('sessions', []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
-  document.getElementById('recentSessions').innerHTML = recent.length ? recent.map(s => {
-    const volume = s.exercises.reduce((sum, e) => sum + e.sets.reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
+  renderRecentSessions();
+}
+
+function sessionCard(s) {
+  const del = `<button class="icon-btn" onclick="deleteSession('${s.id}')"><span class="material-icons-round">delete</span></button>`;
+  if (sessionKind(s) === 'cardio') {
     return `<div class="card">
-      <div class="card__title-row"><h2>${niceDate(s.date)} · ${s.day}</h2>
-        <button class="icon-btn" onclick="deleteSession('${s.id}')"><span class="material-icons-round">delete</span></button>
-      </div>
-      ${s.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets</span></div>`).join('')}
-      <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">Volume: ${Math.round(volume).toLocaleString()} kg</div>
+      <div class="card__title-row"><h2>${niceDate(s.date)} · ${esc(s.activity)}</h2>${del}</div>
+      <div class="exercise-line"><span>${esc(cardioSummary(s))}</span><span>cardio</span></div>
     </div>`;
-  }).join('') : `<div class="empty">No sessions logged yet.</div>`;
+  }
+  const exercises = s.exercises || [];
+  const volume = exercises.reduce((sum, e) => sum + e.sets.reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
+  return `<div class="card">
+    <div class="card__title-row"><h2>${niceDate(s.date)} · ${esc(s.day || 'Session')}</h2>${del}</div>
+    ${exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets</span></div>`).join('')}
+    <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">Volume: ${Math.round(volume).toLocaleString()} kg</div>
+  </div>`;
+}
+
+function renderRecentSessions() {
+  const recent = store.get('sessions', []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  document.getElementById('recentSessions').innerHTML = recent.length
+    ? recent.map(sessionCard).join('')
+    : `<div class="empty">No sessions logged yet.</div>`;
 }
 function deleteSession(id) {
   store.set('sessions', store.get('sessions', []).filter(s => s.id !== id));
@@ -820,7 +923,7 @@ function weeklyVolumes() {
     const d = new Date(s.date + 'T00:00');
     const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     const key = fmtDate(monday);
-    const vol = s.exercises.reduce((sum, e) => sum + e.sets.reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
+    const vol = (s.exercises || []).reduce((sum, e) => sum + e.sets.reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
     buckets[key] = (buckets[key] || 0) + vol;
   });
   return Object.entries(buckets).sort(([a],[b]) => a.localeCompare(b));
