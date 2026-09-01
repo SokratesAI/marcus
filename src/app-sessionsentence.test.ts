@@ -129,6 +129,9 @@ describe("parseSessionSentence — cardio", () => {
     expect(r.cardio.distance).toBe(7);
     expect(r.date).toBe(TUE);
     expect(r.injury).toBe(true);
+    // "take it easy next run" is about the next run. Reading a feel out of it
+    // would write a report of this session that he never made.
+    expect(r.feel).toBe(null);
   });
 
   it("leaves the duration null and names it as missing rather than deriving it from the distance", () => {
@@ -309,5 +312,58 @@ describe("renderLog with a sentence in hand", () => {
     ctx.logSentence = null;
     ctx.logKind = "strength";
     expect(() => ctx.renderLog()).not.toThrow();
+  });
+});
+
+describe("a feel is read from what you did, not from what you plan to do", () => {
+  it("ignores easy in a clause about the next session", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("ran 5 km, want to take it easy next time", PLAN, TUE).feel).toBe(null);
+  });
+
+  it("still reads a feel from the clause about this session", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("ran 5 km, felt hard, will take it easy next run", PLAN, TUE);
+    expect(r.feel).toBe("hard");
+  });
+
+  it("reads a plain feel with no future clause at all", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("ran 5 km, felt easy", PLAN, TUE).feel).toBe("easy");
+  });
+
+  it("keeps the injury flag, which is about what already happened", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("ran 5 km, sore knee, want to take it easy next run", PLAN, TUE);
+    expect(r.injury).toBe(true);
+    expect(r.feel).toBe(null);
+  });
+});
+
+describe("which half of a sentence the feel comes from", () => {
+  it("reads the feel before a 'so', when the intention follows it", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("ran 5 km felt hard so I will rest tomorrow", PLAN, TUE).feel).toBe("hard");
+  });
+
+  it("reads the feel before a 'but'", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("ran 5 km felt good but I want to go harder", PLAN, TUE).feel).toBe("good");
+  });
+
+  it("drops a feel in a bare intention with no future time word", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("ran 5 km, want to take it easy", PLAN, TUE).feel).toBe(null);
+  });
+
+  it("drops a feel in a bare future time clause with no intention phrase", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("ran 5 km, next run easy", PLAN, TUE).feel).toBe(null);
+  });
+
+  it("still reads an injury named in a forward-looking clause, because the injury is real either way", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("ran 5 km, will rest tomorrow because my knee is sore", PLAN, TUE);
+    expect(r.injury).toBe(true);
   });
 });
