@@ -666,6 +666,7 @@ function renderHome() {
   // what turns a far-off date into something today can be measured against.
   const nextGoal = goalsSorted()[0];
   const nextPhase = nextGoal && nextGoal.milestones.find(m => !m.done);
+  const week = weekTarget(nextGoal, plan, store.get('sessions', []), todayStr());
 
   view.innerHTML = `
     <div class="card">
@@ -686,6 +687,14 @@ function renderHome() {
       <div class="card__title-row"><h2>${esc(nextGoal.text)}</h2><span class="chip chip--primary">${esc(goalCountdown(nextGoal.targetDate))}</span></div>
       ${nextPhase ? `<div class="exercise-line"><span>${esc(nextPhase.label)} phase</span><span>through ${niceDate(nextPhase.date)}</span></div>`
                   : `<div class="empty">Every phase ticked off — target day is the only thing left.</div>`}
+    </div>` : ``}
+
+    ${week.phase ? `
+    <div class="section-title">This week</div>
+    <div class="card">
+      <div class="card__title-row"><h2>${esc(week.phase)} phase</h2><span class="chip chip--primary">${week.sessionsDone}/${week.sessionsPlanned} sessions</span></div>
+      ${week.volumeTarget != null ? `<div class="exercise-line"><span>Volume</span><span>${week.volumeDone} / ${week.volumeTarget} kg</span></div>` : ``}
+      <div class="card__note">${esc(weekTargetLabel(week))}</div>
     </div>` : ``}
 
     <div class="section-title">Today's nutrition</div>
@@ -1153,6 +1162,16 @@ function deleteMeal(id) {
 }
 
 // ---------- progress ----------
+// Kilograms lifted in one session. This was about to be written out a third
+// time, and the two copies that already existed had drifted: dailyLoads guarded
+// an exercise row with no `sets` array and weeklyVolumes did not, so the same
+// malformed row counted zero on the Progress chart and threw on the volume
+// chart. One definition, three callers.
+function sessionVolume(session) {
+  return ((session && session.exercises) || []).reduce(
+    (sum, e) => sum + ((e && e.sets) || []).reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
+}
+
 function weeklyVolumes() {
   const sessions = store.get('sessions', []);
   const buckets = {};
@@ -1160,8 +1179,7 @@ function weeklyVolumes() {
     const d = new Date(s.date + 'T00:00');
     const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     const key = fmtDate(monday);
-    const vol = (s.exercises || []).reduce((sum, e) => sum + e.sets.reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
-    buckets[key] = (buckets[key] || 0) + vol;
+    buckets[key] = (buckets[key] || 0) + sessionVolume(s);
   });
   return Object.entries(buckets).sort(([a],[b]) => a.localeCompare(b));
 }
@@ -1192,10 +1210,8 @@ function dailyLoads(sessions) {
   const byDay = {};
   (sessions || []).forEach(s => {
     if (!s || !s.date) return;
-    const vol = (s.exercises || []).reduce(
-      (sum, e) => sum + (e.sets || []).reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
     const k = dayKey(s.date);
-    byDay[k] = (byDay[k] || 0) + vol;
+    byDay[k] = (byDay[k] || 0) + sessionVolume(s);
   });
   return byDay;
 }
@@ -1404,6 +1420,108 @@ function applyProposal(plan, proposal) {
     if (day) { day.focus = 'Rest'; day.exercises = []; }
   }
   return next;
+}
+
+// ---------- this week, sized from the goal's phase (idea #209) ----------
+// The goal already cuts the window into phases with dates on them, and the plan
+// already says which days are training days. What was missing is the step
+// between them: what THIS week is supposed to look like.
+//
+// The multipliers below are not research and Marcus does not pretend they are.
+// They are the phase notes in GOAL_PHASES read as arithmetic -- Base says
+// "volume over intensity" so it grows, Build says "the volume holds" so it
+// holds, Peak sharpens so it trims, Taper says "cut volume" so it cuts. What
+// makes the kilogram number mean anything is the other half: it is a multiple
+// of YOUR OWN recent weekly average, never a number this app invented.
+const PHASE_VOLUME = { Base: 1.10, Build: 1.00, Peak: 0.90, Taper: 0.60 };
+const WEEK_BASELINE_WEEKS = 4;
+// Below this, the average is one week wearing a plural. Say so instead.
+const WEEK_MIN_BASELINE_WEEKS = 2;
+
+// Monday of the week containing `iso`, in UTC, same as dayKey/shiftDay.
+function weekStartOf(iso) {
+  const k = dayKey(iso);
+  return shiftDay(k, -((new Date(k + 'T00:00:00Z').getUTCDay() + 6) % 7));
+}
+
+// The phase you are in by the calendar -- the first one whose date has not
+// passed. Deliberately not "the first one not ticked": an untidied tickbox
+// from six weeks ago should not decide what this week does.
+function currentPhase(goal, todayISO) {
+  const today = dayKey(todayISO || todayStr());
+  return ((goal && goal.milestones) || []).find(m => m && m.date >= today) || null;
+}
+
+function weekTarget(goal, plan, sessions, todayISO) {
+  const today = dayKey(todayISO || todayStr());
+  const start = weekStartOf(today);
+  const list = sessions || [];
+  const inWeek = list.filter(s => s && s.date && dayKey(s.date) >= start && dayKey(s.date) <= today);
+  // A cardio session counts toward the session count and contributes zero
+  // kilograms, which is the same boundary the load model draws.
+  const base = {
+    phase: null, phaseEnds: null, multiplier: null, baseline: null, baselineWeeks: 0,
+    volumeTarget: null,
+    volumeDone: inWeek.reduce((sum, s) => sum + sessionVolume(s), 0),
+    sessionsPlanned: planTrainingDays(plan).length,
+    sessionsDone: inWeek.length,
+  };
+
+  const phase = currentPhase(goal, today);
+  if (!phase) {
+    return Object.assign(base, {
+      reason: goal ? 'phases done' : 'no goal',
+      note: goal ? 'Every phase date has passed — the target day is the only thing left.'
+                 : 'No goal yet, so there is no phase to size the week from.',
+    });
+  }
+  const multiplier = PHASE_VOLUME[phase.label];
+  Object.assign(base, { phase: phase.label, phaseEnds: phase.date, multiplier: multiplier == null ? null : multiplier });
+
+  const dates = list.map(s => (s && s.date) ? dayKey(s.date) : null).filter(Boolean).sort();
+  const firstWeek = dates.length ? weekStartOf(dates[0]) : null;
+  const byWeek = {};
+  list.forEach(s => {
+    if (!s || !s.date) return;
+    byWeek[weekStartOf(s.date)] = (byWeek[weekStartOf(s.date)] || 0) + sessionVolume(s);
+  });
+  // Completed calendar weeks, including ones with nothing in them -- a week off
+  // is part of the average, and dropping it is how "trains every other week"
+  // turns into "trains every week". Weeks before the first session ever logged
+  // are not history, so they are left out rather than counted as zeros.
+  const covered = [];
+  for (let i = 1; i <= WEEK_BASELINE_WEEKS; i++) {
+    const k = shiftDay(start, -7 * i);
+    if (firstWeek && k >= firstWeek) covered.push(k);
+  }
+  base.baselineWeeks = covered.length;
+  if (multiplier == null) {
+    return Object.assign(base, { reason: 'unknown phase',
+      note: 'Marcus has no volume rule for a ' + phase.label + ' phase, so this week carries the session count only.' });
+  }
+  if (covered.length < WEEK_MIN_BASELINE_WEEKS) {
+    return Object.assign(base, { reason: 'too early',
+      note: 'Marcus sets a kilogram target once ' + WEEK_MIN_BASELINE_WEEKS
+            + ' full weeks are logged. ' + covered.length + ' so far.' });
+  }
+  const baseline = Math.round(covered.reduce((sum, k) => sum + (byWeek[k] || 0), 0) / covered.length);
+  return Object.assign(base, {
+    reason: 'ok', baseline, volumeTarget: Math.round(baseline * multiplier),
+    note: null,
+  });
+}
+
+// One plain sentence, so the card is not a row of numbers a reader has to know
+// the rule to decode.
+function weekTargetLabel(week) {
+  if (!week) return '';
+  if (week.note) return week.note;
+  const pct = Math.round(Math.abs(week.multiplier - 1) * 100);
+  const direction = week.multiplier > 1 ? pct + '% above' : week.multiplier < 1 ? pct + '% below' : 'level with';
+  // Always plural: a baseline under WEEK_MIN_BASELINE_WEEKS never reaches here.
+  return week.phase + ' phase through ' + niceDate(week.phaseEnds) + ' — your last '
+    + week.baselineWeeks + ' weeks averaged ' + week.baseline + ' kg, so this week aims '
+    + direction + ' that.';
 }
 
 function trainingLoadCard(load) {
