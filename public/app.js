@@ -1,4 +1,8 @@
 // ---------- storage helpers ----------
+// Set once the server-copy code below is defined. It is a hook rather than a
+// direct call because `store` is the first thing in this file and the sync code
+// needs the backup helpers, which are near the bottom.
+let onStoreWrite = null;
 const store = {
   // Anything localStorage refused stays here so the app keeps working for the
   // rest of the session instead of rendering against an empty store. It is
@@ -14,6 +18,7 @@ const store = {
     try {
       localStorage.setItem('marcus.' + key, JSON.stringify(val));
       delete this._unsaved[key];
+      if (onStoreWrite) onStoreWrite(key);
       return true;
     } catch (err) {
       this._unsaved[key] = val;
@@ -1596,10 +1601,12 @@ function renderProgress() {
     <div class="section-title">Your data</div>
     <div class="card">
       <h2>Backup</h2>
-      <p class="card__note">Everything Marcus knows is kept in this browser and nowhere else. Clearing site data or changing phone loses it. Save a copy you keep.</p>
+      <p class="card__note">Marcus keeps a copy on the server as well as in this browser, and a file you save yourself is the third. Clearing site data or changing phone loses the browser copy only.</p>
+      <div id="serverCopy" class="card__note" style="margin-bottom:10px"></div>
       <button class="btn btn--filled btn--block" id="exportData"><span class="material-icons-round">download</span> Save a backup file</button>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
       <button class="btn btn--tonal btn--block" id="importData" style="margin-top:10px"><span class="material-icons-round">upload</span> Restore from a file</button>
+      <button class="btn btn--tonal btn--block" id="loadServerCopy" style="margin-top:10px"><span class="material-icons-round">cloud_download</span> Load the server copy</button>
       <div id="restorePreview"></div>
     </div>
   `;
@@ -1792,6 +1799,132 @@ function wireBackup() {
     reader.readAsText(file);
   });
   renderRestorePreview();
+  wireServerCopy();
+}
+
+// Every write to a store key the backup carries pushes the whole copy up, once
+// the typing has stopped. Set here rather than at the top because `BACKUP_KEYS`
+// and `buildBackup` are defined further down this file.
+onStoreWrite = scheduleServerSync;
+
+// ---------- the server copy ----------
+// Issue #153: until now the only copy of everything lived in one browser. The
+// server keeps one too, on the volume the pod mounts, in exactly the envelope
+// `buildBackup` writes -- so the file you save yourself and the copy on the
+// server are the same shape, and either can be read by the other.
+//
+// Deliberate boundary, and this is the whole of it: **this browser pushes, it
+// never silently pulls.** Adopting a server copy replaces every logged session
+// in this browser, and doing that automatically on boot means one bug deletes a
+// training history. Loading the server copy is a button, next to the file
+// restore, and it goes through the same confirm-against-a-count step.
+const SYNC_REV_KEY = 'syncRev';
+const SYNC_DEBOUNCE_MS = 1500;
+
+// What this browser thinks the server is at. It starts at 0, which is also what
+// an untouched server answers, so a first push from a fresh browser succeeds.
+const syncRev = () => { const v = store.get(SYNC_REV_KEY, 0); return typeof v === 'number' && Number.isFinite(v) ? v : 0; };
+
+// One line the user can read: the app cannot promise a copy exists, so it says
+// which of the three states it is actually in rather than a green tick.
+function describeServerCopy(status) {
+  if (!status || status.state === 'unknown') return 'Server copy: checking...';
+  if (status.state === 'unreachable') return 'Server copy: not reachable right now. This browser still has everything.';
+  if (status.state === 'empty') return 'Server copy: nothing saved there yet.';
+  const when = status.updatedAt ? new Date(status.updatedAt) : null;
+  const stamp = when && !isNaN(when.getTime()) ? when.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'an unknown time';
+  return 'Server copy: last saved ' + stamp + '.';
+}
+
+// The server stores the backup `data` object and nothing else, so wrapping it
+// back into an envelope is what lets `parseBackup` judge it -- one validator for
+// a file and for the server, rather than two that drift.
+function serverStateToBackup(state) {
+  if (!state || !state.data || typeof state.data !== 'object' || Array.isArray(state.data)) return null;
+  return { app: 'marcus', version: BACKUP_VERSION, exportedAt: state.updatedAt || null, data: state.data };
+}
+
+// Push, with exactly one retry, and the retry is the interesting part: a 409
+// means another browser wrote after this one last looked. This browser's copy
+// is then written on top, which is last-write-wins for the *server* copy only --
+// the other browser still holds its own. That is a backup, not a merge, and
+// calling it a merge would be the lie.
+async function pushServerCopy(fetchFn, payloadData, rev) {
+  const put = (r) => fetchFn('/api/state', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rev: r, data: payloadData }),
+  });
+  let res = await put(rev);
+  if (res.status === 409) {
+    const body = await res.json().catch(() => null);
+    const serverRev = body && body.state && typeof body.state.rev === 'number' ? body.state.rev : null;
+    if (serverRev === null) return { ok: false, reason: 'conflict' };
+    res = await put(serverRev);
+  }
+  if (!res.ok) return { ok: false, reason: 'refused', status: res.status };
+  const saved = await res.json().catch(() => null);
+  if (!saved || typeof saved.rev !== 'number') return { ok: false, reason: 'refused' };
+  return { ok: true, rev: saved.rev, updatedAt: saved.updatedAt };
+}
+
+let serverStatus = { state: 'unknown' };
+let syncTimer = null;
+
+function renderServerCopy() {
+  const host = document.getElementById('serverCopy');
+  if (host) host.textContent = describeServerCopy(serverStatus);
+}
+
+async function syncNow() {
+  if (typeof fetch !== 'function') return;
+  const payload = buildBackup();
+  const result = await pushServerCopy(fetch, payload.data, syncRev()).catch(() => ({ ok: false, reason: 'unreachable' }));
+  if (result.ok) {
+    store.set(SYNC_REV_KEY, result.rev);
+    serverStatus = { state: 'saved', updatedAt: result.updatedAt };
+  } else if (result.reason === 'unreachable') {
+    serverStatus = { state: 'unreachable' };
+  } else {
+    serverStatus = { state: 'unreachable' };
+  }
+  renderServerCopy();
+}
+
+function scheduleServerSync(key) {
+  // `syncRev` is not in BACKUP_KEYS, so writing it does not re-enter here.
+  if (!BACKUP_KEYS.includes(key)) return;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { syncTimer = null; syncNow(); }, SYNC_DEBOUNCE_MS);
+}
+
+async function readServerCopy() {
+  if (typeof fetch !== 'function') return null;
+  try {
+    const res = await fetch('/api/state');
+    if (!res.ok) { serverStatus = { state: 'unreachable' }; return null; }
+    const state = await res.json();
+    serverStatus = state && state.rev > 0 ? { state: 'saved', updatedAt: state.updatedAt } : { state: 'empty' };
+    return state;
+  } catch {
+    serverStatus = { state: 'unreachable' };
+    return null;
+  }
+}
+
+function wireServerCopy() {
+  renderServerCopy();
+  readServerCopy().then(() => renderServerCopy());
+  document.getElementById('loadServerCopy')?.addEventListener('click', async () => {
+    const state = await readServerCopy();
+    renderServerCopy();
+    const envelope = serverStateToBackup(state);
+    if (!envelope) { toast('There is nothing saved on the server to load.'); return; }
+    const parsed = parseBackup(JSON.stringify(envelope));
+    if (!parsed.ok) { toast(parsed.message); return; }
+    pendingRestore = parsed;
+    renderRestorePreview();
+  });
 }
 
 // ---------- chat ----------

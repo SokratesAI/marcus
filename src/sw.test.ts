@@ -68,6 +68,27 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("the API is never cached", () => {
+  it("lets a GET of the state API go to the network untouched", () => {
+    // Not "returns the network response" -- returning nothing at all is what
+    // makes the browser do its own fetch, with no cache and no 3s fallback.
+    const sw = loadServiceWorker({ fetch: never });
+    expect(fire(sw, request("https://marcus.example/api/state"))).toBeUndefined();
+  });
+
+  it("still handles a page whose path merely starts with the same letters", () => {
+    const sw = loadServiceWorker({ fetch: never });
+    expect(fire(sw, request("https://marcus.example/apish"))).toBeDefined();
+  });
+
+  it("does not stash an API response in the shell cache", async () => {
+    const sw = loadServiceWorker({ fetch: async () => new Response("{}", { status: 200 }) });
+    fire(sw, request("https://marcus.example/api/state"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sw.puts).toEqual([]);
+  });
+});
+
 describe("service worker fetch strategy", () => {
   it("gives up on a stalled cross-origin asset instead of blocking the page", async () => {
     vi.useFakeTimers();
