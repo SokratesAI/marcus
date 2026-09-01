@@ -704,6 +704,7 @@ function renderPlan() {
   const plan = store.get('plan');
   const todayName = planDayName();
   const goals = goalsSorted();
+  const review = planReview(plan, store.get('sessions', []), todayStr());
   view.innerHTML = `
     <div class="section-title">Goals</div>
     ${goals.length ? goals.map(g => `
@@ -724,6 +725,15 @@ function renderPlan() {
       <div class="field"><label>Target date</label><input id="goalDate" type="date"></div>
       <button class="btn btn--filled btn--block" id="addGoal"><span class="material-icons-round">flag</span> Set goal</button>
     </div>
+
+    <div class="section-title">Marcus suggests</div>
+    ${review.proposals.length ? review.proposals.map(p => `
+      <div class="card" style="display:block">
+        <div class="card__title-row"><h2>${esc(p.title)}</h2><span class="chip ${p.kind === 'deload' ? 'chip--alert' : 'chip--primary'}">${esc(proposalChip(p.kind))}</span></div>
+        <p class="card__note">${esc(p.reason)}</p>
+        <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="acceptProposal('${p.id}')">Change the plan</button>
+      </div>`).join('') : `<div class="empty">${esc(review.note)}</div>`}
+    <div class="card__note" style="padding:0 4px 4px">Reasons come from your own numbers only. Marcus does not cite research here yet.</div>
 
     <div class="section-title">This week</div>
     <div class="card">
@@ -749,6 +759,16 @@ function renderPlan() {
     if (!store.set('goals', all)) return;
     renderPlan();
   });
+}
+
+function acceptProposal(id) {
+  const plan = store.get('plan');
+  const review = planReview(plan, store.get('sessions', []), todayStr());
+  const proposal = review.proposals.find(p => p.id === id);
+  if (!proposal) { toast('That suggestion is no longer current'); return; }
+  if (!store.set('plan', applyProposal(plan, proposal))) return;
+  toast('Plan updated');
+  renderPlan();
 }
 
 function toggleMilestone(goalId, milestoneId) {
@@ -1234,6 +1254,156 @@ function loadVerdictLabel(load) {
   if (load.verdict === 'too early') return 'too early to judge';
   if (load.verdict === 'load spike') return 'load spike — ease off';
   return load.verdict;
+}
+
+// ---------- adaptive plan revision (idea #208) ----------
+// After a week of logging, Marcus proposes changes to the written plan and
+// says why in the same sentence. Every reason here is arithmetic on data the
+// app already holds -- the acute:chronic ratio from the card above, and which
+// weekdays sessions actually landed on. There is deliberately NO training
+// science cited and no coaching prose: Edvard asked for recent Norwegian
+// endurance research to back a proposal, and a citation this app invents
+// without a model behind it is worse than no citation. That half is idea #206.
+const REVIEW_WINDOW_DAYS = 28;
+const REVIEW_MIN_WEEKS = 2;      // one week is a holiday, not a pattern
+const DELOAD_SET_FLOOR = 2;      // a deload that leaves one set is not a session
+
+function weekdayOf(iso) { return DAY_NAMES[new Date(iso + 'T00:00:00Z').getUTCDay()]; }
+
+function planTrainingDays(plan) {
+  return (plan && plan.days || []).filter(d => (d.exercises || []).length > 0);
+}
+
+// Whole weeks of history inside the window -- the denominator for "you were
+// meant to train Thursday four times and did it none".
+function reviewWeeks(sessions, todayISO, windowDays) {
+  const today = dayKey(todayISO || todayStr());
+  const first = shiftDay(today, -(windowDays - 1));
+  const dates = (sessions || []).map(s => s.date).filter(d => d >= first && d <= today).sort();
+  if (!dates.length) return 0;
+  const span = Math.round((new Date(today + 'T00:00:00Z') - new Date(dates[0] + 'T00:00:00Z')) / 86400000) + 1;
+  return Math.floor(Math.min(span, windowDays) / 7);
+}
+
+// One row per weekday: how many sessions landed on it inside the window, and
+// whether the written plan says anything is meant to happen there.
+function adherenceByWeekday(plan, sessions, todayISO, windowDays) {
+  const today = dayKey(todayISO || todayStr());
+  const first = shiftDay(today, -((windowDays || REVIEW_WINDOW_DAYS) - 1));
+  const logged = {};
+  DAY_NAMES.forEach(name => { logged[name] = 0; });
+  (sessions || []).forEach(s => {
+    if (!s || !s.date || s.date < first || s.date > today) return;
+    logged[weekdayOf(s.date)] += 1;
+  });
+  return (plan && plan.days || []).map(d => ({
+    day: d.day,
+    planned: (d.exercises || []).length > 0,
+    logged: logged[d.day] || 0,
+  }));
+}
+
+// The chip has to read on its own -- a one-word kind like 'rest' tells a
+// reader nothing unless they already know the four kinds.
+const PROPOSAL_CHIPS = { deload: 'ease off', build: 'add volume', move: 'move a day', rest: 'drop a day' };
+function proposalChip(kind) { return PROPOSAL_CHIPS[kind] || kind; }
+
+function totalSets(day) {
+  return (day.exercises || []).reduce((sum, e) => sum + (e.sets || 0), 0);
+}
+
+// Proposals, most urgent first. Each one carries the number that produced it,
+// because a change with no measurement behind it is just an opinion.
+function planReview(plan, sessions, todayISO, windowDays) {
+  const windowSize = windowDays || REVIEW_WINDOW_DAYS;
+  const weeks = reviewWeeks(sessions, todayISO, windowSize);
+  if (weeks < REVIEW_MIN_WEEKS) {
+    return { weeks, proposals: [], note: 'Marcus reviews the plan once you have ' + REVIEW_MIN_WEEKS + ' weeks of sessions logged. ' + weeks + ' so far.' };
+  }
+
+  const load = trainingLoad(sessions || [], todayISO);
+  const rows = adherenceByWeekday(plan, sessions, todayISO, windowSize);
+  const training = planTrainingDays(plan);
+  const proposals = [];
+
+  if (load.verdict === 'load spike' || load.verdict === 'overreaching') {
+    const cuttable = training.filter(d => (d.exercises || []).some(e => (e.sets || 0) > DELOAD_SET_FLOOR));
+    if (cuttable.length) {
+      proposals.push({
+        id: 'deload',
+        kind: 'deload',
+        title: 'Take a set off every exercise this week',
+        reason: 'Your fatigue is ' + load.ratio.toFixed(2) + ' times your fitness over the last ' + load.days + ' days. Above 1.5 is the range injuries cluster in. This drops one set from each exercise on ' + cuttable.length + ' day(s), never below ' + DELOAD_SET_FLOOR + '.',
+      });
+    }
+  }
+
+  const skipped = rows.filter(r => r.planned && r.logged === 0);
+  const usedRest = rows.filter(r => !r.planned && r.logged > 0).sort((a, b) => b.logged - a.logged);
+  skipped.forEach((row, i) => {
+    const to = usedRest[i];
+    if (to) {
+      proposals.push({
+        id: 'move-' + row.day,
+        kind: 'move',
+        day: row.day,
+        toDay: to.day,
+        title: 'Move ' + row.day + '’s work to ' + to.day,
+        reason: 'Over the last ' + weeks + ' weeks you trained on ' + row.day + ' 0 times and on ' + to.day + ' ' + to.logged + ' times, and the plan calls ' + to.day + ' a rest day. The plan is describing a week you are not having.',
+      });
+    } else {
+      proposals.push({
+        id: 'rest-' + row.day,
+        kind: 'rest',
+        day: row.day,
+        title: 'Make ' + row.day + ' a rest day',
+        reason: 'Over the last ' + weeks + ' weeks you trained on ' + row.day + ' 0 times. A plan you never keep is not a plan you are behind on.',
+      });
+    }
+  });
+
+  if (!proposals.length && load.verdict === 'backing off') {
+    const lightest = training.slice().sort((a, b) => totalSets(a) - totalSets(b))[0];
+    if (lightest) {
+      proposals.push({
+        id: 'build',
+        kind: 'build',
+        day: lightest.day,
+        title: 'Add a set to each exercise on ' + lightest.day,
+        reason: 'Your fatigue is ' + load.ratio.toFixed(2) + ' times your fitness, below the 0.8 where training stops building, and you kept every planned day over the last ' + weeks + ' weeks. ' + lightest.day + ' is your lightest at ' + totalSets(lightest) + ' sets.',
+      });
+    }
+  }
+
+  return { weeks, proposals, note: proposals.length ? '' : 'Nothing to change. You are keeping the plan and your load is in the range that builds fitness.' };
+}
+
+// Pure: takes a plan, returns a new one. Nothing here writes to storage, so a
+// proposal can be rendered, previewed and tested without a DOM.
+function applyProposal(plan, proposal) {
+  const next = JSON.parse(JSON.stringify(plan));
+  if (!proposal) return next;
+  if (proposal.kind === 'deload') {
+    next.days.forEach(d => (d.exercises || []).forEach(e => {
+      if ((e.sets || 0) > DELOAD_SET_FLOOR) e.sets = e.sets - 1;
+    }));
+  } else if (proposal.kind === 'build') {
+    const day = next.days.find(d => d.day === proposal.day);
+    if (day) (day.exercises || []).forEach(e => { e.sets = (e.sets || 0) + 1; });
+  } else if (proposal.kind === 'move') {
+    const from = next.days.find(d => d.day === proposal.day);
+    const to = next.days.find(d => d.day === proposal.toDay);
+    if (from && to) {
+      to.focus = from.focus;
+      to.exercises = from.exercises;
+      from.focus = 'Rest';
+      from.exercises = [];
+    }
+  } else if (proposal.kind === 'rest') {
+    const day = next.days.find(d => d.day === proposal.day);
+    if (day) { day.focus = 'Rest'; day.exercises = []; }
+  }
+  return next;
 }
 
 function trainingLoadCard(load) {
