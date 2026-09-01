@@ -800,15 +800,200 @@ function deleteGoal(id) {
   renderPlan();
 }
 
+// ---------- describing a session in a sentence ----------
+// The Food tab already takes a whole sentence; this is the same idea for
+// training. It fills the form and never saves behind your back, which is what
+// keeps it honest: a plan session has no weights in it, and inventing one would
+// write a made-up number into the log as a measurement.
+
+// The verb someone actually types, mapped to the activity the picker offers.
+// Only these words start a cardio session -- an activity not in this table is
+// not guessed at, it is reported back unread.
+const CARDIO_VERBS = {
+  ran: 'Run', run: 'Run', running: 'Run', jog: 'Run', jogged: 'Run', jogging: 'Run',
+  bike: 'Bike', biked: 'Bike', biking: 'Bike', cycle: 'Bike', cycled: 'Bike', cycling: 'Bike', rode: 'Bike',
+  swim: 'Swim', swam: 'Swim', swimming: 'Swim',
+  row: 'Row', rowed: 'Row', rowing: 'Row', erg: 'Row',
+  ski: 'Ski', skied: 'Ski', skiing: 'Ski',
+  walk: 'Walk', walked: 'Walk', walking: 'Walk', hike: 'Walk', hiked: 'Walk', hiking: 'Walk'
+};
+
+// How it felt, in the words people use. The stored value is one of four so the
+// adaptive plan review can read it; the sentence itself is kept as well.
+const FEEL_WORDS = {
+  easy: 'easy', light: 'easy', comfortable: 'easy', fine: 'easy',
+  hard: 'hard', tough: 'hard', heavy: 'hard', brutal: 'hard', exhausting: 'hard',
+  good: 'good', great: 'good', strong: 'good',
+  rough: 'rough', bad: 'rough', terrible: 'rough', awful: 'rough', flat: 'rough'
+};
+
+const INJURY_WORDS = ['injury', 'injured', 'pain', 'painful', 'hurt', 'hurts', 'sore', 'niggle', 'strain', 'strained', 'tweaked'];
+
+function sessionSentenceWords(text) {
+  return String(text == null ? '' : text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
+
+// "today", "yesterday" and a weekday name are the three ways a date gets named
+// in a sentence about training. A weekday resolves backwards -- you describe a
+// session you did, not one you are going to do -- and today's own name is today.
+function sessionSentenceDate(words, todayISO) {
+  const today = new Date(todayISO + 'T00:00');
+  if (words.indexOf('yesterday') !== -1) {
+    const d = new Date(today); d.setDate(d.getDate() - 1); return fmtDate(d);
+  }
+  for (let back = 0; back < 7; back++) {
+    const d = new Date(today); d.setDate(d.getDate() - back);
+    if (words.indexOf(DAY_NAMES[d.getDay()].toLowerCase()) !== -1) return fmtDate(d);
+  }
+  return todayISO;
+}
+
+// Distance only from a unit that can mean nothing else. A bare "m" is not read
+// as metres because "45 m" is how people write minutes, and a wrong distance is
+// worse than a missing one.
+function sessionSentenceDistance(text) {
+  const km = text.match(/(\d+(?:[.,]\d+)?)\s*(kilometres|kilometers|kilometre|kilometer|kms|km|k)\b/i);
+  if (km) return parseFloat(km[1].replace(',', '.'));
+  const m = text.match(/(\d+(?:[.,]\d+)?)\s*(metres|meters|metre|meter)\b/i);
+  if (m) return parseFloat(m[1].replace(',', '.')) / 1000;
+  return null;
+}
+
+function sessionSentenceMinutes(text) {
+  const half = text.match(/half\s+an?\s+hour/i);
+  if (half) return 30;
+  const hm = text.match(/(\d+(?:[.,]\d+)?)\s*(hours|hour|hrs|hr|h)\b/i);
+  if (hm) return Math.round(parseFloat(hm[1].replace(',', '.')) * 60);
+  if (/\ban\s+hour\b/i.test(text)) return 60;
+  const mm = text.match(/(\d+(?:[.,]\d+)?)\s*(minutes|minute|mins|min)\b/i);
+  if (mm) return Math.round(parseFloat(mm[1].replace(',', '.')));
+  return null;
+}
+
+// The one sentence, read into whatever the form needs. `ok: false` means I could
+// not tell what was done, and that is a refusal rather than a best guess.
+// `missing` names a field the sentence genuinely did not carry, so the form can
+// ask for it instead of filling it in with arithmetic nobody typed.
+function parseSessionSentence(text, plan, todayISO) {
+  const raw = String(text == null ? '' : text).trim();
+  if (!raw) return { ok: false, reason: 'Describe the session first.' };
+
+  const words = sessionSentenceWords(raw);
+  const date = sessionSentenceDate(words, todayISO || todayStr());
+
+  let feel = null;
+  for (const w of words) {
+    if (Object.prototype.hasOwnProperty.call(FEEL_WORDS, w)) { feel = FEEL_WORDS[w]; break; }
+  }
+  const injury = words.some((w) => INJURY_WORDS.indexOf(w) !== -1);
+  const common = { date, feel, injury, note: raw };
+
+  const followedPlan = /\b(follow(?:ed)?|did|done|completed)\b[^.]{0,20}\bplan\b/i.test(raw)
+    || /\bas\s+planned\b/i.test(raw)
+    || /\bplanned\s+session\b/i.test(raw);
+
+  let activity = null;
+  for (const w of words) {
+    if (Object.prototype.hasOwnProperty.call(CARDIO_VERBS, w)) { activity = CARDIO_VERBS[w]; break; }
+  }
+
+  // A named activity wins over a plan reference: "I ran the plan's easy run"
+  // is a run, and the plan's strength rows would be the wrong form to open.
+  if (activity) {
+    const minutes = sessionSentenceMinutes(raw);
+    const distance = sessionSentenceDistance(raw);
+    return {
+      ok: true,
+      kind: 'cardio',
+      cardio: { activity, minutes, distance },
+      missing: minutes == null ? ['minutes'] : [],
+      ...common
+    };
+  }
+
+  if (followedPlan) {
+    const days = (plan && plan.days) || [];
+    const dayName = planDayName(new Date(date + 'T00:00'));
+    const day = days.find((d) => d.day === dayName);
+    if (!day || !day.exercises || !day.exercises.length) {
+      return { ok: false, reason: `Your plan has nothing on ${dayName}, so I do not know what you did. Pick a day and fill it in.` };
+    }
+    return {
+      ok: true,
+      kind: 'strength',
+      day: day.day,
+      exercises: day.exercises.map((e) => ({ name: e.name, sets: e.sets, reps: e.reps })),
+      // The plan carries sets and reps and no weight, so every row still needs
+      // one. This is the "amount stays blank and asks you" rule from the meal
+      // parser: the form opens filled in, and you type the kilos.
+      missing: ['weight'],
+      ...common
+    };
+  }
+
+  return { ok: false, reason: 'I could not tell what you did. Name the activity ("ran 7 km"), or say you followed the plan.' };
+}
+
+// What I understood, said back before anything is saved. It names the missing
+// field rather than hiding it, because the whole point of not guessing is that
+// you can see what was left blank.
+function sessionSentenceSummary(result) {
+  if (!result || !result.ok) return '';
+  const parts = [];
+  if (result.kind === 'cardio') {
+    parts.push(result.cardio.activity);
+    if (result.cardio.distance != null) parts.push(`${result.cardio.distance} km`);
+    if (result.cardio.minutes != null) parts.push(`${result.cardio.minutes} min`);
+  } else {
+    parts.push(`${result.day} — ${result.exercises.length} exercises from your plan`);
+  }
+  parts.push(niceDate(result.date));
+  if (result.feel) parts.push(`felt ${result.feel}`);
+  if (result.injury) parts.push('injury mentioned');
+  let out = `Heard: ${parts.join(' \u00b7 ')}.`;
+  if (result.missing.indexOf('minutes') !== -1) out += ' I did not hear how long it took — fill in the duration.';
+  if (result.missing.indexOf('weight') !== -1) out += ' Your plan has no weights in it — type what you lifted.';
+  return out;
+}
+
+// The note fields written onto a saved session. `feel` and `injury` come from
+// the sentence and only from it: they are a reading of what you typed, so a
+// note you edited by hand keeps its text and drops the flags rather than
+// carrying a verdict the words no longer support.
+function sessionNote() {
+  const el = document.getElementById('logNote');
+  const note = el ? String(el.value || '').trim() : '';
+  const out = {};
+  if (note) out.note = note;
+  if (logSentence && note === logSentence.note) {
+    if (logSentence.feel) out.feel = logSentence.feel;
+    if (logSentence.injury) out.injury = true;
+  }
+  return out;
+}
+
 // ---------- log ----------
 // Which kind of session the Log tab is showing is UI state, not stored data,
 // so it lives here beside the food picker's own index.
 let logKind = 'strength';
 
+// What the sentence box understood, held across the re-render that fills the
+// form. Cleared as soon as the session is saved so it cannot re-apply itself.
+let logSentence = null;
+
 function renderLog() {
   const plan = store.get('plan');
   const cardio = logKind === 'cardio';
+  const heard = logSentence;
   view.innerHTML = `
+    <div class="card">
+      <h2>Describe your session</h2>
+      <div class="field">
+        <input type="text" id="sessionSentence" placeholder="e.g. I ran 7 km today, felt easy">
+      </div>
+      <button type="button" class="btn btn--tonal btn--block" id="readSentence">Read it</button>
+      ${heard ? `<div class="hint" id="sentenceHeard">${esc(heard.summary)}</div>` : ''}
+    </div>
     <div class="card">
       <h2>Log a session</h2>
       <div class="seg" id="logKind" role="tablist">
@@ -817,29 +1002,37 @@ function renderLog() {
       </div>
       <div class="field">
         <label>Date</label>
-        <input type="date" id="logDate" value="${todayStr()}">
+        <input type="date" id="logDate" value="${heard ? heard.date : todayStr()}">
       </div>
       ${cardio ? `
       <div class="field">
         <label>Activity</label>
-        <select id="cardioActivity">${CARDIO_ACTIVITIES.map(a => `<option value="${a}">${a}</option>`).join('')}</select>
+        <select id="cardioActivity">${CARDIO_ACTIVITIES.map(a => `<option value="${a}"${heard && heard.cardio && heard.cardio.activity === a ? ' selected' : ''}>${a}</option>`).join('')}</select>
       </div>
       <div class="field">
         <label>Duration (minutes)</label>
-        <input type="number" id="cardioMinutes" min="1" step="1" placeholder="e.g. 45">
+        <input type="number" id="cardioMinutes" min="1" step="1" placeholder="e.g. 45" value="${heard && heard.cardio && heard.cardio.minutes != null ? heard.cardio.minutes : ''}">
       </div>
       <div class="field">
         <label>Distance (km) — optional</label>
-        <input type="number" id="cardioDistance" min="0" step="0.01" placeholder="leave blank for a pool swim or a class">
+        <input type="number" id="cardioDistance" min="0" step="0.01" placeholder="leave blank for a pool swim or a class" value="${heard && heard.cardio && heard.cardio.distance != null ? heard.cardio.distance : ''}">
+      </div>
+      <div class="field">
+        <label>How it felt / notes — optional</label>
+        <input type="text" id="logNote" value="${heard && heard.kind === 'cardio' ? esc(heard.note) : ''}">
       </div>
       <button type="button" class="btn btn--filled btn--block" id="saveCardio" style="margin-top:14px">Save session</button>
       ` : `
       <div class="field">
         <label>Day / focus</label>
-        <select id="logDay">${plan.days.map(d => `<option value="${d.day}">${d.day} — ${d.focus}</option>`).join('')}</select>
+        <select id="logDay">${plan.days.map(d => `<option value="${d.day}"${heard && heard.day === d.day ? ' selected' : ''}>${d.day} — ${d.focus}</option>`).join('')}</select>
       </div>
       <div id="exerciseRows"></div>
       <button type="button" class="btn btn--tonal" id="addExercise"><span class="material-icons-round">add</span> Add exercise</button>
+      <div class="field">
+        <label>How it felt / notes — optional</label>
+        <input type="text" id="logNote" value="${heard && heard.kind === 'strength' ? esc(heard.note) : ''}">
+      </div>
       <button type="button" class="btn btn--filled btn--block" id="saveSession" style="margin-top:14px">Save session</button>
       `}
     </div>
@@ -850,6 +1043,14 @@ function renderLog() {
   document.getElementById('logKindStrength').addEventListener('click', () => { logKind = 'strength'; renderLog(); });
   document.getElementById('logKindCardio').addEventListener('click', () => { logKind = 'cardio'; renderLog(); });
 
+  document.getElementById('readSentence').addEventListener('click', () => {
+    const result = parseSessionSentence(document.getElementById('sessionSentence').value, store.get('plan'), todayStr());
+    if (!result.ok) { toast(result.reason); return; }
+    logSentence = { ...result, summary: sessionSentenceSummary(result) };
+    logKind = result.kind;
+    renderLog();
+  });
+
   if (cardio) {
     document.getElementById('saveCardio').addEventListener('click', () => {
       const result = validateCardio(
@@ -859,8 +1060,9 @@ function renderLog() {
       );
       if (!result.ok) { toast(result.message); return; }
       const sessions = store.get('sessions', []);
-      sessions.push({ id: uid(), date: document.getElementById('logDate').value, kind: 'cardio', ...result.cardio });
+      sessions.push({ id: uid(), date: document.getElementById('logDate').value, kind: 'cardio', ...result.cardio, ...sessionNote() });
       if (!store.set('sessions', sessions)) return;
+      logSentence = null;
       renderLog();
     });
     renderRecentSessions();
@@ -879,9 +1081,10 @@ function renderLog() {
     node.querySelector('.ex-remove').addEventListener('click', (e) => e.target.closest('.exercise-row').remove());
     rows.appendChild(node);
   }
-  const todayName = planDayName();
+  const heardRows = heard && heard.kind === 'strength' && heard.exercises && heard.exercises.length ? heard.exercises : null;
+  const todayName = heard && heard.day ? heard.day : planDayName();
   const todayPlan = plan.days.find(d => d.day === todayName) || plan.days[0];
-  (todayPlan.exercises.length ? todayPlan.exercises : [{ name: '', sets: 3, reps: 10 }]).forEach(addRow);
+  (heardRows || (todayPlan.exercises.length ? todayPlan.exercises : [{ name: '', sets: 3, reps: 10 }])).forEach(addRow);
 
   document.getElementById('logDay').addEventListener('change', (e) => {
     rows.innerHTML = '';
@@ -899,12 +1102,22 @@ function renderLog() {
     })));
     if (!result.ok) { toast(result.message); return; }
     const sessions = store.get('sessions', []);
-    sessions.push({ id: uid(), date: document.getElementById('logDate').value, kind: 'strength', day: document.getElementById('logDay').value, exercises: result.exercises });
+    sessions.push({ id: uid(), date: document.getElementById('logDate').value, kind: 'strength', day: document.getElementById('logDay').value, exercises: result.exercises, ...sessionNote() });
     if (!store.set('sessions', sessions)) return;
+    logSentence = null;
     switchTab('log');
   });
 
   renderRecentSessions();
+}
+
+function sessionNoteLine(s) {
+  if (!s || !s.note) return '';
+  const flags = [];
+  if (s.feel) flags.push(`felt ${s.feel}`);
+  if (s.injury) flags.push('injury');
+  const tail = flags.length ? ` <span class="chip">${esc(flags.join(' \u00b7 '))}</span>` : '';
+  return `<div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">${esc(s.note)}${tail}</div>`;
 }
 
 function sessionCard(s) {
@@ -913,6 +1126,7 @@ function sessionCard(s) {
     return `<div class="card">
       <div class="card__title-row"><h2>${niceDate(s.date)} · ${esc(s.activity)}</h2>${del}</div>
       <div class="exercise-line"><span>${esc(cardioSummary(s))}</span><span>cardio</span></div>
+      ${sessionNoteLine(s)}
     </div>`;
   }
   const exercises = s.exercises || [];
@@ -921,6 +1135,7 @@ function sessionCard(s) {
     <div class="card__title-row"><h2>${niceDate(s.date)} · ${esc(s.day || 'Session')}</h2>${del}</div>
     ${exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets</span></div>`).join('')}
     <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">Volume: ${Math.round(volume).toLocaleString()} kg</div>
+    ${sessionNoteLine(s)}
   </div>`;
 }
 
