@@ -1,5 +1,5 @@
-const CACHE = 'marcus-shell-v3';
-const SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg'];
+const CACHE = 'marcus-shell-v4';
+const SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg', './apple-touch-icon.png'];
 
 // A stalled connection neither resolves nor rejects, so a bare network-first
 // fetch() can leave respondWith() pending for the browser's own socket timeout.
