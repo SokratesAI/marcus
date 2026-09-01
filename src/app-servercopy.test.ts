@@ -76,6 +76,30 @@ describe("describeServerCopy", () => {
   });
 });
 
+describe("shouldPush", () => {
+  it("pushes from a browser that has synced before", () => {
+    expect(loadApp().shouldPush(4, 4)).toBe(true);
+  });
+
+  it("pushes when the server has nothing", () => {
+    expect(loadApp().shouldPush(0, 0)).toBe(true);
+  });
+
+  it("refuses to push a never-synced browser over a server copy that exists", () => {
+    // A fresh browser has just seeded itself with an empty plan. Pushing that
+    // writes blank seed data over a real training history nothing else holds.
+    expect(loadApp().shouldPush(0, 7)).toBe(false);
+  });
+});
+
+describe("describeServerCopy, the ahead state", () => {
+  it("tells the user to load it before this browser saves over it", () => {
+    const out = loadApp().describeServerCopy({ state: "ahead", updatedAt: "2026-09-01T04:00:00.000Z" });
+    expect(out).toMatch(/never seen/);
+    expect(out).toMatch(/Load it/);
+  });
+});
+
 describe("serverStateToBackup", () => {
   it("refuses a state with nothing in it", () => {
     const ctx = loadApp();

@@ -1831,6 +1831,7 @@ function describeServerCopy(status) {
   if (!status || status.state === 'unknown') return 'Server copy: checking...';
   if (status.state === 'unreachable') return 'Server copy: not reachable right now. This browser still has everything.';
   if (status.state === 'empty') return 'Server copy: nothing saved there yet.';
+  if (status.state === 'ahead') return 'Server copy: there is one on the server that this browser has never seen. Load it before this browser starts saving over it.';
   const when = status.updatedAt ? new Date(status.updatedAt) : null;
   const stamp = when && !isNaN(when.getTime()) ? when.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'an unknown time';
   return 'Server copy: last saved ' + stamp + '.';
@@ -1868,6 +1869,15 @@ async function pushServerCopy(fetchFn, payloadData, rev) {
   return { ok: true, rev: saved.rev, updatedAt: saved.updatedAt };
 }
 
+// The one case where pushing loses data that nothing else holds: a browser
+// that has never synced (rev 0) meets a server that already has a copy. That
+// browser has just seeded itself with an empty plan, so pushing would write
+// blank seed data over a real training history. It refuses and says so; the
+// "Load the server copy" button is the way out.
+function shouldPush(localRev, serverRev) {
+  return !(localRev === 0 && serverRev > 0);
+}
+
 let serverStatus = { state: 'unknown' };
 let syncTimer = null;
 
@@ -1878,6 +1888,14 @@ function renderServerCopy() {
 
 async function syncNow() {
   if (typeof fetch !== 'function') return;
+  if (syncRev() === 0) {
+    const existing = await readServerCopy();
+    if (existing && !shouldPush(0, existing.rev)) {
+      serverStatus = { state: 'ahead', updatedAt: existing.updatedAt };
+      renderServerCopy();
+      return;
+    }
+  }
   const payload = buildBackup();
   const result = await pushServerCopy(fetch, payload.data, syncRev()).catch(() => ({ ok: false, reason: 'unreachable' }));
   if (result.ok) {
