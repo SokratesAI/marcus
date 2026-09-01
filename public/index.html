@@ -7,7 +7,12 @@
 <meta name="theme-color" content="#2E7D32">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
+<!-- iOS has never accepted an SVG here, and when it cannot use the declared icon it
+     falls back to a screenshot of the page taken at install time. The PNG is square
+     and fully opaque on purpose: iOS applies its own rounded mask, and it composites
+     any alpha onto black. Regenerate from icon.svg (square corners) at 180x180 if the
+     artwork changes -- src/apple-touch-icon.test.ts checks it has not gone stale. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <!-- Every third-party asset below loads without blocking the parser, and that is
      the whole point rather than a performance tweak. A render-blocking
