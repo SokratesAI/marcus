@@ -19,8 +19,8 @@ export const DEFAULT_DATA_DIR = process.env.MARCUS_DATA_DIR ?? "/data";
 const MAX_BODY = "4mb";
 
 export interface AppOptions {
-  /** Injected so a test never reaches Open Food Facts, and so the route can be
-   * built without a cache at all when the deployment has no volume for one. */
+  /** Both injected only so a test never reaches Open Food Facts and never
+   * writes a cache file next to a real state file. Production passes neither. */
   foodCache?: FoodCache;
   fetchImpl?: typeof globalThis.fetch;
 }
