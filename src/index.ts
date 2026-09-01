@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import express, { type Express } from "express";
 import pino from "pino";
 import { StateStore } from "./state-store.js";
+import { FoodCache, lookupBarcode } from "./food-lookup.js";
 
 const logger = pino();
 const port = Number(process.env.PORT ?? 8080);
@@ -17,8 +18,21 @@ export const DEFAULT_DATA_DIR = process.env.MARCUS_DATA_DIR ?? "/data";
 // Marcus's whole store is a few hundred kilobytes of text.
 const MAX_BODY = "4mb";
 
-export function createApp(store: StateStore, now: () => string = () => new Date().toISOString()): Express {
+export interface AppOptions {
+  /** Injected so a test never reaches Open Food Facts, and so the route can be
+   * built without a cache at all when the deployment has no volume for one. */
+  foodCache?: FoodCache;
+  fetchImpl?: typeof globalThis.fetch;
+}
+
+export function createApp(
+  store: StateStore,
+  now: () => string = () => new Date().toISOString(),
+  options: AppOptions = {},
+): Express {
   const app = express();
+  const foodCache = options.foodCache ?? new FoodCache(path.dirname(store.filePath));
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
 
   app.get("/healthz", (_req, res) => {
     res.status(200).json({ status: "ok" });
@@ -51,6 +65,31 @@ export function createApp(store: StateStore, now: () => string = () => new Date(
       logger.error({ err }, "could not write state");
       res.status(500).json({ error: "could not write the state" });
     }
+  });
+
+  // Idea #215: the one place a barcode leaves this cluster. The browser asks
+  // us, never Open Food Facts directly, so the rate-limit etiquette and the
+  // "what is Edvard eating" question are both decided here rather than per
+  // request from a phone.
+  app.get("/api/food/barcode/:code", async (req, res) => {
+    const code = String(req.params.code);
+    const result = await lookupBarcode(code, { cache: foodCache, fetch: fetchImpl });
+    if (result.status === "invalid") {
+      res.status(400).json({ error: "a barcode is 8 to 14 digits" });
+      return;
+    }
+    if (result.status === "upstream") {
+      // 502, not 500: nothing here is broken and the client should offer the
+      // hand-typed path rather than a retry loop against someone else's API.
+      logger.warn({ code }, "open food facts did not answer");
+      res.status(502).json({ error: "the food database did not answer" });
+      return;
+    }
+    if (result.status === "missing") {
+      res.status(404).json({ error: "no product with that barcode", code, cached: result.cached });
+      return;
+    }
+    res.status(200).json({ food: result.row, cached: result.cached });
   });
 
   app.use(express.static(path.join(__dirname, "..", "public")));
