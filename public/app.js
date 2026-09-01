@@ -1108,7 +1108,9 @@ function addParsedMeals() {
     const r = portionFrom(item.food, item.amount);
     if (r.ok && saveMeal(r.meal)) added += 1;
   });
-  if (!added) return;
+  // A box holding something that is not a number leaves `added` at zero with
+  // every row still looking ready, so say so rather than doing nothing quietly.
+  if (!added) { toast('Check the amounts'); return; }
   mealParse.items = mealParse.items.filter((item) => item.amount == null);
   if (!mealParse.items.length && !mealParse.unmatched.length) mealParse = null;
   toast(added === 1 ? 'Added 1 meal' : `Added ${added} meals`);

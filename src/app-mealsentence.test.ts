@@ -291,6 +291,15 @@ describe("adding what the sentence read", () => {
     expect(ctx.store.get("meals", [])).toEqual([]);
   });
 
+  it("says so rather than doing nothing when an amount is not a number", () => {
+    const { ctx, toasts } = loadApp();
+    parsed(ctx, "two eggs");
+    ctx.setParsedAmount(0, "lots");
+    ctx.addParsedMeals();
+    expect(ctx.store.get("meals", [])).toEqual([]);
+    expect(toasts).toContain("Check the amounts");
+  });
+
   it("dropParsedItem removes one row and clears the parse when it was the last", () => {
     const { ctx } = loadApp();
     parsed(ctx, "two eggs and a banana");
