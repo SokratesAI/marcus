@@ -829,6 +829,27 @@ const FEEL_WORDS = {
 
 const INJURY_WORDS = ['injury', 'injured', 'pain', 'painful', 'hurt', 'hurts', 'sore', 'niggle', 'strain', 'strained', 'tweaked'];
 
+// Words that put a clause in the future. "I ran 7km today, got a small injury
+// so I want to take it easy next run" says the *next* run should be easy and
+// says nothing about how this one felt -- and reading "easy" out of it writes a
+// feel nobody reported. Found by driving the deployed app, not by a test.
+const FUTURE_MARKERS = ['next', 'tomorrow', 'will', 'gonna', 'later'];
+const FUTURE_PHRASES = [/\bwant\s+to\b/, /\bgoing\s+to\b/, /\bplan\s+to\b/, /\bneed\s+to\b/, /\bshould\b/];
+
+// A clause is forward-looking if it names a future time or announces an
+// intention. Only the clauses that are left describe the session just done.
+function pastClauses(text) {
+  return String(text == null ? '' : text)
+    .split(/[.;,!?]+|\bso\b|\bbut\b/i)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0)
+    .filter((c) => {
+      const words = sessionSentenceWords(c);
+      if (words.some((w) => FUTURE_MARKERS.indexOf(w) !== -1)) return false;
+      return !FUTURE_PHRASES.some((re) => re.test(c.toLowerCase()));
+    });
+}
+
 function sessionSentenceWords(text) {
   return String(text == null ? '' : text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
 }
@@ -882,7 +903,7 @@ function parseSessionSentence(text, plan, todayISO) {
   const date = sessionSentenceDate(words, todayISO || todayStr());
 
   let feel = null;
-  for (const w of words) {
+  for (const w of sessionSentenceWords(pastClauses(raw).join(' '))) {
     if (Object.prototype.hasOwnProperty.call(FEEL_WORDS, w)) { feel = FEEL_WORDS[w]; break; }
   }
   const injury = words.some((w) => INJURY_WORDS.indexOf(w) !== -1);
