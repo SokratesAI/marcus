@@ -223,6 +223,134 @@ function portionFrom(food, rawAmount) {
   };
 }
 
+
+// --- Reading a meal sentence ------------------------------------------------
+// "two eggs and a slice of wholemeal bread" is how a person describes dinner,
+// and the picker above makes them do it one food at a time. This turns the
+// sentence into picks against the same FOODS table. There is no model here and
+// there is not meant to be one: it splits on the joins, reads a leading
+// quantity, and matches what is left against the table. Anything it cannot
+// place comes back named, so the reply is "I got three of these four" rather
+// than a silent partial log.
+const NUMBER_WORDS = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, half: 0.5
+};
+
+// Words that carry neither a food nor an amount. They are dropped rather than
+// matched, because "of" appears in no food name and would fail every phrase.
+const FILLER_WORDS = ['a', 'an', 'of', 'with', 'the', 'some', 'my', 'plus', 'served', 'and'];
+
+// Counting words for a food the table prices per item: "a slice of bread" and
+// "1 bread" are the same log line, so the word is consumed and the number kept.
+const COUNT_UNITS = ['slice', 'slices', 'piece', 'pieces', 'item', 'items',
+  'serving', 'servings', 'scoop', 'scoops', 'x'];
+
+function normaliseFoodWords(text) {
+  return String(text == null ? '' : text)
+    .toLowerCase()
+    .replace(/[^a-z0-9%\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && FILLER_WORDS.indexOf(w) === -1)
+    .map((w) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w));
+}
+
+// Every word the person typed has to land somewhere in the food's name. That is
+// what keeps "pizza Grandiosa" unmatched instead of quietly logging pizza-ish
+// calories: "grandiosa" is in no name, so the phrase fails rather than degrades.
+function matchFood(text) {
+  const q = normaliseFoodWords(text);
+  if (!q.length) return null;
+  let best = null;
+  FOODS.forEach((food, index) => {
+    const words = normaliseFoodWords(food.name);
+    const landed = q.every((w) => words.some((fw) => fw === w || (w.length >= 3 && fw.startsWith(w))));
+    if (!landed) return;
+    // Shorter names win: "Egg" beats nothing else, but "Cheese, yellow" should
+    // not beat "Cheese, brown (brunost)" on a bare "cheese" by table order.
+    const score = -words.length;
+    if (!best || score > best.score) best = { food, index, score };
+  });
+  return best;
+}
+
+// One phrase, e.g. "150 g chicken" or "two eggs". Returns null when nothing in
+// the table matches; the caller reports that phrase back rather than dropping it.
+function parseMealPhrase(phrase) {
+  let rest = String(phrase == null ? '' : phrase).trim().toLowerCase();
+  if (!rest) return null;
+
+  let quantity = null;
+  let grams = null;
+  const digits = rest.match(/^(\d+(?:[.,]\d+)?)\s*/);
+  if (digits) {
+    quantity = parseFloat(digits[1].replace(',', '.'));
+    rest = rest.slice(digits[0].length);
+  } else {
+    const word = rest.match(/^([a-z]+)\s+/);
+    if (word && Object.prototype.hasOwnProperty.call(NUMBER_WORDS, word[1])) {
+      quantity = NUMBER_WORDS[word[1]];
+      rest = rest.slice(word[0].length);
+    }
+  }
+
+  const weight = rest.match(/^(kgs?|kilos?|kilograms?|grams?|gram|gr|g)\b\s*/);
+  if (weight && quantity != null) {
+    grams = /^k/.test(weight[1]) ? quantity * 1000 : quantity;
+    rest = rest.slice(weight[0].length);
+  } else if (weight) {
+    rest = rest.slice(weight[0].length);
+  }
+
+  const count = rest.match(/^([a-z]+)\b\s*/);
+  if (count && COUNT_UNITS.indexOf(count[1]) !== -1) rest = rest.slice(count[0].length);
+
+  const hit = matchFood(rest);
+  if (!hit) return null;
+
+  if (hit.food.unit === 'g') {
+    // A number with no unit in front of a weighed food is not grams and is not a
+    // count either -- "2 rice" says nothing -- so the amount stays unknown and
+    // the UI asks for it. Inventing a serving size here would be a made-up number
+    // written into the log as a measurement.
+    return { food: hit.food, index: hit.index, unit: 'g', amount: grams, assumed: false, phrase: String(phrase).trim() };
+  }
+  return {
+    food: hit.food,
+    index: hit.index,
+    unit: 'each',
+    amount: quantity == null ? 1 : quantity,
+    assumed: quantity == null,
+    phrase: String(phrase).trim()
+  };
+}
+
+// The whole sentence. A leading "dinner:" is a label, not a food, so it is cut
+// before the split; the joins are commas, "and", "+" and "&".
+function parseMealSentence(text) {
+  const raw = String(text == null ? '' : text).trim();
+  let label = '';
+  let body = raw;
+  const colon = raw.indexOf(':');
+  if (colon > 0 && colon < 20) {
+    label = raw.slice(0, colon).trim();
+    body = raw.slice(colon + 1);
+  }
+  const phrases = body
+    .split(/\s*(?:,|\band\b|\+|&)\s*/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  const items = [];
+  const unmatched = [];
+  phrases.forEach((p) => {
+    const item = parseMealPhrase(p);
+    if (item) items.push(item);
+    else unmatched.push(p);
+  });
+  return { label, items, unmatched };
+}
+
 // The foods someone actually eats are a much better list than any table I can
 // ship, and the app already has them: they are in the log. Most recent first,
 // one row per name, so re-logging yesterday's breakfast is one tap.
@@ -778,6 +906,9 @@ function deleteSession(id) {
 // stored data, so they live here rather than in `store`.
 let foodPickIndex = null;
 let recentMealCache = [];
+// The result of the last sentence read, held so the amounts can be corrected
+// before anything is written into the log.
+let mealParse = null;
 
 function saveMeal(meal) {
   const all = store.get('meals', []);
@@ -811,6 +942,9 @@ function renderNutrition() {
       <h2>Add a meal</h2>
       ${recentMealCache.length ? `<div class="chip-row">${recentMealCache.map((r, i) =>
         `<button class="chip" onclick="addRecentMeal(${i})">${esc(r.name)} · ${r.calories} kcal</button>`).join('')}</div>` : ''}
+      <div class="field"><label>Describe your meal</label><input id="mealSentence" type="text" autocomplete="off" placeholder="e.g. 150 g chicken, rice and broccoli"></div>
+      <button class="btn btn--tonal btn--block" id="readMeal"><span class="material-icons-round">auto_awesome</span> Read it</button>
+      <div id="mealParse"></div>
       <div class="field"><label>Search foods</label><input id="foodSearch" type="text" autocomplete="off" placeholder="e.g. chicken, oats, banana"></div>
       <div id="foodResults"></div>
       <div id="foodPicked"></div>
@@ -840,6 +974,16 @@ function renderNutrition() {
   });
   renderFoodResults('');
   renderFoodPick();
+  renderMealParse();
+
+  const sentence = document.getElementById('mealSentence');
+  document.getElementById('readMeal').addEventListener('click', () => {
+    if (!String(sentence.value).trim()) { toast('Type what you ate first'); return; }
+    const out = parseMealSentence(sentence.value);
+    if (!out.items.length && !out.unmatched.length) { toast('Nothing to read there'); return; }
+    mealParse = out;
+    renderMealParse();
+  });
 
   document.getElementById('addMeal').addEventListener('click', () => {
     const result = validateMeal(document.getElementById('mealName').value, document.getElementById('mealCal').value);
@@ -898,6 +1042,79 @@ function renderFoodPick() {
     foodPickIndex = null;
     renderNutrition();
   });
+}
+
+// One row per food the sentence placed, each with the amount showing so it can
+// be corrected. A row whose amount is unknown says so and is not addable until
+// it is filled -- the alternative is writing a guessed weight into the log as if
+// it had been measured.
+function renderMealParse() {
+  const box = document.getElementById('mealParse');
+  if (!box) return;
+  if (!mealParse) { box.innerHTML = ''; return; }
+  const rows = mealParse.items.map((item, i) => {
+    const r = item.amount == null ? null : portionFrom(item.food, item.amount);
+    const meta = r && r.ok
+      ? `${r.meal.calories} kcal \u00b7 P ${r.meal.protein} g \u00b7 C ${r.meal.carbs} g \u00b7 F ${r.meal.fat} g${item.assumed ? ' \u00b7 assumed 1' : ''}`
+      : (r ? r.message : 'needs an amount');
+    return `
+      <div class="list-item">
+        <div><div>${esc(item.food.name)}</div><div class="list-item__meta" id="parseMeta${i}">${esc(meta)}</div></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="number" min="0" style="width:88px" value="${item.amount == null ? '' : item.amount}" placeholder="${item.unit === 'g' ? 'grams' : 'how many'}" oninput="setParsedAmount(${i}, this.value)">
+          <button class="icon-btn" onclick="dropParsedItem(${i})"><span class="material-icons-round">close</span></button>
+        </div>
+      </div>`;
+  }).join('');
+  const missed = mealParse.unmatched.length
+    ? `<div class="list-item__meta">Not in the food table: ${esc(mealParse.unmatched.join(', '))}. Type those in yourself below.</div>`
+    : '';
+  const ready = mealParse.items.filter((i) => i.amount != null).length;
+  const button = mealParse.items.length
+    ? `<button class="btn btn--filled btn--block" onclick="addParsedMeals()"><span class="material-icons-round">add</span> Add ${ready} of ${mealParse.items.length}</button>`
+    : '';
+  box.innerHTML = rows + missed + button;
+}
+
+function setParsedAmount(index, value) {
+  const item = mealParse && mealParse.items[index];
+  if (!item) return;
+  const raw = String(value == null ? '' : value).trim();
+  item.amount = raw === '' ? null : Number(raw);
+  item.assumed = false;
+  const label = document.getElementById('parseMeta' + index);
+  if (!label) return;
+  const r = item.amount == null ? null : portionFrom(item.food, item.amount);
+  label.textContent = r && r.ok
+    ? `${r.meal.calories} kcal \u00b7 P ${r.meal.protein} g \u00b7 C ${r.meal.carbs} g \u00b7 F ${r.meal.fat} g`
+    : (r ? r.message : 'needs an amount');
+}
+
+function dropParsedItem(index) {
+  if (!mealParse) return;
+  mealParse.items.splice(index, 1);
+  if (!mealParse.items.length && !mealParse.unmatched.length) mealParse = null;
+  renderMealParse();
+}
+
+// Only the rows that carry an amount are written. The ones still asking for one
+// stay on screen rather than going in at a number nobody typed.
+function addParsedMeals() {
+  if (!mealParse) return;
+  const ready = mealParse.items.filter((item) => item.amount != null);
+  if (!ready.length) { toast('Fill in an amount first'); return; }
+  let added = 0;
+  ready.forEach((item) => {
+    const r = portionFrom(item.food, item.amount);
+    if (r.ok && saveMeal(r.meal)) added += 1;
+  });
+  // A box holding something that is not a number leaves `added` at zero with
+  // every row still looking ready, so say so rather than doing nothing quietly.
+  if (!added) { toast('Check the amounts'); return; }
+  mealParse.items = mealParse.items.filter((item) => item.amount == null);
+  if (!mealParse.items.length && !mealParse.unmatched.length) mealParse = null;
+  toast(added === 1 ? 'Added 1 meal' : `Added ${added} meals`);
+  renderNutrition();
 }
 
 function pickFood(index) { foodPickIndex = index; renderFoodPick(); }
