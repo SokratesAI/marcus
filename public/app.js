@@ -229,6 +229,52 @@ function portionFrom(food, rawAmount) {
 }
 
 
+// --- A barcode, looked up ----------------------------------------------------
+// Idea #204. The 31-food table above is the food I could think of; a barcode is
+// the food that is actually in the cupboard. The server proxies Open Food Facts
+// (idea #215) and this is the browser half of that route -- the only thing on
+// this tab that leaves the page.
+//
+// The four answers the route can give are kept apart on purpose. "Nobody has
+// entered that barcode" and "the database did not answer" both mean no food
+// came back and mean opposite things to the person holding the packet: the
+// first is worth typing in by hand, the second is worth trying again in a
+// minute. Collapsing them into one "it did not work" is what makes an app feel
+// broken.
+const BARCODE_DIGITS = /^[0-9]{8,14}$/;
+
+async function lookupBarcodeFood(code, fetchImpl) {
+  const trimmed = String(code == null ? '' : code).replace(/[\s-]/g, '');
+  if (!BARCODE_DIGITS.test(trimmed)) return { ok: false, message: 'A barcode is 8 to 14 digits.' };
+  const get = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!get) return { ok: false, message: 'No connection \u2014 type the food in yourself below.' };
+  let res;
+  try {
+    res = await get(`/api/food/barcode/${trimmed}`);
+  } catch (err) {
+    return { ok: false, message: 'No connection \u2014 type the food in yourself below.' };
+  }
+  // No branch for the route's own 400: the digit check above is the same rule
+  // the server applies, so a code that gets past it here cannot be rejected
+  // there. A special case for that would be untestable and would go stale
+  // silently if the two ever disagreed -- the generic failure below covers it.
+  if (res.status === 404) return { ok: false, message: 'Nobody has entered that barcode yet \u2014 type it in yourself below.' };
+  if (!res.ok) return { ok: false, message: 'The food database did not answer \u2014 try again, or type it in yourself.' };
+  let body;
+  try {
+    body = await res.json();
+  } catch (err) {
+    return { ok: false, message: 'The food database did not answer \u2014 try again, or type it in yourself.' };
+  }
+  const food = body && body.food;
+  // A row with no name or no calorie number is not a food, however well the
+  // request went. Pricing a meal off it writes a 0 kcal entry into the log.
+  if (!food || !food.name || typeof food.kcal !== 'number') {
+    return { ok: false, message: 'That barcode has no nutrition on it yet \u2014 type it in yourself below.' };
+  }
+  return { ok: true, food, cached: Boolean(body.cached) };
+}
+
 // --- Reading a meal sentence ------------------------------------------------
 // "two eggs and a slice of wholemeal bread" is how a person describes dinner,
 // and the picker above makes them do it one food at a time. This turns the
@@ -1174,7 +1220,7 @@ function deleteSession(id) {
 // ---------- nutrition ----------
 // Which food is picked and which recent meals are on screen are UI state, not
 // stored data, so they live here rather than in `store`.
-let foodPickIndex = null;
+let foodPick = null;
 let recentMealCache = [];
 // The result of the last sentence read, held so the amounts can be corrected
 // before anything is written into the log.
@@ -1217,6 +1263,8 @@ function renderNutrition() {
       <div id="mealParse"></div>
       <div class="field"><label>Search foods</label><input id="foodSearch" type="text" autocomplete="off" placeholder="e.g. chicken, oats, banana"></div>
       <div id="foodResults"></div>
+      <div class="field"><label>Or the barcode on the packet</label><input id="foodBarcode" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 7038010009457"></div>
+      <button class="btn btn--tonal btn--block" id="lookUpBarcode"><span class="material-icons-round">qr_code_scanner</span> Look it up</button>
       <div id="foodPicked"></div>
       <details class="manual-meal">
         <summary>Not in the list? Type it in yourself</summary>
@@ -1238,7 +1286,7 @@ function renderNutrition() {
 
   const search = document.getElementById('foodSearch');
   search.addEventListener('input', () => {
-    foodPickIndex = null;
+    foodPick = null;
     renderFoodResults(search.value);
     renderFoodPick();
   });
@@ -1253,6 +1301,19 @@ function renderNutrition() {
     if (!out.items.length && !out.unmatched.length) { toast('Nothing to read there'); return; }
     mealParse = out;
     renderMealParse();
+  });
+
+  const barcode = document.getElementById('foodBarcode');
+  const lookUp = document.getElementById('lookUpBarcode');
+  lookUp.addEventListener('click', async () => {
+    // Disabled while it is in flight: the upstream call is the slow part, and a
+    // second tap would queue a second request against someone else's API.
+    lookUp.disabled = true;
+    const result = await lookupBarcodeFood(barcode.value);
+    lookUp.disabled = false;
+    if (!result.ok) { toast(result.message); return; }
+    foodPick = result.food;
+    renderFoodPick();
   });
 
   document.getElementById('addMeal').addEventListener('click', () => {
@@ -1282,8 +1343,8 @@ function renderFoodResults(query) {
 function renderFoodPick() {
   const box = document.getElementById('foodPicked');
   if (!box) return;
-  if (foodPickIndex == null) { box.innerHTML = ''; return; }
-  const food = FOODS[foodPickIndex];
+  if (!foodPick) { box.innerHTML = ''; return; }
+  const food = foodPick;
   box.innerHTML = `
     <div class="food-pick">
       <div class="card__title-row"><h2>${esc(food.name)}</h2>
@@ -1309,7 +1370,7 @@ function renderFoodPick() {
     const r = portionFrom(food, amount.value);
     if (!r.ok) { toast(r.message); return; }
     if (!saveMeal(r.meal)) return;
-    foodPickIndex = null;
+    foodPick = null;
     renderNutrition();
   });
 }
@@ -1387,8 +1448,8 @@ function addParsedMeals() {
   renderNutrition();
 }
 
-function pickFood(index) { foodPickIndex = index; renderFoodPick(); }
-function clearFoodPick() { foodPickIndex = null; renderFoodPick(); }
+function pickFood(index) { foodPick = FOODS[index]; renderFoodPick(); }
+function clearFoodPick() { foodPick = null; renderFoodPick(); }
 
 function addRecentMeal(index) {
   const meal = recentMealCache[index];
