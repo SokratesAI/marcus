@@ -1,4 +1,4 @@
-const CACHE = 'marcus-shell-v2';
+const CACHE = 'marcus-shell-v3';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg'];
 
 // A stalled connection neither resolves nor rejects, so a bare network-first
@@ -56,7 +56,17 @@ function respond(request) {
   });
 }
 
+// The API is state, not shell. Caching a GET /api/state means a slow network
+// hands back an old revision from the cache, and "Load the server copy" would
+// then restore stale data over the live browser copy -- so it goes straight to
+// the network and is never stashed.
+function isApi(url) {
+  const u = new URL(url);
+  return u.origin === self.location.origin && u.pathname.startsWith('/api/');
+}
+
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  if (isApi(e.request.url)) return;
   e.respondWith(respond(e.request));
 });
