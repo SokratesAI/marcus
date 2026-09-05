@@ -197,6 +197,64 @@ describe("tracingMiddleware", () => {
     expect(spans).toHaveLength(1);
   });
 
+  it("does not call an aborted request a 200", () => {
+    const { tracer, spans } = fakeTracer();
+    const listeners: Record<string, Array<() => void>> = {};
+    // statusCode is 200 because Node initialises it that way, not because
+    // anything answered -- which is the whole trap.
+    const res = {
+      statusCode: 200,
+      on(event: string, fn: () => void) {
+        (listeners[event] ??= []).push(fn);
+      },
+    };
+    tracingMiddleware(tracer)(
+      { method: "GET", originalUrl: "/api/state", route: { path: "/api/state" } } as never,
+      res as never,
+      () => {},
+    );
+    // The phone walked out of wifi: `close` fires and `finish` never does.
+    listeners["close"].forEach((fn) => fn());
+    expect(spans[0].name).toBe("GET /api/state");
+    expect(spans[0].ended).toBe(true);
+    expect(spans[0].attributes["http.response.status_code"]).toBeUndefined();
+    expect(spans[0].attributes["http.request.aborted"]).toBe("true");
+  });
+
+  it("serves the request and ends the process alive when the span throws", () => {
+    const exploding: TracerLike = {
+      startSpan() {
+        return {
+          setAttribute() {
+            throw new Error("attribute writer is in pieces");
+          },
+          updateName() {
+            throw new Error("rename is in pieces");
+          },
+          recordException() {},
+          end() {
+            throw new Error("end is in pieces");
+          },
+        };
+      },
+    };
+    const listeners: Record<string, Array<() => void>> = {};
+    const res = {
+      statusCode: 200,
+      on(event: string, fn: () => void) {
+        (listeners[event] ??= []).push(fn);
+      },
+    };
+    tracingMiddleware(exploding)(
+      { method: "GET", originalUrl: "/healthz" } as never,
+      res as never,
+      () => {},
+    );
+    // These fire inside an EventEmitter listener, where an exception is
+    // fatal to the process by default. Nothing may escape.
+    expect(() => listeners["finish"].forEach((fn) => fn())).not.toThrow();
+  });
+
   it("serves the request even if the tracer throws on startSpan", async () => {
     const broken: TracerLike = {
       startSpan() {

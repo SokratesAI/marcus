@@ -188,24 +188,48 @@ export function tracingMiddleware(tracer: TracerLike | null) {
       next();
       return;
     }
-    span.setAttribute("http.request.method", method);
-    span.setAttribute("url.path", rawPath);
+    try {
+      span.setAttribute("http.request.method", method);
+      span.setAttribute("url.path", rawPath);
+    } catch {
+      // Same reason as the guard around startSpan above: a span that will
+      // not take an attribute must not take the request down with it.
+    }
     let ended = false;
-    const finish = () => {
+    const close = (completed: boolean) => () => {
       if (ended) return;
       ended = true;
       try {
         span.updateName(`${method} ${routeName(req)}`);
-        span.setAttribute("http.response.status_code", res.statusCode);
-      } finally {
+        if (completed) {
+          span.setAttribute("http.response.status_code", res.statusCode);
+        } else {
+          // Deliberately no status code. `res.statusCode` is 200 from the
+          // moment the response object exists and only changes when a
+          // handler sets it, so a socket that died mid-handler would
+          // otherwise be filed as a successful 200 -- indistinguishable in
+          // Tempo from a request that worked, which is precisely the one
+          // question this span would be opened to answer.
+          span.setAttribute("http.request.aborted", "true");
+        }
+      } catch {
+        // These run inside a `finish`/`close` listener, and an exception out
+        // of an EventEmitter listener is fatal to the process by default.
+        // A tracing library is never worth an outage of the thing it is
+        // watching, and that has to hold here as well as in initTracing.
+      }
+      try {
         span.end();
+      } catch {
+        // Same reason.
       }
     };
     // `close` as well as `finish`, because a phone that walks out of wifi
     // mid-request aborts the socket and `finish` never fires -- and a span
-    // that is never ended is a span the exporter never sends.
-    res.on("finish", finish);
-    res.on("close", finish);
+    // that is never ended is a span the exporter never sends. Whichever
+    // fires first wins, and only `finish` means a response was actually sent.
+    res.on("finish", close(true));
+    res.on("close", close(false));
     next();
   };
 }
