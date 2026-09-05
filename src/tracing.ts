@@ -63,6 +63,34 @@ export interface TracingLogger {
   info(msg: string): unknown;
 }
 
+interface ProviderLike {
+  forceFlush(): Promise<void>;
+}
+
+// The provider built by the most recent successful initTracing, so a caller
+// can flush without reaching into the global API. Null means tracing is off.
+let _provider: ProviderLike | null = null;
+
+/** Export whatever the batch processor is still holding. A no-op when
+ * tracing is off, and it never throws -- a flush is a courtesy, not a
+ * correctness requirement. */
+export async function forceFlush(): Promise<void> {
+  if (_provider === null) return;
+  try {
+    await _provider.forceFlush();
+  } catch {
+    // A collector that is down must not turn a flush into a crash.
+  }
+}
+
+/** The OTLP/HTTP traces path. `OTEL_EXPORTER_OTLP_ENDPOINT` names the base
+ * and the signal path is appended to it -- that appending is the exporter's
+ * behaviour when it reads the variable itself, and this reproduces it for
+ * the explicit `url` form, which takes the full path and appends nothing. */
+export function tracesUrl(base: string): string {
+  return `${base.replace(/\/+$/, "")}/v1/traces`;
+}
+
 export function endpoint(env: NodeJS.ProcessEnv = process.env): string {
   return (env[ENDPOINT_ENV] ?? "").trim();
 }
@@ -99,14 +127,31 @@ export async function initTracing(
     const name = serviceName(env);
     const provider = new sdk.NodeTracerProvider({
       resource: resources.resourceFromAttributes({ "service.name": name }),
-      // The exporter reads OTEL_EXPORTER_OTLP_ENDPOINT itself and appends
-      // /v1/traces to it; passing the endpoint again here would give one
-      // variable two behaviours.
-      spanProcessors: [new sdk.BatchSpanProcessor(new exporterModule.OTLPTraceExporter())],
+      // The URL is passed explicitly rather than left to the exporter's own
+      // reading of OTEL_EXPORTER_OTLP_ENDPOINT. The exporter reads the real
+      // `process.env` and nothing else, so with `env` injected it silently
+      // fell back to its localhost default while the log line above happily
+      // named the endpoint it had been given -- measured against a fake
+      // collector, which got nothing and saw a connection to :4318 instead.
+      // One source of truth, and the log now describes what was built.
+      spanProcessors: [
+        new sdk.BatchSpanProcessor(
+          new exporterModule.OTLPTraceExporter({ url: tracesUrl(endpoint(env)) }),
+        ),
+      ],
     });
+    // `register()` installs the global context manager and propagator, which
+    // is what a future child span would need. The tracer handed back comes
+    // off the provider that was just built rather than off the global,
+    // because the global refuses a second registration -- so on the second
+    // call `api.trace.getTracer` returns a tracer belonging to the FIRST
+    // provider, and its spans go wherever that one was pointed. Production
+    // calls this once; the export test calls it twice, and that is how the
+    // difference showed up.
     provider.register();
+    _provider = provider as unknown as ProviderLike;
     logger.info(`otel: tracing on, ${name} -> ${endpoint(env)}`);
-    return api.trace.getTracer(name) as unknown as TracerLike;
+    return provider.getTracer(name) as unknown as TracerLike;
   } catch (err) {
     logger.info(`otel: tracing off, could not build the tracer (${String(err)})`);
     return null;

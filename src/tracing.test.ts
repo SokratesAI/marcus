@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import express from "express";
 import request from "supertest";
 import {
@@ -7,9 +9,11 @@ import {
   SERVICE_NAME_ENV,
   UNMATCHED_ROUTE,
   endpoint,
+  forceFlush,
   initTracing,
   routeName,
   serviceName,
+  tracesUrl,
   tracingMiddleware,
   type SpanLike,
   type TracerLike,
@@ -202,4 +206,60 @@ describe("tracingMiddleware", () => {
     const res = await request(appWith(broken)).get("/healthz");
     expect(res.status).toBe(200);
   });
+});
+
+describe("tracesUrl", () => {
+  it("appends the signal path to the configured base", () => {
+    expect(tracesUrl("http://collector:4318")).toBe("http://collector:4318/v1/traces");
+  });
+
+  it("does not double the slash on a base that ends in one", () => {
+    expect(tracesUrl("http://collector:4318/")).toBe("http://collector:4318/v1/traces");
+  });
+});
+
+describe("the exporter actually reaches the configured endpoint", () => {
+  it("posts a span to the collector it was pointed at", async () => {
+    // The test that matters, and the one that caught the bug this file's
+    // `url:` argument exists to fix. Everything above pins behaviour inside
+    // this process; a tracer that builds, logs "tracing on" and then exports
+    // to a hardcoded localhost default passes every one of them. Only a
+    // collector that receives bytes can tell the difference.
+    const received: Array<{ url: string; bytes: number }> = [];
+    const collector = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        received.push({ url: req.url ?? "", bytes: Buffer.concat(chunks).length });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("{}");
+      });
+    });
+    // Port 0, so two runs of this suite on one machine cannot collide.
+    await new Promise<void>((resolve) => collector.listen(0, "127.0.0.1", resolve));
+    const port = (collector.address() as AddressInfo).port;
+    try {
+      const tracer = await initTracing(
+        {
+          [ENDPOINT_ENV]: `http://127.0.0.1:${port}`,
+          [SERVICE_NAME_ENV]: "marcus-export-test",
+        },
+        { info: () => {} },
+      );
+      expect(tracer).not.toBeNull();
+      const span = tracer!.startSpan("GET /api/state");
+      span.setAttribute("http.response.status_code", 200);
+      span.end();
+      await forceFlush();
+      const deadline = Date.now() + 5000;
+      while (received.length === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(received).toHaveLength(1);
+      expect(received[0].url).toBe("/v1/traces");
+      expect(received[0].bytes).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) => collector.close(() => resolve()));
+    }
+  }, 20000);
 });
