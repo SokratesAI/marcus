@@ -80,7 +80,6 @@ export interface ParentContextReader {
   extract(headers: unknown): unknown | null;
 }
 
-
 export interface TracingLogger {
   info(msg: string): unknown;
 }
