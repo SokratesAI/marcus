@@ -4,6 +4,7 @@ import express, { type Express } from "express";
 import pino from "pino";
 import { StateStore } from "./state-store.js";
 import { FoodCache, lookupBarcode } from "./food-lookup.js";
+import { initTracing, tracingMiddleware, type TracerLike } from "./tracing.js";
 
 const logger = pino();
 const port = Number(process.env.PORT ?? 8080);
@@ -23,6 +24,9 @@ export interface AppOptions {
    * writes a cache file next to a real state file. Production passes neither. */
   foodCache?: FoodCache;
   fetchImpl?: typeof globalThis.fetch;
+  /** Passed by the entrypoint after `initTracing`. Null, and therefore a
+   * pass-through, everywhere else -- a test must not open a span. */
+  tracer?: TracerLike | null;
 }
 
 export function createApp(
@@ -33,6 +37,10 @@ export function createApp(
   const app = express();
   const foodCache = options.foodCache ?? new FoodCache(path.dirname(store.filePath));
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+
+  // First, so the span covers the body parser and the static handler as well
+  // as the API routes.
+  app.use(tracingMiddleware(options.tracer ?? null));
 
   app.get("/healthz", (_req, res) => {
     res.status(200).json({ status: "ok" });
@@ -101,7 +109,13 @@ export function createApp(
 const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isEntrypoint) {
   const store = new StateStore(DEFAULT_DATA_DIR);
-  createApp(store).listen(port, () => {
-    logger.info({ port, state: store.filePath }, "service listening");
+  // Awaited rather than fired and forgotten: the tracer has to exist before
+  // the first request, and a failure inside initTracing already resolves to
+  // null rather than rejecting.
+  const tracer = await initTracing(process.env, {
+    info: (msg: string) => logger.info(msg),
+  });
+  createApp(store, undefined, { tracer }).listen(port, () => {
+    logger.info({ port, state: store.filePath, tracing: tracer !== null }, "service listening");
   });
 }
