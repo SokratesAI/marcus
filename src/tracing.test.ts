@@ -3,6 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import request from "supertest";
+import { trace as otelTrace } from "@opentelemetry/api";
 import {
   DEFAULT_SERVICE_NAME,
   ENDPOINT_ENV,
@@ -11,10 +12,12 @@ import {
   endpoint,
   forceFlush,
   initTracing,
+  parentContext,
   routeName,
   serviceName,
   tracesUrl,
   tracingMiddleware,
+  type ParentContextReader,
   type SpanLike,
   type TracerLike,
 } from "./tracing.js";
@@ -23,6 +26,9 @@ interface Recorded {
   name: string;
   attributes: Record<string, string | number>;
   ended: boolean;
+  /** The third argument startSpan was called with -- the parent context, or
+   * undefined when the span was opened as a root. */
+  parent: unknown;
 }
 
 /** A tracer that records instead of exporting, so a test can assert what
@@ -30,8 +36,8 @@ interface Recorded {
 function fakeTracer(): { tracer: TracerLike; spans: Recorded[] } {
   const spans: Recorded[] = [];
   const tracer: TracerLike = {
-    startSpan(name: string): SpanLike {
-      const recorded: Recorded = { name, attributes: {}, ended: false };
+    startSpan(name: string, _options?: unknown, context?: unknown): SpanLike {
+      const recorded: Recorded = { name, attributes: {}, ended: false, parent: context };
       spans.push(recorded);
       return {
         setAttribute(key, value) {
@@ -50,9 +56,9 @@ function fakeTracer(): { tracer: TracerLike; spans: Recorded[] } {
   return { tracer, spans };
 }
 
-function appWith(tracer: TracerLike | null) {
+function appWith(tracer: TracerLike | null, parent: ParentContextReader | null = null) {
   const app = express();
-  app.use(tracingMiddleware(tracer));
+  app.use(tracingMiddleware(tracer, parent));
   app.get("/healthz", (_req, res) => {
     res.status(200).json({ status: "ok" });
   });
@@ -320,4 +326,123 @@ describe("the exporter actually reaches the configured endpoint", () => {
       await new Promise<void>((resolve) => collector.close(() => resolve()));
     }
   }, 20000);
+});
+
+describe("continuing the caller's trace", () => {
+  /** A real W3C traceparent: version 00, a 32-hex trace id, a 16-hex span id,
+   * sampled. This is the exact shape `agora_runner.otel.outgoing_headers`
+   * puts on every JSON call that repo makes. */
+  const TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
+  const TRACEPARENT = `00-${TRACE_ID}-00f067aa0ba902b7-01`;
+
+  it("opens the span inside the context the reader returned", async () => {
+    const { tracer, spans } = fakeTracer();
+    const marker = { iam: "the caller's context" };
+    const parent: ParentContextReader = { extract: () => marker };
+    await request(appWith(tracer, parent)).get("/healthz").set("traceparent", TRACEPARENT);
+    expect(spans).toHaveLength(1);
+    expect(spans[0].parent).toBe(marker);
+  });
+
+  it("opens a root span when the request names no trace", async () => {
+    const { tracer, spans } = fakeTracer();
+    const parent: ParentContextReader = { extract: () => null };
+    await request(appWith(tracer, parent)).get("/healthz");
+    expect(spans).toHaveLength(1);
+    // Not merely "not the marker": the third argument must be absent, so the
+    // API applies its own active-context default exactly as it did before.
+    expect(spans[0].parent).toBeUndefined();
+  });
+
+  it("hands the reader the request's own headers", async () => {
+    const { tracer } = fakeTracer();
+    const seen: unknown[] = [];
+    const parent: ParentContextReader = {
+      extract: (headers) => {
+        seen.push(headers);
+        return null;
+      },
+    };
+    await request(appWith(tracer, parent)).get("/healthz").set("traceparent", TRACEPARENT);
+    expect(seen).toHaveLength(1);
+    expect((seen[0] as Record<string, string>).traceparent).toBe(TRACEPARENT);
+  });
+
+  it("still records the span, and still serves the request, when the reader throws", async () => {
+    const { tracer, spans } = fakeTracer();
+    const parent: ParentContextReader = {
+      extract: () => {
+        throw new Error("propagator exploded");
+      },
+    };
+    const res = await request(appWith(tracer, parent)).get("/healthz").set("traceparent", TRACEPARENT);
+    expect(res.status).toBe(200);
+    // A broken reader costs the join and nothing else. Losing the span here
+    // would be worse than the root span this code had before the join existed.
+    expect(spans).toHaveLength(1);
+    expect(spans[0].parent).toBeUndefined();
+    expect(spans[0].ended).toBe(true);
+  });
+
+  it("is a pass-through when no reader is supplied at all", async () => {
+    const { tracer, spans } = fakeTracer();
+    const res = await request(appWith(tracer)).get("/healthz").set("traceparent", TRACEPARENT);
+    expect(res.status).toBe(200);
+    expect(spans[0].parent).toBeUndefined();
+  });
+});
+
+describe("parentContext", () => {
+  it("reads a real traceparent back as the caller's trace id", async () => {
+    await initTracing(
+      { [ENDPOINT_ENV]: "http://127.0.0.1:4318", [SERVICE_NAME_ENV]: "marcus-test" },
+      { info: () => {} },
+    );
+    const reader = parentContext();
+    expect(reader).not.toBeNull();
+    const ctx = reader!.extract({
+      traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    });
+    expect(ctx).not.toBeNull();
+    // The real API, not a double: this is the assertion that the join actually
+    // works against the SDK this image ships, rather than against my idea of it.
+    const spanContext = otelTrace.getSpanContext(ctx as never);
+    expect(spanContext?.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+    expect(spanContext?.spanId).toBe("00f067aa0ba902b7");
+  });
+
+  it("returns null for a request with no traceparent", async () => {
+    await initTracing(
+      { [ENDPOINT_ENV]: "http://127.0.0.1:4318" },
+      { info: () => {} },
+    );
+    expect(parentContext()!.extract({ "user-agent": "a phone" })).toBeNull();
+  });
+
+  it("returns null for a traceparent Node joined from duplicate headers", async () => {
+    await initTracing({ [ENDPOINT_ENV]: "http://127.0.0.1:4318" }, { info: () => {} });
+    // `IncomingMessage.headers` joins repeated headers with ", ", so two
+    // proxies each adding one arrives here as a single unparseable string.
+    // The answer has to be "no parent", never a trace id sliced out of it.
+    const joined =
+      "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01, 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    expect(parentContext()!.extract({ traceparent: joined })).toBeNull();
+  });
+
+  it("returns null for an all-zero trace id", async () => {
+    await initTracing({ [ENDPOINT_ENV]: "http://127.0.0.1:4318" }, { info: () => {} });
+    // W3C calls this invalid and the API's own propagator refuses it, so this
+    // pins the SDK's behaviour rather than a branch of mine -- I wrote that
+    // branch, mutated it away, and all 28 tests stayed green.
+    expect(
+      parentContext()!.extract({
+        traceparent: "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+      }),
+    ).toBeNull();
+  });
+
+  it("is null while tracing is off", async () => {
+    await initTracing({}, { info: () => {} });
+    expect(parentContext()).toBeNull();
+  });
 });

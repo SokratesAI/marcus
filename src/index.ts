@@ -4,7 +4,13 @@ import express, { type Express } from "express";
 import pino from "pino";
 import { StateStore } from "./state-store.js";
 import { FoodCache, lookupBarcode } from "./food-lookup.js";
-import { initTracing, tracingMiddleware, type TracerLike } from "./tracing.js";
+import {
+  initTracing,
+  parentContext,
+  tracingMiddleware,
+  type ParentContextReader,
+  type TracerLike,
+} from "./tracing.js";
 
 const logger = pino();
 const port = Number(process.env.PORT ?? 8080);
@@ -27,6 +33,10 @@ export interface AppOptions {
   /** Passed by the entrypoint after `initTracing`. Null, and therefore a
    * pass-through, everywhere else -- a test must not open a span. */
   tracer?: TracerLike | null;
+  /** Also from `initTracing`, via `parentContext()`. Null means every span
+   * here starts a new trace, which is what a request from a browser does
+   * anyway; a call from another instrumented service continues its trace. */
+  parent?: ParentContextReader | null;
 }
 
 export function createApp(
@@ -40,7 +50,7 @@ export function createApp(
 
   // First, so the span covers the body parser and the static handler as well
   // as the API routes.
-  app.use(tracingMiddleware(options.tracer ?? null));
+  app.use(tracingMiddleware(options.tracer ?? null, options.parent ?? null));
 
   app.get("/healthz", (_req, res) => {
     res.status(200).json({ status: "ok" });
@@ -115,7 +125,7 @@ if (isEntrypoint) {
   const tracer = await initTracing(process.env, {
     info: (msg: string) => logger.info(msg),
   });
-  createApp(store, undefined, { tracer }).listen(port, () => {
+  createApp(store, undefined, { tracer, parent: parentContext() }).listen(port, () => {
     logger.info({ port, state: store.filePath, tracing: tracer !== null }, "service listening");
   });
 }

@@ -56,7 +56,28 @@ export interface SpanLike {
 }
 
 export interface TracerLike {
-  startSpan(name: string): SpanLike;
+  /** `options` and `context` are the OpenTelemetry API's own second and third
+   * arguments. They are declared `unknown` because this module never builds
+   * either one itself -- the context comes back opaque from
+   * {@link ParentContextReader.extract} and is handed straight through. */
+  startSpan(name: string, options?: unknown, context?: unknown): SpanLike;
+}
+
+/**
+ * Reads the caller's trace off an incoming request's headers.
+ *
+ * Marcus is called by instrumented services as well as by a browser --
+ * `tools.marcus_capacity` in `agora-persona-runner` reads `/api/state` every
+ * cycle, and since runner#780 every outgoing JSON call from that repo carries
+ * a `traceparent`. Without this, each of those arrives here and opens a brand
+ * new root trace, so one action lands in Tempo as two unrelated traces with
+ * nothing joining them.
+ */
+export interface ParentContextReader {
+  /** An opaque context to start the span in, or null when the request carries
+   * no usable trace. Null is the answer for a browser, which is most traffic
+   * here, and it is a normal answer rather than a failure. */
+  extract(headers: unknown): unknown | null;
 }
 
 export interface TracingLogger {
@@ -71,6 +92,10 @@ interface ProviderLike {
 // can flush without reaching into the global API. Null means tracing is off.
 let _provider: ProviderLike | null = null;
 
+// The reader built alongside that provider. Null means tracing is off, and
+// therefore that every span is a root span anyway.
+let _parent: ParentContextReader | null = null;
+
 /** Export whatever the batch processor is still holding. A no-op when
  * tracing is off, and it never throws -- a flush is a courtesy, not a
  * correctness requirement. */
@@ -81,6 +106,14 @@ export async function forceFlush(): Promise<void> {
   } catch {
     // A collector that is down must not turn a flush into a crash.
   }
+}
+
+/** The reader for the most recent successful initTracing, exposed the same
+ * way {@link forceFlush} exposes the provider: the entrypoint needs it to
+ * build the middleware, and reaching into the global API for it is what
+ * `provider.register()`'s second-call behaviour already made unsafe once. */
+export function parentContext(): ParentContextReader | null {
+  return _parent;
 }
 
 /** The OTLP/HTTP traces path. `OTEL_EXPORTER_OTLP_ENDPOINT` names the base
@@ -115,6 +148,7 @@ export async function initTracing(
 ): Promise<TracerLike | null> {
   if (!endpoint(env)) {
     logger.info(`otel: tracing off, ${ENDPOINT_ENV} is not set`);
+    _parent = null;
     return null;
   }
   try {
@@ -150,10 +184,34 @@ export async function initTracing(
     // difference showed up.
     provider.register();
     _provider = provider as unknown as ProviderLike;
+    // `register()` is what installs the global W3C propagator, so this has to
+    // be built after it and not before.
+    _parent = {
+      extract(headers: unknown): unknown | null {
+        try {
+          const ctx = api.propagation.extract(
+            api.context.active(),
+            (headers ?? {}) as Record<string, string>,
+          );
+          // One check, not two. An all-zero trace id is invalid per W3C and I
+          // had written a second guard for it -- mutating that guard away left
+          // all 28 tests green, because the API's own propagator refuses such a
+          // header and hands back no span context at all. A guard whose removal
+          // nothing can detect is guarding nothing.
+          if (!api.trace.getSpanContext(ctx)?.traceId) return null;
+          return ctx;
+        } catch {
+          // Same rule as everywhere else in this module: a header this loop
+          // cannot parse must cost a join, never a request.
+          return null;
+        }
+      },
+    };
     logger.info(`otel: tracing on, ${name} -> ${endpoint(env)}`);
     return provider.getTracer(name) as unknown as TracerLike;
   } catch (err) {
     logger.info(`otel: tracing off, could not build the tracer (${String(err)})`);
+    _parent = null;
     return null;
   }
 }
@@ -172,8 +230,15 @@ export function routeName(req: Request): string {
 /**
  * One span per HTTP request. A pass-through when `tracer` is null, which is
  * every test run and every local run, because neither sets the endpoint.
+ *
+ * When `parent` reads a trace off the request, the span is opened inside it,
+ * so a call made by another instrumented service lands in Tempo under that
+ * caller's trace instead of starting a second one.
  */
-export function tracingMiddleware(tracer: TracerLike | null) {
+export function tracingMiddleware(
+  tracer: TracerLike | null,
+  parent: ParentContextReader | null = null,
+) {
   return function trace(req: Request, res: Response, next: NextFunction): void {
     if (tracer === null) {
       next();
@@ -181,9 +246,22 @@ export function tracingMiddleware(tracer: TracerLike | null) {
     }
     const method = req.method;
     const rawPath = (req.originalUrl ?? req.url ?? "/").split("?", 1)[0] || "/";
+    // Its own try, and deliberately not the one below: a reader that throws
+    // must cost the join and nothing else. Folding it into the startSpan guard
+    // would drop the span entirely and lose the request from Tempo, which is
+    // strictly worse than the root span we would have had before this existed.
+    let parentCtx: unknown = null;
+    try {
+      parentCtx = parent?.extract(req.headers) ?? null;
+    } catch {
+      parentCtx = null;
+    }
     let span: SpanLike;
     try {
-      span = tracer.startSpan(method);
+      // `startSpan(name)` and `startSpan(name, undefined, undefined)` are the
+      // same call to the API, but not to a test double that counts arguments,
+      // so the no-parent path stays byte-identical to what it was.
+      span = parentCtx === null ? tracer.startSpan(method) : tracer.startSpan(method, undefined, parentCtx);
     } catch {
       next();
       return;
