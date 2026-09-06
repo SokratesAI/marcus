@@ -43,6 +43,15 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # CodeQL's actions/missing-workflow-permissions, raised the minute code
+    # scanning was turned on here (2026-09-06). The repo's own default is
+    # already `read`, so this job was not actually over-privileged today --
+    # but that default lives in a settings page no reader of this file can
+    # see, and one org-level flip to `write` re-arms every job that stays
+    # silent about it. Saying it here makes the grant a property of the
+    # workflow instead of a property of the account.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -110,6 +119,11 @@ jobs:
   update-manifest:
     needs: build-push
     runs-on: ubuntu-latest
+    # Everything this job writes it writes with the App installation token
+    # minted below, scoped to the -config repo alone. GITHUB_TOKEN only ever
+    # reads this repo here, so say so.
+    permissions:
+      contents: read
     steps:
       - name: Generate installation token scoped to the config repo only
         id: app-token
