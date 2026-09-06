@@ -2638,7 +2638,10 @@ function adoptMergedCopy(merged) {
   let gained = false;
   Object.keys(merged).forEach(k => {
     const before = store.get(k, null);
-    const beforeCount = Array.isArray(before) ? before.length : -1;
+    // A key this browser did not hold at all counts as zero, not as absent:
+    // otherwise an empty list arriving where there was no key reads as a gain
+    // and toasts about records nobody logged.
+    const beforeCount = Array.isArray(before) ? before.length : 0;
     if (!store.set(k, merged[k])) return;
     if (Array.isArray(merged[k]) && merged[k].length > beforeCount) gained = true;
   });

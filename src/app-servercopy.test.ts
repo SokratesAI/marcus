@@ -450,3 +450,10 @@ describe("adoptMergedCopy", () => {
     expect(ctx.adoptMergedCopy({ sessions: [{ id: "mine" }] })).toBe(false);
   });
 });
+
+describe("adoptMergedCopy on an empty list", () => {
+  it("does not call an empty list arriving where there was no key a gain", () => {
+    const ctx = loadApp();
+    expect(ctx.adoptMergedCopy({ goals: [] })).toBe(false);
+  });
+});
