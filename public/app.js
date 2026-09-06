@@ -533,6 +533,46 @@ function validateGoal(rawText, rawDate, todayISO) {
   return { ok: true, goal: { id: uid(), text, targetDate: date, created: today, milestones: buildMilestones(today, date) } };
 }
 
+// ---------- endurance work inside the written week ----------
+// You could always LOG a swim; the plan could never ASK for one. Every day in a
+// plan was a list of exercises with sets and reps, so a week for an endurance
+// goal -- the triathlon in the placeholder text -- could not be written down at
+// all. That is the half of "the plan is fixed seed data" that resizing sets was
+// never going to reach, and it needs no model: the user says which day, which
+// activity and how long.
+//
+// A cardio session contributes zero sets, exactly as a logged one already does,
+// so every piece of set arithmetic in this file is untouched by it. What does
+// change is what counts as a training day -- see `isTrainingDay`.
+function validatePlanCardio(rawActivity, rawMinutes) {
+  const activity = String(rawActivity == null ? '' : rawActivity).trim();
+  if (CARDIO_ACTIVITIES.indexOf(activity) === -1) return { ok: false, message: 'Pick one of the activities in the list.' };
+  const minutes = checkNumber(rawMinutes, 'minutes');
+  if (!minutes.ok) return { ok: false, message: minutes.message };
+  // checkNumber only bounds the value. A plan is read at a glance, so `45.5 min`
+  // on a card is noise rather than precision.
+  if (!Number.isInteger(minutes.value)) return { ok: false, message: 'Duration must be a whole number of minutes.' };
+  return { ok: true, cardio: { activity, minutes: minutes.value } };
+}
+
+// Pure: a plan in, a new plan out. `null` clears that day's cardio.
+function withPlanCardio(plan, dayName, cardio) {
+  const next = JSON.parse(JSON.stringify(plan || {}));
+  const day = (next.days || []).find(d => d.day === dayName);
+  if (!day) return next;
+  if (cardio) {
+    day.cardio = { activity: cardio.activity, minutes: cardio.minutes };
+    // A rest day that now has a swim on it is not a rest day, and the focus is
+    // what the card says out loud. A day that already has a lifting focus keeps
+    // it -- the cardio is the second line, not a rename.
+    if (day.focus === 'Rest') day.focus = cardio.activity;
+  } else {
+    delete day.cardio;
+    if (!(day.exercises || []).length) day.focus = 'Rest';
+  }
+  return next;
+}
+
 // Sorted by how soon they are, so "next up" is always the first one.
 function goalsSorted() {
   return store.get('goals', []).slice().sort((a, b) => a.targetDate.localeCompare(b.targetDate));
@@ -763,7 +803,9 @@ function renderHome() {
   view.innerHTML = `
     <div class="card">
       <div class="card__title-row"><h2>Today · ${todayName}</h2><span class="chip ${todayPlan.focus==='Rest'?'':'chip--primary'}">${todayPlan.focus}</span></div>
-      ${todayPlan.exercises.length ? todayPlan.exercises.map(e => `<div class="exercise-line"><span>${e.name}</span><span>${e.sets}×${e.reps}</span></div>`).join('') : `<div class="empty">Rest day — recovery is training too.</div>`}
+      ${todayPlan.exercises.length ? todayPlan.exercises.map(e => `<div class="exercise-line"><span>${e.name}</span><span>${e.sets}×${e.reps}</span></div>`).join('') : ``}
+      ${todayPlan.cardio ? `<div class="exercise-line"><span>${esc(todayPlan.cardio.activity)}</span><span>${todayPlan.cardio.minutes} min</span></div>` : ``}
+      ${!todayPlan.exercises.length && !todayPlan.cardio ? `<div class="empty">Rest day — recovery is training too.</div>` : ``}
       <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="switchTab('log')"><span class="material-icons-round">add</span> Log this session</button>
     </div>
 
@@ -841,6 +883,13 @@ function renderPlan() {
       <h2>${plan.blockName}</h2>
       <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Sized for the ${esc(plan.phase || PLAN_DEFAULT_PHASE)} phase &middot; ${planTotalSets(plan)} sets across ${planTrainingDays(plan).length} training day(s)</div>
     </div>
+    <div class="card">
+      <h2>Plan a cardio session</h2>
+      <div class="field"><label>Day</label><select id="planCardioDay">${plan.days.map(d => `<option value="${esc(d.day)}"${d.day === todayName ? ' selected' : ''}>${esc(d.day)}</option>`).join('')}</select></div>
+      <div class="field"><label>Activity</label><select id="planCardioActivity">${CARDIO_ACTIVITIES.map(a => `<option value="${a}">${a}</option>`).join('')}</select></div>
+      <div class="field"><label>Duration (minutes)</label><input id="planCardioMinutes" type="number" min="1" step="1" placeholder="e.g. 45"></div>
+      <button class="btn btn--tonal btn--block" id="addPlanCardio"><span class="material-icons-round">directions_run</span> Put it in the week</button>
+    </div>
     ${plan.days.map(d => `
       <div class="card plan-day ${d.day===todayName?'is-today':''}" style="display:block">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -848,6 +897,7 @@ function renderPlan() {
           <span class="plan-day__focus">${d.focus}</span>
         </div>
         ${d.exercises.map(e => `<div class="exercise-line"><span>${e.name}</span><span>${e.sets}×${e.reps}</span></div>`).join('')}
+        ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min <button class="icon-btn" onclick="clearPlanCardio('${esc(d.day)}')"><span class="material-icons-round">close</span></button></span></div>` : ``}
       </div>
     `).join('')}
   `;
@@ -860,6 +910,21 @@ function renderPlan() {
     if (!store.set('goals', all)) return;
     renderPlan();
   });
+
+  document.getElementById('addPlanCardio').addEventListener('click', () => {
+    const result = validatePlanCardio(
+      document.getElementById('planCardioActivity').value,
+      document.getElementById('planCardioMinutes').value
+    );
+    if (!result.ok) { toast(result.message); return; }
+    if (!setPlan(withPlanCardio(store.get('plan'), document.getElementById('planCardioDay').value, result.cardio))) return;
+    renderPlan();
+  });
+}
+
+function clearPlanCardio(dayName) {
+  if (!setPlan(withPlanCardio(store.get('plan'), dayName, null))) return;
+  renderPlan();
 }
 
 // Every deliberate change to the plan goes through here, so a conflicting push
@@ -1792,8 +1857,15 @@ const DELOAD_SET_FLOOR = 2;      // a deload that leaves one set is not a sessio
 
 function weekdayOf(iso) { return DAY_NAMES[new Date(iso + 'T00:00:00Z').getUTCDay()]; }
 
+// A day counts as training if it asks for anything at all -- exercises, a cardio
+// session, or both. This used to read `exercises.length > 0` only, which made a
+// swim day indistinguishable from a rest day everywhere the plan is counted.
+function isTrainingDay(day) {
+  return !!day && ((day.exercises || []).length > 0 || !!day.cardio);
+}
+
 function planTrainingDays(plan) {
-  return (plan && plan.days || []).filter(d => (d.exercises || []).length > 0);
+  return (plan && plan.days || []).filter(isTrainingDay);
 }
 
 // Whole weeks of history inside the window -- the denominator for "you were
@@ -1820,7 +1892,7 @@ function adherenceByWeekday(plan, sessions, todayISO, windowDays) {
   });
   return (plan && plan.days || []).map(d => ({
     day: d.day,
-    planned: (d.exercises || []).length > 0,
+    planned: isTrainingDay(d),
     logged: logged[d.day] || 0,
   }));
 }
@@ -1988,12 +2060,15 @@ function applyProposal(plan, proposal) {
     if (from && to) {
       to.focus = from.focus;
       to.exercises = from.exercises;
+      // The cardio session moves with the day. Leaving it behind would move the
+      // lifting off a day the user never trains and leave the swim on it.
+      if (from.cardio) { to.cardio = from.cardio; delete from.cardio; }
       from.focus = 'Rest';
       from.exercises = [];
     }
   } else if (proposal.kind === 'rest') {
     const day = next.days.find(d => d.day === proposal.day);
-    if (day) { day.focus = 'Rest'; day.exercises = []; }
+    if (day) { day.focus = 'Rest'; day.exercises = []; delete day.cardio; }
   } else if (proposal.kind === 'phase') {
     // Sets come off the exercise carrying the most and go onto the one carrying
     // the least, one at a time, so a week loses breadth last: cutting six sets
