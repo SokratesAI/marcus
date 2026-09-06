@@ -883,6 +883,7 @@ function toggleMilestone(goalId, milestoneId) {
 }
 
 function deleteGoal(id) {
+  recordDeletion('goals', id);
   store.set('goals', store.get('goals', []).filter(g => g.id !== id));
   renderPlan();
 }
@@ -1363,6 +1364,7 @@ function renderRecentSessions() {
     : `<div class="empty">No sessions logged yet.</div>`;
 }
 function deleteSession(id) {
+  recordDeletion('sessions', id);
   store.set('sessions', store.get('sessions', []).filter(s => s.id !== id));
   renderLog();
 }
@@ -1649,6 +1651,7 @@ function addRecentMeal(index) {
 }
 
 function deleteMeal(id) {
+  recordDeletion('meals', id);
   store.set('meals', store.get('meals', []).filter(m => m.id !== id));
   renderNutrition();
 }
@@ -2245,7 +2248,32 @@ function renderProgress() {
 const BACKUP_VERSION = 1;
 // Every store key the app writes. `chat` is in here because the coach's memory
 // of the conversation is data the user would miss, not chrome.
-const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'meals', 'goals', 'chat'];
+const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'meals', 'goals', 'chat', 'deletions'];
+
+// The three stores the app can delete from, and the reason this list is three
+// names rather than every store: `deleteSession`, `deleteMeal` and `deleteGoal`
+// are the only delete buttons in the app, and all three key on an id this
+// browser minted. `weights` and `chat` have no delete path at all, so they
+// carry no tombstones and nothing below touches them.
+const DELETABLE_STORES = ['sessions', 'meals', 'goals'];
+
+// A deletion has to be a record of its own or it does not survive a sync. From
+// the other phone, "deleted here" and "never arrived here" are the same
+// observation, so the union in `mergeList` brings a deleted session straight
+// back on the next push -- which is the limit `mergeBackupData` used to state
+// and this closes.
+//
+// A tombstone can never suppress a record the user re-created, because the id
+// is minted per record: re-logging a session writes a new id, and the old
+// tombstone names the one that is gone.
+function recordDeletion(storeKey, id) {
+  if (DELETABLE_STORES.indexOf(storeKey) === -1) return false;
+  if (id === null || id === undefined || id === '') return false;
+  const log = store.get('deletions', []);
+  return store.set('deletions', (Array.isArray(log) ? log : []).concat([
+    { store: storeKey, id: String(id), ts: Date.now() },
+  ]));
+}
 
 function buildBackup(nowISO) {
   const data = {};
@@ -2263,8 +2291,13 @@ function backupFilename(nowISO) {
 // Counts what a restore would actually put back, so the confirm step can say
 // it out loud. A key holding an array counts its entries; `plan` is a single
 // object, so it counts as one thing.
+//
+// `deletions` is left out: it is bookkeeping this browser keeps so a delete
+// survives a sync, not a section the user logged and would recognise getting
+// back. `restoreBackup` leaves it out of its count for the same reason, so the
+// preview and the toast that follows it name the same number.
 function backupSummary(data) {
-  return BACKUP_KEYS.filter(k => k in data).map(k => ({
+  return BACKUP_KEYS.filter(k => k !== 'deletions' && k in data).map(k => ({
     key: k,
     count: Array.isArray(data[k]) ? data[k].length : 1,
   }));
@@ -2303,7 +2336,11 @@ function restoreBackup(parsed) {
   const restored = [];
   const failed = [];
   Object.keys(parsed.data).forEach(k => {
-    if (store.set(k, parsed.data[k])) restored.push(k); else failed.push(k);
+    const ok = store.set(k, parsed.data[k]);
+    // Written either way; only counted when it is a section the user would
+    // recognise. A refused write is still reported, because that is a failure.
+    if (!ok) failed.push(k);
+    else if (k !== 'deletions') restored.push(k);
   });
   return { restored, failed };
 }
@@ -2437,6 +2474,10 @@ const MERGE_KEYS = {
   goals: { by: ['id'] },
   weights: { by: ['date'] },
   chat: { by: ['ts', 'role', 'text'], sort: 'ts' },
+  // A tombstone is a record like any other and merges like one: the union of
+  // both sides is what either phone deleted, and a deletion both sides know
+  // about is one deletion.
+  deletions: { by: ['store', 'id'], sort: 'ts' },
 };
 
 // null, never a partial key: two records missing the same field would otherwise
@@ -2456,11 +2497,13 @@ function recordKey(rec, fields) {
 // sides hold is taken from `mine`, because this browser is the one that just
 // wrote.
 //
-// The cost of that direction is real and is stated rather than hidden: a record
-// deleted on the other phone comes back, because from here "deleted there" and
-// "never reached this browser" are the same observation. Resurrecting a deleted
-// meal is a smaller harm than deleting a logged session, which is the whole
-// reason the union runs this way round.
+// A record the other phone deleted used to come back, because from here
+// "deleted there" and "never reached this browser" are the same observation.
+// It no longer does: a delete writes a tombstone into `deletions`, that list
+// merges like any other, and `applyDeletions` runs over the union. The union
+// still runs this way round because resurrecting a record is a smaller harm
+// than dropping a logged session, and that is now the fallback rather than the
+// outcome.
 //
 // A record with no usable identity is kept from `mine` and dropped from
 // `theirs` -- without a key there is no way to tell a duplicate from a second
@@ -2505,7 +2548,31 @@ function mergeBackupData(mine, theirs) {
     if (k in a) out[k] = a[k];
     else if (k in b) out[k] = b[k];
   });
-  return out;
+  return applyDeletions(out);
+}
+
+// Applied after the union rather than inside it, on purpose: a tombstone only
+// one side holds has to suppress a record only the other side holds, and the
+// union is exactly the step that has just put those two next to each other.
+//
+// A record with no id is kept. Without an id there is nothing a tombstone could
+// name, so dropping it would be guessing rather than honouring a delete.
+function applyDeletions(data) {
+  const log = Array.isArray(data.deletions) ? data.deletions : null;
+  if (!log || !log.length) return data;
+  const gone = {};
+  log.forEach(d => {
+    const k = recordKey(d, ['store', 'id']);
+    if (k !== null) gone[k] = true;
+  });
+  DELETABLE_STORES.forEach(name => {
+    if (!Array.isArray(data[name])) return;
+    data[name] = data[name].filter(r => {
+      const k = recordKey({ store: name, id: r && r.id }, ['store', 'id']);
+      return k === null || !gone[k];
+    });
+  });
+  return data;
 }
 
 // Push, with exactly one retry. A 409 means another browser wrote after this

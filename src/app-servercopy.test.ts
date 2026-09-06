@@ -16,7 +16,7 @@ function loadApp(preset: Record<string, string> = {}, fetchImpl?: any): any {
   const node: any = {
     value: "", textContent: "", innerHTML: "", hidden: false, style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-    content: { firstElementChild: { cloneNode: () => node } },
+    content: { firstElementChild: { cloneNode: () => node }, cloneNode: () => node },
     appendChild() {}, remove() {}, addEventListener() {},
     querySelector: () => node, querySelectorAll: () => [], getContext: () => ({}),
   };
@@ -395,6 +395,116 @@ describe("mergeBackupData", () => {
     const ctx = loadApp();
     const out = ctx.mergeBackupData({ sessions: [{ date: "2026-09-01" }] }, { sessions: [] });
     expect(out.sessions).toEqual([{ date: "2026-09-01" }]);
+  });
+
+});
+
+// Issue #153, the half the union alone could not do: without a tombstone,
+// "the other phone deleted this" and "the other phone never had this" are the
+// same observation, so a union brings a deleted record straight back.
+describe("mergeBackupData honours a deletion", () => {
+  it("drops a record this browser deleted even though the server still holds it", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { sessions: [{ id: "a" }], deletions: [{ store: "sessions", id: "b", ts: 5 }] },
+      { sessions: [{ id: "a" }, { id: "b" }] },
+    );
+    expect(out.sessions.map((s: any) => s.id)).toEqual(["a"]);
+  });
+
+  it("drops a record the other phone deleted even though this browser still holds it", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { meals: [{ id: "m1" }, { id: "m2" }] },
+      { meals: [{ id: "m1" }], deletions: [{ store: "meals", id: "m2", ts: 7 }] },
+    );
+    expect(out.meals.map((m: any) => m.id)).toEqual(["m1"]);
+  });
+
+  it("carries both sides' tombstones forward, so neither delete is forgotten", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { goals: [], deletions: [{ store: "goals", id: "g1", ts: 1 }] },
+      { goals: [], deletions: [{ store: "goals", id: "g2", ts: 2 }] },
+    );
+    expect(out.deletions.map((d: any) => d.id)).toEqual(["g1", "g2"]);
+  });
+
+  it("counts one delete once when both phones already know about it", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { deletions: [{ store: "goals", id: "g1", ts: 1 }] },
+      { deletions: [{ store: "goals", id: "g1", ts: 1 }] },
+    );
+    expect(out.deletions).toHaveLength(1);
+  });
+
+  it("scopes a tombstone to its own store, so two records sharing an id are not both dropped", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { sessions: [{ id: "x" }], meals: [{ id: "x" }], deletions: [{ store: "meals", id: "x", ts: 3 }] },
+      {},
+    );
+    expect(out.sessions.map((s: any) => s.id)).toEqual(["x"]);
+    expect(out.meals).toEqual([]);
+  });
+
+  it("leaves a weight alone -- that store has no delete button, so it carries no tombstones", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { weights: [{ date: "2026-09-01", kg: 84 }], deletions: [{ store: "weights", id: "2026-09-01", ts: 4 }] },
+      {},
+    );
+    expect(out.weights).toEqual([{ date: "2026-09-01", kg: 84 }]);
+  });
+
+  it("keeps a record with no id, because no tombstone could name it", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { sessions: [{ date: "2026-09-01" }], deletions: [{ store: "sessions", id: "a", ts: 1 }] },
+      {},
+    );
+    expect(out.sessions).toEqual([{ date: "2026-09-01" }]);
+  });
+});
+
+describe("recordDeletion", () => {
+  it("writes a tombstone naming the store and the id", () => {
+    const ctx = loadApp();
+    ctx.store.set("deletions", []);
+    expect(ctx.recordDeletion("sessions", "s1")).toBe(true);
+    const log = ctx.store.get("deletions", []);
+    expect(log).toHaveLength(1);
+    expect(log[0].store).toBe("sessions");
+    expect(log[0].id).toBe("s1");
+    expect(typeof log[0].ts).toBe("number");
+  });
+
+  it("appends rather than replacing, so two deletes are two tombstones", () => {
+    const ctx = loadApp();
+    ctx.store.set("deletions", []);
+    ctx.recordDeletion("meals", "m1");
+    ctx.recordDeletion("goals", "g1");
+    expect(ctx.store.get("deletions", []).map((d: any) => d.id)).toEqual(["m1", "g1"]);
+  });
+
+  it("refuses a store with no delete button and one with no id", () => {
+    const ctx = loadApp();
+    ctx.store.set("deletions", []);
+    expect(ctx.recordDeletion("weights", "2026-09-01")).toBe(false);
+    expect(ctx.recordDeletion("sessions", undefined)).toBe(false);
+    expect(ctx.store.get("deletions", [])).toEqual([]);
+  });
+});
+
+describe("deleteSession", () => {
+  it("records the tombstone as well as removing the row", () => {
+    const ctx = loadApp();
+    ctx.store.set("sessions", [{ id: "s1" }, { id: "s2" }]);
+    ctx.store.set("deletions", []);
+    ctx.deleteSession("s1");
+    expect(ctx.store.get("sessions", []).map((s: any) => s.id)).toEqual(["s2"]);
+    expect(ctx.store.get("deletions", []).map((d: any) => d.id)).toEqual(["s1"]);
   });
 });
 
