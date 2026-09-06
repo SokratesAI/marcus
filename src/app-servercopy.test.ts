@@ -12,7 +12,7 @@ const APP_SOURCE = readFileSync(path.join(__dirname, "..", "public", "app.js"), 
 // object on their own, so nothing has to be re-exported by hand. `fetch` is
 // passed in rather than stubbed globally, which is the whole reason
 // pushServerCopy takes it as an argument.
-function loadApp(): any {
+function loadApp(preset: Record<string, string> = {}, fetchImpl?: any): any {
   const node: any = {
     value: "", textContent: "", innerHTML: "", hidden: false, style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -20,7 +20,7 @@ function loadApp(): any {
     appendChild() {}, remove() {}, addEventListener() {},
     querySelector: () => node, querySelectorAll: () => [], getContext: () => ({}),
   };
-  const stored: Record<string, string> = {};
+  const stored: Record<string, string> = { ...preset };
   const ctx: any = {
     console, setTimeout, clearTimeout, Math, JSON, Number, String, Array, Object, Date, isNaN,
     document: {
@@ -35,10 +35,21 @@ function loadApp(): any {
     getComputedStyle: () => ({ getPropertyValue: () => "#000" }),
     Chart: function () { return { destroy() {} }; },
   };
+  // Left undefined by default: every function under test takes its fetch as an
+  // argument, and boot's own fetch is only wanted by the boot test.
+  if (fetchImpl) ctx.fetch = fetchImpl;
   ctx.window = ctx;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
-  vm.runInContext(APP_SOURCE + "\n;globalThis.store = store;\n;globalThis.BACKUP_VERSION = BACKUP_VERSION;", ctx);
+  vm.runInContext(
+    APP_SOURCE +
+      "\n;globalThis.store = store;" +
+      "\n;globalThis.BACKUP_VERSION = BACKUP_VERSION;" +
+      // A top-level `let` does not land on the context object the way a function
+      // declaration does, and this one changes, so it needs a live getter.
+      "\n;Object.defineProperty(globalThis, 'seededThisBoot', { get: () => seededThisBoot });",
+    ctx,
+  );
   return ctx;
 }
 
@@ -168,5 +179,157 @@ describe("pushServerCopy", () => {
     const ctx = loadApp();
     const out = await ctx.pushServerCopy(async () => res(200, { hello: "world" }), {}, 0);
     expect(out).toEqual({ ok: false, reason: "refused" });
+  });
+});
+
+// Issue #153's remaining half: a second device. Everything below is about the
+// one case where pulling the server copy without asking destroys nothing.
+describe("shouldAdoptServerCopy", () => {
+  it("adopts only on a browser that seeded itself this boot and a server that has something", () => {
+    expect(loadApp().shouldAdoptServerCopy(0, 7, true)).toBe(true);
+  });
+
+  it("refuses once this browser has synced, however new it looks", () => {
+    // A browser at rev 3 has pushed before, so whatever is in it now is a fact
+    // the user created -- including deleting everything -- and pulling on top
+    // would undo that silently.
+    expect(loadApp().shouldAdoptServerCopy(3, 7, true)).toBe(false);
+  });
+
+  it("refuses when the server has nothing", () => {
+    expect(loadApp().shouldAdoptServerCopy(0, 0, true)).toBe(false);
+  });
+
+  it("refuses on a returning browser, which is every boot after the first", () => {
+    expect(loadApp().shouldAdoptServerCopy(0, 7, false)).toBe(false);
+  });
+});
+
+describe("the fresh-boot flag", () => {
+  it("is set by a browser that has never opened Marcus, and not by one that has", () => {
+    // The precondition the whole feature rests on, asserted rather than assumed:
+    // loadApp starts from an empty localStorage, so seed() must have fired.
+    const fresh = loadApp();
+    expect(fresh.seededThisBoot).toBe(true);
+    expect(fresh.store.get("sessions", [])).not.toHaveLength(0);
+
+    // And a browser that already holds a plan does not seed again. The demo
+    // data is what makes this the only usable signal: a new browser is NOT
+    // empty, so nothing about its contents separates it from a used one.
+    const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const returning = loadApp({
+      "marcus.plan": JSON.stringify({ blockName: "mine", days: DAYS.map((day) => ({ day, focus: "Rest", exercises: [] })) }),
+    });
+    expect(returning.seededThisBoot).toBe(false);
+  });
+
+  it("is cleared by the first real write, so a slow boot fetch cannot overwrite it", () => {
+    const ctx = loadApp();
+    expect(ctx.seededThisBoot).toBe(true);
+    ctx.store.set("sessions", [{ id: "logged while the fetch was in flight" }]);
+    expect(ctx.seededThisBoot).toBe(false);
+    expect(ctx.adoptServerCopy({ rev: 7, updatedAt: null, data: { sessions: [] } })).toBe(null);
+  });
+
+  it("is not cleared by a write the backup does not carry", () => {
+    const ctx = loadApp();
+    ctx.store.set("syncRev", 0);
+    expect(ctx.seededThisBoot).toBe(true);
+  });
+});
+
+describe("adoptServerCopy", () => {
+  const serverState = (rev: number) => ({
+    rev,
+    updatedAt: "2026-09-06T10:00:00.000Z",
+    data: { sessions: [{ id: "s1" }, { id: "s2" }], weights: [{ kg: 82 }] },
+  });
+
+  it("puts the server's sessions into a fresh browser and records the revision", () => {
+    const ctx = loadApp();
+    const out = ctx.adoptServerCopy(serverState(7));
+    expect(out.ok).toBe(true);
+    expect(out.rev).toBe(7);
+    expect(ctx.store.get("sessions", [])).toEqual([{ id: "s1" }, { id: "s2" }]);
+    expect(ctx.store.get("weights", [])).toEqual([{ kg: 82 }]);
+    // Without this the next push would go up at rev 0 and be refused forever.
+    expect(ctx.store.get("syncRev", null)).toBe(7);
+  });
+
+  it("leaves alone the keys the server copy does not carry", () => {
+    // The seeded meals are not in serverState, and a restore replaces rather
+    // than empties -- wiping them would be a silent second decision.
+    const ctx = loadApp();
+    const meals = ctx.store.get("meals", []);
+    expect(meals.length).toBeGreaterThan(0);
+    ctx.adoptServerCopy(serverState(7));
+    expect(ctx.store.get("meals", [])).toEqual(meals);
+  });
+
+  it("declines, and changes nothing, on a browser that has synced before", () => {
+    const ctx = loadApp();
+    ctx.store.set("syncRev", 3);
+    const before = ctx.store.get("sessions", []);
+    expect(ctx.adoptServerCopy(serverState(7))).toBe(null);
+    expect(ctx.store.get("sessions", [])).toEqual(before);
+    expect(ctx.store.get("syncRev", null)).toBe(3);
+  });
+
+  it("declines when the server has never been written to", () => {
+    expect(loadApp().adoptServerCopy({ rev: 0, data: null })).toBe(null);
+  });
+
+  it("declines when the server could not be reached at all", () => {
+    expect(loadApp().adoptServerCopy(null)).toBe(null);
+  });
+
+  it("refuses a server copy this version cannot read, instead of writing garbage", () => {
+    const ctx = loadApp();
+    const before = ctx.store.get("sessions", []);
+    const out = ctx.adoptServerCopy({ rev: 4, updatedAt: null, data: { sessions: "not an array" } });
+    expect(out.ok).toBe(false);
+    expect(ctx.store.get("sessions", [])).toEqual(before);
+    expect(ctx.store.get("syncRev", null)).toBe(null);
+  });
+});
+
+describe("the boot pull", () => {
+  it("asks the server once at boot and adopts what it finds on a new browser", async () => {
+    // This is the whole feature end to end: nothing is clicked, and boot is the
+    // only thing that ran. app-barcode.test.ts drops this same request from its
+    // call log, so this is the test that keeps it honest.
+    const asked: string[] = [];
+    const ctx = loadApp({}, async (url: string) => {
+      asked.push(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ rev: 12, updatedAt: "2026-09-06T10:00:00.000Z", data: { sessions: [{ id: "from-the-server" }] } }),
+      };
+    });
+    expect(asked).toEqual(["/api/state"]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ctx.store.get("sessions", [])).toEqual([{ id: "from-the-server" }]);
+    expect(ctx.store.get("syncRev", null)).toBe(12);
+  });
+
+  it("leaves a returning browser exactly as it was", async () => {
+    const asked: string[] = [];
+    const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const ctx = loadApp(
+      {
+        "marcus.plan": JSON.stringify({ blockName: "mine", days: DAYS.map((day) => ({ day, focus: "Rest", exercises: [] })) }),
+        "marcus.sessions": JSON.stringify([{ id: "mine" }]),
+      },
+      async (url: string) => {
+        asked.push(url);
+        return { ok: true, status: 200, json: async () => ({ rev: 12, updatedAt: null, data: { sessions: [{ id: "from-the-server" }] } }) };
+      },
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    // It still asks -- the status line needs the answer -- and it does not act.
+    expect(asked).toEqual(["/api/state"]);
+    expect(ctx.store.get("sessions", [])).toEqual([{ id: "mine" }]);
+    expect(ctx.store.get("syncRev", null)).toBe(null);
   });
 });

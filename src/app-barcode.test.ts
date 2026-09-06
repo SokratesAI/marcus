@@ -94,6 +94,10 @@ function loadApp(answer?: Answer): { ctx: any; toasts: string[]; byId: Record<st
       "\n;Object.defineProperty(globalThis, 'foodPick', { get: () => foodPick });",
     ctx,
   );
+  // Boot asks the server for the state copy (issue #153). That request is real
+  // and is asserted in app-servercopy.test.ts; here it is noise in front of the
+  // one call each test below is about, so the log starts after boot.
+  asked.length = 0;
   return { ctx, toasts, byId, asked };
 }
 
