@@ -862,12 +862,23 @@ function renderPlan() {
   });
 }
 
+// Every deliberate change to the plan goes through here, so a conflicting push
+// can tell which of two copies is the later one (see `newerPlan`). `seed()`
+// deliberately does not: seeding is not an edit, and a browser opened for the
+// first time must not out-rank a plan the user actually wrote on their other
+// phone. Neither does a restore -- the backup file carries whatever stamp it
+// was exported with, and claiming an old file is the newest plan would be a
+// second last-write-wins wearing a timestamp.
+function setPlan(plan) {
+  return store.set('plan', Object.assign({}, plan, { updatedAt: Date.now() }));
+}
+
 function acceptProposal(id) {
   const plan = store.get('plan');
   const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, goalsSorted()[0]);
   const proposal = review.proposals.find(p => p.id === id);
   if (!proposal) { toast('That suggestion is no longer current'); return; }
-  if (!store.set('plan', applyProposal(plan, proposal))) return;
+  if (!setPlan(applyProposal(plan, proposal))) return;
   toast('Plan updated');
   renderPlan();
 }
@@ -2568,9 +2579,35 @@ function mergeList(mine, theirs, spec) {
   return out;
 }
 
-// `plan` is one object with no identity of its own, so it cannot be merged per
-// record and this browser's wins. That is last-write-wins for exactly one key
-// instead of for the whole payload, and it is the honest limit of this.
+// `plan` is one object with no per-record identity, so it still cannot be merged
+// the way a list is -- one of the two copies has to win whole. What has changed
+// is which one. "This browser wins" was the wrong rule for the common case: a
+// phone that pushes a meal sends its whole payload, so it overwrote a plan the
+// other phone had edited an hour earlier while never having touched the plan
+// itself. `setPlan` stamps `updatedAt` when this browser actually changes the
+// plan, and the newer stamp wins.
+//
+// A plan with no stamp is one nobody has edited since this shipped -- including
+// a freshly seeded one -- so it loses to any stamped plan. With neither stamped
+// there is nothing to compare and this browser still wins, which is exactly the
+// old rule.
+// No array guard, unlike `recordKey`: JSON cannot produce an array carrying a
+// named `updatedAt`, so an array falls out as unstamped through the `Number`
+// check anyway and the guard was a branch nothing could reach.
+function planStamp(plan) {
+  if (!plan || typeof plan !== 'object') return null;
+  const v = Number(plan.updatedAt);
+  return Number.isFinite(v) ? v : null;
+}
+
+function newerPlan(mine, theirs) {
+  const t = planStamp(theirs);
+  if (t === null) return mine;
+  const m = planStamp(mine);
+  if (m === null) return theirs;
+  return t > m ? theirs : mine;
+}
+
 function mergeBackupData(mine, theirs) {
   const a = mine && typeof mine === 'object' && !Array.isArray(mine) ? mine : {};
   const b = theirs && typeof theirs === 'object' && !Array.isArray(theirs) ? theirs : {};
@@ -2583,6 +2620,7 @@ function mergeBackupData(mine, theirs) {
       out[k] = mergeList(mineHas ? a[k] : null, theirsHas ? b[k] : null, spec);
       return;
     }
+    if (k === 'plan' && k in a && k in b) { out[k] = newerPlan(a[k], b[k]); return; }
     if (k in a) out[k] = a[k];
     else if (k in b) out[k] = b[k];
   });

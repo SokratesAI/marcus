@@ -373,7 +373,7 @@ describe("mergeBackupData", () => {
     expect(out.chat.map((m: any) => m.ts)).toEqual([1, 3]);
   });
 
-  it("does not merge the plan -- one object with no identity, this browser wins", () => {
+  it("does not merge the plan -- one object with no identity, and with nothing to compare this browser wins", () => {
     const ctx = loadApp();
     const out = ctx.mergeBackupData({ plan: { blockName: "mine" } }, { plan: { blockName: "theirs" } });
     expect(out.plan).toEqual({ blockName: "mine" });
@@ -397,6 +397,106 @@ describe("mergeBackupData", () => {
     expect(out.sessions).toEqual([{ date: "2026-09-01" }]);
   });
 
+});
+
+// Issue #153, the last piece: the plan still cannot be merged per record, but
+// "this browser wins" was the wrong copy to pick. A phone pushing a meal sends
+// its whole payload, so it wrote over a plan the other phone had edited without
+// ever having touched the plan itself.
+describe("mergeBackupData picks the newer plan", () => {
+  it("takes the server's plan when the server's stamp is newer", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { plan: { blockName: "mine", updatedAt: 1000 } },
+      { plan: { blockName: "theirs", updatedAt: 2000 } },
+    );
+    expect(out.plan.blockName).toBe("theirs");
+  });
+
+  it("keeps this browser's plan when this browser's stamp is newer", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { plan: { blockName: "mine", updatedAt: 2000 } },
+      { plan: { blockName: "theirs", updatedAt: 1000 } },
+    );
+    expect(out.plan.blockName).toBe("mine");
+  });
+
+  it("keeps this browser's plan on an equal stamp, because there is no later copy", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { plan: { blockName: "mine", updatedAt: 2000 } },
+      { plan: { blockName: "theirs", updatedAt: 2000 } },
+    );
+    expect(out.plan.blockName).toBe("mine");
+  });
+
+  it("lets an edited plan beat an unstamped one -- a fresh seed must not out-rank a real edit", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { plan: { blockName: "just seeded here" } },
+      { plan: { blockName: "edited there", updatedAt: 1000 } },
+    );
+    expect(out.plan.blockName).toBe("edited there");
+  });
+
+  it("keeps a stamped plan over the server's unstamped one", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { plan: { blockName: "edited here", updatedAt: 1000 } },
+      { plan: { blockName: "just seeded there" } },
+    );
+    expect(out.plan.blockName).toBe("edited here");
+  });
+
+  it("reads an unusable stamp as no stamp rather than as a number", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { plan: { blockName: "mine", updatedAt: "yesterday" } },
+      { plan: { blockName: "theirs", updatedAt: 1 } },
+    );
+    expect(out.plan.blockName).toBe("theirs");
+  });
+
+  it("still takes the only plan there is when one side has none", () => {
+    const ctx = loadApp();
+    expect(ctx.mergeBackupData({}, { plan: { blockName: "theirs", updatedAt: 1 } }).plan.blockName).toBe("theirs");
+    expect(ctx.mergeBackupData({ plan: { blockName: "mine" } }, {}).plan.blockName).toBe("mine");
+    // Unstamped and server-only: the comparison has nothing to prefer, so this
+    // has to be answered by the "only one copy exists" path rather than by it.
+    expect(ctx.mergeBackupData({}, { plan: { blockName: "theirs" } }).plan.blockName).toBe("theirs");
+  });
+
+  it("survives a null plan on either side rather than throwing mid-push", () => {
+    const ctx = loadApp();
+    expect(ctx.mergeBackupData({ plan: null }, { plan: { blockName: "theirs", updatedAt: 1 } }).plan.blockName).toBe("theirs");
+    expect(ctx.mergeBackupData({ plan: { blockName: "mine", updatedAt: 1 } }, { plan: null }).plan.blockName).toBe("mine");
+  });
+});
+
+describe("setPlan", () => {
+  it("stamps the plan it writes, which is what makes a later copy tellable", () => {
+    const ctx = loadApp();
+    const before = Date.now();
+    expect(ctx.setPlan({ blockName: "edited" })).toBe(true);
+    const written = ctx.store.get("plan");
+    expect(written.blockName).toBe("edited");
+    expect(written.updatedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it("does not mutate the plan it was handed", () => {
+    const ctx = loadApp();
+    const plan = { blockName: "edited" };
+    ctx.setPlan(plan);
+    expect(plan).toEqual({ blockName: "edited" });
+  });
+
+  it("leaves the seeded plan unstamped, so a first-ever boot cannot out-rank another phone", () => {
+    const ctx = loadApp();
+    ctx.seed();
+    expect(ctx.store.get("plan").blockName).toBeTruthy();
+    expect(ctx.store.get("plan").updatedAt).toBeUndefined();
+  });
 });
 
 // Issue #153, the half the union alone could not do: without a tombstone,
