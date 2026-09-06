@@ -77,40 +77,54 @@ describe("searchKey and isSearchQuery", () => {
 
 describe("normalizeSearch", () => {
   it("drops a product with no energy rather than pricing a meal at zero", () => {
-    const rows = normalizeSearch({ products: [halfEntered, grandiosa] }, SEARCH_LIMIT);
+    const rows = normalizeSearch({ hits: [halfEntered, grandiosa] }, SEARCH_LIMIT);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ name: "Grandiosa Original", code: "7310240071870", kcal: 240, unit: "g" });
   });
 
   it("keeps at most the limit, counting only the rows that survived", () => {
     const products = [halfEntered, halfEntered, grandiosa, grandiosa, grandiosa];
-    expect(normalizeSearch({ products }, 2)).toHaveLength(2);
+    expect(normalizeSearch({ hits: products }, 2)).toHaveLength(2);
   });
 
-  it("reads a body with no products array as no rows, not as a crash", () => {
+  it("takes the first brand out of the array the search service returns, whole", () => {
+    // Their search service returns `brands` as an array where the barcode door
+    // returns a comma-joined string. `String(["Ferrero, Inc.", "Yum yum"])` is
+    // "Ferrero, Inc.,Yum yum", so splitting on the comma without looking at the
+    // array first cuts a brand name in half.
+    const arrayBrands = { ...grandiosa, brands: ["Ferrero, Inc.", "Yum yum"] };
+    expect(normalizeSearch({ hits: [arrayBrands] }, SEARCH_LIMIT)[0].brand).toBe("Ferrero, Inc.");
+    // The string shape the barcode route gets still splits on the comma.
+    expect(normalizeSearch({ hits: [grandiosa] }, SEARCH_LIMIT)[0].brand).toBe("Grandiosa");
+  });
+
+  it("reads a body with no hits array as no rows, not as a crash", () => {
     expect(normalizeSearch({}, SEARCH_LIMIT)).toEqual([]);
     expect(normalizeSearch(null, SEARCH_LIMIT)).toEqual([]);
   });
 });
 
 describe("searchFoodsByName", () => {
-  it("asks the cgi search endpoint with an identifying User-Agent", async () => {
-    const { fn, calls, inits } = stubFetch({ body: { products: [grandiosa] } });
+  it("asks Open Food Facts' search service, not the world host, with an identifying User-Agent", async () => {
+    const { fn, calls, inits } = stubFetch({ body: { hits: [grandiosa] } });
     const result = await searchFoodsByName("pizza grandiosa", { cache, fetch: fn });
     expect(result).toMatchObject({ status: "found", cached: false });
-    expect(calls[0]).toContain("/cgi/search.pl?search_terms=pizza%20grandiosa");
-    expect(calls[0]).toContain("json=1");
+    // The host is the assertion, not decoration: `world.openfoodfacts.org`
+    // answered a parseable 200 two times in eight when this was measured, and
+    // pointing back at it is the regression this route already suffered.
+    expect(calls[0]).toContain("https://search.openfoodfacts.org/search?q=pizza%20grandiosa");
+    expect(calls[0]).not.toContain("world.openfoodfacts.org");
     expect((inits[0]?.headers as Record<string, string>)["User-Agent"]).toBe(OFF_USER_AGENT);
   });
 
   it("never reaches the network for a query it refuses", async () => {
-    const { fn, calls } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn, calls } = stubFetch({ body: { hits: [grandiosa] } });
     expect(await searchFoodsByName("a", { cache, fetch: fn })).toEqual({ status: "invalid" });
     expect(calls).toHaveLength(0);
   });
 
   it("answers a second search for the same phrase from the cache", async () => {
-    const { fn, calls } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn, calls } = stubFetch({ body: { hits: [grandiosa] } });
     await searchFoodsByName("pizza grandiosa", { cache, fetch: fn });
     const again = await searchFoodsByName("  Pizza  GRANDIOSA ", { cache, fetch: fn });
     expect(again).toMatchObject({ status: "found", cached: true });
@@ -135,7 +149,7 @@ describe("searchFoodsByName", () => {
   it("does not cache an answer it never got, so a hiccup is retried", async () => {
     const bad = stubFetch({ status: 503, body: {} });
     await searchFoodsByName("pizza grandiosa", { cache, fetch: bad.fn });
-    const good = stubFetch({ body: { products: [grandiosa] } });
+    const good = stubFetch({ body: { hits: [grandiosa] } });
     expect(await searchFoodsByName("pizza grandiosa", { cache, fetch: good.fn })).toMatchObject({
       status: "found",
       cached: false,
@@ -144,7 +158,7 @@ describe("searchFoodsByName", () => {
   });
 
   it("remembers a phrase nobody has entered, which is the traffic they ask us not to send", async () => {
-    const { fn, calls } = stubFetch({ body: { products: [] } });
+    const { fn, calls } = stubFetch({ body: { hits: [] } });
     expect(await searchFoodsByName("kveldsmat", { cache, fetch: fn })).toEqual({ status: "missing", cached: false });
     expect(await searchFoodsByName("kveldsmat", { cache, fetch: fn })).toEqual({ status: "missing", cached: true });
     expect(calls).toHaveLength(1);
@@ -155,9 +169,9 @@ describe("searchFoodsByName", () => {
   it("forgets an empty answer a week before it forgets a full one", async () => {
     let clock = 1_000_000;
     const now = () => clock;
-    const empty = stubFetch({ body: { products: [] } });
+    const empty = stubFetch({ body: { hits: [] } });
     await searchFoodsByName("kveldsmat", { cache, fetch: empty.fn, now });
-    const full = stubFetch({ body: { products: [grandiosa] } });
+    const full = stubFetch({ body: { hits: [grandiosa] } });
     await searchFoodsByName("pizza grandiosa", { cache, fetch: full.fn, now });
 
     clock += SEARCH_EMPTY_TTL_MS;
@@ -171,7 +185,7 @@ describe("searchFoodsByName", () => {
   });
 
   it("survives a pod restart, which is why the cache is on the volume", async () => {
-    const { fn, calls } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn, calls } = stubFetch({ body: { hits: [grandiosa] } });
     await searchFoodsByName("pizza grandiosa", { cache, fetch: fn });
     const restarted = new SearchCache(dir);
     expect(await searchFoodsByName("pizza grandiosa", { cache: restarted, fetch: fn })).toMatchObject({
@@ -186,7 +200,7 @@ describe("searchFoodsByName", () => {
 
   it("still answers when the cache file cannot be read", async () => {
     await fs.writeFile(path.join(dir, "food-search-cache.json"), "{not json", "utf8");
-    const { fn } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn } = stubFetch({ body: { hits: [grandiosa] } });
     expect(await searchFoodsByName("pizza grandiosa", { cache: new SearchCache(dir), fetch: fn })).toMatchObject({
       status: "found",
     });
@@ -198,7 +212,7 @@ describe("GET /api/food/search", () => {
     createApp(new StateStore(dir), () => "2026-09-06T07:00:00.000Z", { searchCache: cache, fetchImpl });
 
   it("answers with the rows and whether they came from the cache", async () => {
-    const { fn } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn } = stubFetch({ body: { hits: [grandiosa] } });
     const app = appWith(fn);
     const first = await request(app).get("/api/food/search?q=pizza%20grandiosa");
     expect(first.status).toBe(200);
@@ -209,20 +223,20 @@ describe("GET /api/food/search", () => {
   });
 
   it("is a 400 for a query too short to search on, and asks nobody", async () => {
-    const { fn, calls } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn, calls } = stubFetch({ body: { hits: [grandiosa] } });
     const res = await request(appWith(fn)).get("/api/food/search?q=a");
     expect(res.status).toBe(400);
     expect(calls).toHaveLength(0);
   });
 
   it("is a 400 when q is missing entirely", async () => {
-    const { fn, calls } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn, calls } = stubFetch({ body: { hits: [grandiosa] } });
     expect((await request(appWith(fn)).get("/api/food/search")).status).toBe(400);
     expect(calls).toHaveLength(0);
   });
 
   it("is a 404 when nothing matched, which is a different answer from a 502", async () => {
-    const { fn } = stubFetch({ body: { products: [] } });
+    const { fn } = stubFetch({ body: { hits: [] } });
     expect((await request(appWith(fn)).get("/api/food/search?q=kveldsmat")).status).toBe(404);
   });
 
