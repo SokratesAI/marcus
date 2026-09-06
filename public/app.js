@@ -567,8 +567,13 @@ function toast(message) {
 }
 
 // ---------- seed data ----------
+// True when `seed()` wrote the starter data on this boot, which can only happen
+// in a browser that has never opened Marcus before. Not persisted on purpose --
+// it is a fact about this page load, and the next one is a returning visit.
+let seededThisBoot = false;
 function seed() {
   if (!store.get('plan')) {
+    seededThisBoot = true;
     store.set('plan', {
       blockName: 'Hypertrophy Block — Week 5',
       days: [
@@ -2264,6 +2269,21 @@ function shouldPush(localRev, serverRev) {
   return !(localRev === 0 && serverRev > 0);
 }
 
+// The other side of that same case, and the half issue #153 is actually about:
+// a second phone opens the app, finds a stranger's demo log, and the real
+// training history is sitting on the server behind a button it has no reason to
+// know about. Adopting the server copy destroys nothing when this browser has
+// nothing of the user's in it, so that -- and only that -- happens on its own.
+//
+// "Nothing of the user's" cannot be tested by looking at the data, because
+// `seed()` writes sixteen demo sessions, a run of weights and a day of meals
+// into every new browser: an empty log and a seeded one look nothing alike, and
+// the seeded one is what a new phone actually holds. What separates them is
+// whether `seed()` ran *on this boot*, which is true exactly once per browser.
+function shouldAdoptServerCopy(localRev, serverRev, freshBoot) {
+  return localRev === 0 && serverRev > 0 && freshBoot === true;
+}
+
 let serverStatus = { state: 'unknown' };
 let syncTimer = null;
 
@@ -2298,6 +2318,11 @@ async function syncNow() {
 function scheduleServerSync(key) {
   // `syncRev` is not in BACKUP_KEYS, so writing it does not re-enter here.
   if (!BACKUP_KEYS.includes(key)) return;
+  // The first real write ends the fresh boot. `seed()` runs long before this
+  // hook is wired, so anything arriving here is the user, or a restore -- and
+  // either way there is now something in this browser worth not overwriting,
+  // which matters because the boot fetch below can still be in flight.
+  seededThisBoot = false;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => { syncTimer = null; syncNow(); }, SYNC_DEBOUNCE_MS);
 }
@@ -2314,6 +2339,38 @@ async function readServerCopy() {
     serverStatus = { state: 'unreachable' };
     return null;
   }
+}
+
+// Returns null when it declined, so a caller can tell "did not fire" from
+// "fired and failed" instead of inferring it from what got rendered.
+function adoptServerCopy(state) {
+  const serverRev = state && typeof state.rev === 'number' ? state.rev : 0;
+  if (!shouldAdoptServerCopy(syncRev(), serverRev, seededThisBoot)) return null;
+  const envelope = serverStateToBackup(state);
+  if (!envelope) return null;
+  const parsed = parseBackup(JSON.stringify(envelope));
+  if (!parsed.ok) return { ok: false, message: parsed.message };
+  const result = restoreBackup(parsed);
+  if (!result.restored.length) return { ok: false, message: 'This browser could not save the copy from the server.' };
+  store.set(SYNC_REV_KEY, serverRev);
+  // `restoreBackup` wrote backup keys, which armed a push of what was just
+  // pulled. Nothing has changed, so that push is a rev bump for no reason.
+  if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+  return { ok: true, restored: result.restored, rev: serverRev };
+}
+
+// Runs at boot rather than when the Progress tab is opened, which is the only
+// place that read the server copy before. Home is the screen a second phone
+// shows first, and a Home full of somebody else's demo plan is what reads as
+// "my training log is gone".
+async function adoptServerCopyOnBoot() {
+  const state = await readServerCopy();
+  renderServerCopy();
+  const adopted = adoptServerCopy(state);
+  if (!adopted) return;
+  if (!adopted.ok) { toast(adopted.message); return; }
+  toast('Loaded your data from the server -- ' + adopted.restored.length + ' section(s).');
+  switchTab(currentTab);
 }
 
 function wireServerCopy() {
@@ -2503,6 +2560,7 @@ function showUpdateBanner() {
 
 // ---------- boot ----------
 switchTab('home');
+adoptServerCopyOnBoot().catch(() => {});
 document.getElementById('updateReload')?.addEventListener('click', () => window.location.reload());
 if ('serviceWorker' in navigator) {
   watchForUpdate(navigator.serviceWorker, showUpdateBanner);
