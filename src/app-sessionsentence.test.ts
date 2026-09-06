@@ -367,3 +367,192 @@ describe("which half of a sentence the feel comes from", () => {
     expect(r.injury).toBe(true);
   });
 });
+
+// ---------- exercise detail typed into the sentence (idea #220) ----------
+// The half of #220 that was left unbuilt for five days: until now the only way
+// to get strength rows out of a sentence was to say "I followed the plan", and
+// the rows were the plan's, not what was actually lifted.
+
+describe("parseSessionSentence — sets, reps and weight from the sentence", () => {
+  it("reads the row this idea names by title", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("3x10 squats at 80kg", PLAN, TUE);
+    expect(r.ok).toBe(true);
+    expect(r.kind).toBe("strength");
+    expect(r.source).toBe("sentence");
+    expect(r.exercises).toEqual([{ name: "Squats", sets: 3, reps: 10, weight: 80 }]);
+    // Nothing is missing: the sentence carried the kilos itself.
+    expect(r.missing).toEqual([]);
+  });
+
+  it("reads several exercises out of one sentence, with the name after the numbers or before them", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("did 3x10 squats at 80kg and bench press 3x8 at 60 kg", PLAN, TUE);
+    expect(r.exercises).toEqual([
+      { name: "Squats", sets: 3, reps: 10, weight: 80 },
+      { name: "Bench press", sets: 3, reps: 8, weight: 60 },
+    ]);
+  });
+
+  it("leaves the weight off a row that did not carry one, and says so rather than inventing a kilo", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("3x10 squats at 80kg, 3x12 lunges", PLAN, TUE);
+    expect(r.exercises[1]).toEqual({ name: "Lunges", sets: 3, reps: 12 });
+    expect(r.missing).toEqual(["weight"]);
+    expect(ctx.sessionSentenceSummary({ ...r, summary: "" })).toContain("type what you lifted");
+  });
+
+  it("reads 'sets of' as well as the x form", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("5 sets of 5 deadlifts at 100kg", PLAN, TUE).exercises).toEqual([
+      { name: "Deadlifts", sets: 5, reps: 5, weight: 100 },
+    ]);
+  });
+
+  it("does not cut a decimal weight in half on its own comma", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("3x10 squats at 82,5 kg", PLAN, TUE).exercises).toEqual([
+      { name: "Squats", sets: 3, reps: 10, weight: 82.5 },
+    ]);
+  });
+
+  it("carries the date, the feel and the injury flag the same way a plan sentence does", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("yesterday I did 3x5 deadlifts at 120kg, felt hard, my back is sore", PLAN, TUE);
+    expect(r.date).toBe("2026-08-31");
+    expect(r.feel).toBe("hard");
+    expect(r.injury).toBe(true);
+  });
+
+  it("beats a plan reference in the same sentence, because it is what was actually done", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("followed the plan today, 3x10 squats at 80kg", PLAN, TUE);
+    expect(r.source).toBe("sentence");
+    expect(r.exercises).toEqual([{ name: "Squats", sets: 3, reps: 10, weight: 80 }]);
+  });
+
+  it("refuses a sentence that describes a run and lifting at once instead of dropping one of them", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("ran 5 km and did 3x10 squats at 80kg", PLAN, TUE);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("one at a time");
+  });
+
+  it("does not read a cardio sentence as an exercise row", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("ran 7km today in 45 minutes", PLAN, TUE);
+    expect(r.kind).toBe("cardio");
+  });
+
+  it("says the rows back in the summary rather than counting them", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("3x10 squats at 80kg", PLAN, TUE);
+    expect(ctx.sessionSentenceSummary(r)).toContain("3×10 Squats at 80 kg");
+  });
+});
+
+describe("a weight named for an exercise the plan already carries", () => {
+  it("fills the plan's rows in and then nothing is missing", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("did the plan today, deadlift at 140kg", PLAN, TUE);
+    expect(r.source).toBe("plan");
+    expect(r.exercises).toEqual([{ name: "Deadlift", sets: 3, reps: 5, weight: 140 }]);
+    expect(r.missing).toEqual([]);
+  });
+
+  it("still asks for the weights it was not told, one row at a time", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("did the plan, bench press at 70kg", PLAN, "2026-08-31");
+    expect(r.day).toBe("Monday");
+    expect(r.exercises).toEqual([
+      { name: "Bench Press", sets: 4, reps: 8, weight: 70 },
+      { name: "Overhead Press", sets: 3, reps: 10 },
+    ]);
+    expect(r.missing).toEqual(["weight"]);
+  });
+
+  it("does not put a number from elsewhere in the sentence onto a plan row", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("did the plan today, drank 2 kg of water afterwards", PLAN, TUE);
+    expect(r.exercises).toEqual([{ name: "Deadlift", sets: 3, reps: 5 }]);
+    expect(r.missing).toEqual(["weight"]);
+  });
+});
+
+describe("what the exercise parser refuses to guess", () => {
+  it("does not read a bare number as kilos — the unit is what makes it a weight", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("3x10 squats at 80", PLAN, TUE);
+    // Still the right exercise: the number is dropped, not the row.
+    expect(r.exercises).toEqual([{ name: "Squats", sets: 3, reps: 10 }]);
+    expect(r.missing).toEqual(["weight"]);
+  });
+
+  it("does not invent an exercise out of a segment that is only numbers", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("3x10 at 80kg", PLAN, TUE).ok).toBe(false);
+  });
+
+  it("does not read a bare number as kilos on a plan row either", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("did the plan today, deadlift at 140", PLAN, TUE);
+    expect(r.exercises).toEqual([{ name: "Deadlift", sets: 3, reps: 5 }]);
+  });
+});
+
+describe("the kilos reach the form, not just the summary", () => {
+  // A recording version of the template stub above: each cloned row keeps one
+  // node per selector, so the test can read back what the render actually wrote
+  // into the weight input. Without this the prefill is invisible to every test.
+  function recordingTemplate(byId: Record<string, any>) {
+    const rows: Array<Record<string, any>> = [];
+    byId["tpl-log-exercise-row"] = {
+      content: {
+        cloneNode: () => {
+          // Seeded with all four inputs, so "the render never touched this one"
+          // is a blank value rather than a missing key.
+          const fields: Record<string, any> = {};
+          for (const sel of [".ex-name", ".ex-sets", ".ex-reps", ".ex-weight", ".ex-remove"]) {
+            fields[sel] = { value: "", addEventListener() {}, closest: () => ({ remove() {} }) };
+          }
+          rows.push(fields);
+          return {
+            querySelector: (sel: string) =>
+              (fields[sel] ??= { value: "", addEventListener() {}, closest: () => ({ remove() {} }) }),
+          };
+        },
+      },
+    };
+    return rows;
+  }
+
+  it("puts a weight read out of the sentence into the row's kg input", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    const rows = recordingTemplate(byId);
+    const heard = ctx.parseSessionSentence("3x10 squats at 80kg and 3x12 lunges", PLAN, TUE);
+    ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    expect(rows.length).toBe(2);
+    expect(rows[0][".ex-name"].value).toBe("Squats");
+    expect(rows[0][".ex-sets"].value).toBe(3);
+    expect(rows[0][".ex-reps"].value).toBe(10);
+    expect(rows[0][".ex-weight"].value).toBe(80);
+    // The row the sentence gave no kilos for stays blank rather than borrowing
+    // the one above it.
+    expect(rows[1][".ex-weight"].value).toBe("");
+  });
+
+  it("leaves every weight blank when the sentence carried none", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    const rows = recordingTemplate(byId);
+    const heard = ctx.parseSessionSentence("followed the plan today", PLAN, TUE);
+    ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    expect(rows.length).toBe(1);
+    expect(rows[0][".ex-weight"].value).toBe("");
+  });
+});

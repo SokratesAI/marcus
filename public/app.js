@@ -978,6 +978,77 @@ function sessionSentenceMinutes(text) {
   return null;
 }
 
+// ---------- exercise detail inside the sentence ----------
+// "3x10 squats at 80kg" is the half of idea #220 that was left unbuilt: until
+// now a strength sentence could only say "I followed the plan", and the rows
+// came from the plan rather than from what was typed. A decimal comma is
+// normalised first, so splitting on the comma cannot cut "82,5kg" in half.
+const EX_SETS_REPS = /(\d+)\s*(?:x|\u00d7|\*)\s*(\d+)|(\d+)\s*sets?\s*(?:of|x|\u00d7)\s*(\d+)/i;
+const EX_WEIGHT = /(?:at|@|with|using|on)?\s*(\d+(?:\.\d+)?)\s*(kgs|kg|kilograms|kilogrammes|kilos|kilo)\b/i;
+
+// Filler around the exercise name. Whatever is left after the numbers and these
+// words are taken out is the name, as typed -- there is no list of known
+// exercises, because the plan lets you name your own.
+const EX_FILLER = ['i', 'did', 'do', 'done', 'doing', 'also', 'then', 'and', 'plus', 'some', 'my', 'the', 'a', 'of', 'on', 'for', 'with', 'at', 'went', 'got', 'in', 'today', 'yesterday', 'was', 'were'];
+
+function exerciseSegments(text) {
+  return String(text == null ? '' : text)
+    .replace(/(\d),(\d)/g, '$1.$2')
+    .split(/[,;]|\.(?=\s|$)|\band\b|\bthen\b|\bplus\b|\+/i)
+    .map((seg) => seg.trim())
+    .filter((seg) => seg.length > 0);
+}
+
+function exerciseName(text) {
+  // A bare number left over is not part of the name -- "3x10 squats at 80" is a
+  // weight with no unit, and the row is still Squats. The digits go first so the
+  // "at" they were hiding is then stripped as the filler it is; refusing the
+  // whole row would lose a real exercise over a missing "kg".
+  const words = String(text == null ? '' : text).replace(/[^A-Za-z0-9'\-\s]+/g, ' ').trim().split(/\s+/)
+    .filter(Boolean).filter((w) => !/^\d/.test(w));
+  while (words.length && EX_FILLER.indexOf(words[0].toLowerCase()) !== -1) words.shift();
+  while (words.length && EX_FILLER.indexOf(words[words.length - 1].toLowerCase()) !== -1) words.pop();
+  if (!words.length) return null;
+  const name = words.join(' ');
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+// Every segment that carries sets and reps, read as one exercise row. A weight
+// is optional here and stays null when it was not said -- the same rule the
+// plan branch already follows, because a made-up kilo is a made-up measurement.
+function sessionSentenceExercises(text) {
+  const out = [];
+  for (const seg of exerciseSegments(text)) {
+    const sr = seg.match(EX_SETS_REPS);
+    if (!sr) continue;
+    const sets = parseInt(sr[1] != null ? sr[1] : sr[3], 10);
+    const reps = parseInt(sr[2] != null ? sr[2] : sr[4], 10);
+    let rest = seg.replace(sr[0], ' ');
+    const w = rest.match(EX_WEIGHT);
+    let weight = null;
+    if (w) { weight = parseFloat(w[1]); rest = rest.replace(w[0], ' '); }
+    const name = exerciseName(rest);
+    if (!name) continue;
+    out.push(weight == null ? { name, sets, reps } : { name, sets, reps, weight });
+  }
+  return out;
+}
+
+// The weight for one exercise the plan already named. "I did the plan, squats
+// at 80kg" is the common way to say this: the sets and reps are the plan's and
+// only the kilos were missing. Matched by the plan's own name appearing in the
+// segment, so a number somewhere else in the sentence cannot land on a row.
+function sentenceWeightFor(text, name) {
+  const needle = String(name == null ? '' : name).toLowerCase().trim();
+  if (!needle) return null;
+  for (const seg of exerciseSegments(text)) {
+    if (seg.toLowerCase().indexOf(needle) === -1) continue;
+    const w = seg.match(EX_WEIGHT);
+    if (w) return parseFloat(w[1]);
+  }
+  return null;
+}
+
 // The one sentence, read into whatever the form needs. `ok: false` means I could
 // not tell what was done, and that is a refusal rather than a best guess.
 // `missing` names a field the sentence genuinely did not carry, so the form can
@@ -1005,6 +1076,14 @@ function parseSessionSentence(text, plan, todayISO) {
     if (Object.prototype.hasOwnProperty.call(CARDIO_VERBS, w)) { activity = CARDIO_VERBS[w]; break; }
   }
 
+  const spoken = sessionSentenceExercises(raw);
+
+  // Both in one sentence is two sessions, and the form can only open one. I
+  // refuse rather than pick, because either pick drops something you told me.
+  if (activity && spoken.length) {
+    return { ok: false, reason: 'I heard a ' + activity.toLowerCase() + ' and lifting in the same sentence. Log them one at a time.' };
+  }
+
   // A named activity wins over a plan reference: "I ran the plan's easy run"
   // is a run, and the plan's strength rows would be the wrong form to open.
   if (activity) {
@@ -1019,6 +1098,21 @@ function parseSessionSentence(text, plan, todayISO) {
     };
   }
 
+  // What you typed beats what the plan says, including when you say both:
+  // "did the plan, 3x10 squats at 80kg" is a report of the squats you actually
+  // did, and the plan is what you meant to do.
+  if (spoken.length) {
+    return {
+      ok: true,
+      kind: 'strength',
+      source: 'sentence',
+      day: planDayName(new Date(date + 'T00:00')),
+      exercises: spoken,
+      missing: spoken.some((e) => e.weight == null) ? ['weight'] : [],
+      ...common
+    };
+  }
+
   if (followedPlan) {
     const days = (plan && plan.days) || [];
     const dayName = planDayName(new Date(date + 'T00:00'));
@@ -1026,15 +1120,23 @@ function parseSessionSentence(text, plan, todayISO) {
     if (!day || !day.exercises || !day.exercises.length) {
       return { ok: false, reason: `Your plan has nothing on ${dayName}, so I do not know what you did. Pick a day and fill it in.` };
     }
+    // The plan carries sets and reps and no weight, so a row still needs one --
+    // unless the sentence named it ("did the plan, squats at 80kg"). This is the
+    // "amount stays blank and asks you" rule from the meal parser: the form
+    // opens filled in, and you type whatever kilos you did not say.
+    const exercises = day.exercises.map((e) => {
+      const weight = sentenceWeightFor(raw, e.name);
+      return weight == null
+        ? { name: e.name, sets: e.sets, reps: e.reps }
+        : { name: e.name, sets: e.sets, reps: e.reps, weight };
+    });
     return {
       ok: true,
       kind: 'strength',
+      source: 'plan',
       day: day.day,
-      exercises: day.exercises.map((e) => ({ name: e.name, sets: e.sets, reps: e.reps })),
-      // The plan carries sets and reps and no weight, so every row still needs
-      // one. This is the "amount stays blank and asks you" rule from the meal
-      // parser: the form opens filled in, and you type the kilos.
-      missing: ['weight'],
+      exercises,
+      missing: exercises.some((e) => e.weight == null) ? ['weight'] : [],
       ...common
     };
   }
@@ -1052,6 +1154,8 @@ function sessionSentenceSummary(result) {
     parts.push(result.cardio.activity);
     if (result.cardio.distance != null) parts.push(`${result.cardio.distance} km`);
     if (result.cardio.minutes != null) parts.push(`${result.cardio.minutes} min`);
+  } else if (result.source === 'sentence') {
+    parts.push(result.exercises.map((e) => `${e.sets}\u00d7${e.reps} ${e.name}${e.weight != null ? ` at ${e.weight} kg` : ''}`).join(', '));
   } else {
     parts.push(`${result.day} — ${result.exercises.length} exercises from your plan`);
   }
@@ -1060,7 +1164,11 @@ function sessionSentenceSummary(result) {
   if (result.injury) parts.push('injury mentioned');
   let out = `Heard: ${parts.join(' \u00b7 ')}.`;
   if (result.missing.indexOf('minutes') !== -1) out += ' I did not hear how long it took — fill in the duration.';
-  if (result.missing.indexOf('weight') !== -1) out += ' Your plan has no weights in it — type what you lifted.';
+  if (result.missing.indexOf('weight') !== -1) {
+    out += result.source === 'sentence'
+      ? ' I did not hear a weight for every exercise — type what you lifted.'
+      : ' Your plan has no weights in it — type what you lifted.';
+  }
   return out;
 }
 
@@ -1185,6 +1293,7 @@ function renderLog() {
       node.querySelector('.ex-name').value = prefill.name;
       node.querySelector('.ex-sets').value = prefill.sets;
       node.querySelector('.ex-reps').value = prefill.reps;
+      if (prefill.weight != null) node.querySelector('.ex-weight').value = prefill.weight;
     }
     node.querySelector('.ex-remove').addEventListener('click', (e) => e.target.closest('.exercise-row').remove());
     rows.appendChild(node);
