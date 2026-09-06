@@ -87,7 +87,13 @@ export function normalizeProduct(code: string, product: unknown): FoodRow | null
   return {
     code,
     name,
-    brand: String(p.brands || "").split(",")[0].trim(),
+    // The barcode door returns brands as one comma-joined string, the search
+    // service returns them as an array. Splitting the array's own join gets the
+    // right answer for `["Grandiosa", "Orkla"]` by luck and the wrong one for
+    // `["Ferrero, Inc.", "Yum yum"]`, so the array case is taken first.
+    brand: Array.isArray(p.brands)
+      ? String(p.brands[0] ?? "").trim()
+      : String(p.brands || "").split(",")[0].trim(),
     unit: "g",
     kcal,
     protein: macro(nutriments["proteins_100g"] ?? nutriments["proteins"]),
@@ -234,14 +240,24 @@ export async function lookupBarcode(code: string, deps: LookupDeps): Promise<Loo
 // reasons (their rate-limit etiquette, and one place where what Edvard eats
 // leaves this cluster).
 //
-// Measured against their live API on 2026-09-06 rather than assumed, and the
-// endpoint is not the obvious one: `/api/v2/search?search_terms=...` answered
-// **503 with an HTML page**, while `/cgi/search.pl?...&json=1` answered 200
-// with real products. So v2 is the wrong door for a text search today, and an
-// HTML body arriving under any status is a case this has to survive -- which is
-// why the parse is inside the try and a body that is not JSON reads as
-// "upstream did not answer" rather than as an empty result set.
-export const OFF_SEARCH_PATH = "/cgi/search.pl";
+// Search does not live on `world.openfoodfacts.org` at all, and that is the
+// whole reason this route was unreliable. Measured 2026-09-06 19:12 Oslo, eight
+// identical requests each from this cluster: `/cgi/search.pl?...&json=1`
+// answered a parseable 200 **two times out of eight** and an HTML 503 the other
+// six; `/api/v2/search` managed four out of eight; and Open Food Facts' own
+// search service at `search.openfoodfacts.org/search` answered **eight out of
+// eight**, in 0.21s against the other two's 0.5-0.8s. So the earlier note here
+// -- that the cgi door was the working one -- was true only of the sample it
+// was taken on. A user typing a food name got "the food database did not
+// answer" three times in four.
+//
+// The HTML-body tolerance below stays exactly as it was. It is cheap, the new
+// endpoint is the same project behind the same edge, and a 503 page is what
+// this whole family of hosts serves when it is busy -- so the parse stays
+// inside the try and a body that is not JSON reads as "upstream did not answer"
+// rather than as an empty result set.
+export const SEARCH_BASE = "https://search.openfoodfacts.org";
+export const OFF_SEARCH_PATH = "/search";
 const SEARCH_FIELDS = "code,product_name,product_name_en,brands,nutriments";
 
 /** Five is what fits on a phone under the box you typed into. */
@@ -335,7 +351,9 @@ export interface SearchDeps {
  */
 export function normalizeSearch(body: unknown, limit: number): FoodRow[] {
   const doc = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
-  const products = Array.isArray(doc.products) ? doc.products : [];
+  // The search service names its result list `hits`; the old cgi door called it
+  // `products`. Same database, same row shape, different key.
+  const products = Array.isArray(doc.hits) ? doc.hits : [];
   const rows: FoodRow[] = [];
   for (const product of products) {
     if (rows.length >= limit) break;
@@ -362,8 +380,8 @@ export async function searchFoodsByName(query: string, deps: SearchDeps): Promis
     return hit.rows.length ? { status: "found", rows: hit.rows, cached: true } : { status: "missing", cached: true };
   }
 
-  const url = `${OFF_BASE}${OFF_SEARCH_PATH}?search_terms=${encodeURIComponent(key)}`
-    + `&json=1&page_size=${limit * 4}&fields=${SEARCH_FIELDS}`;
+  const url = `${SEARCH_BASE}${OFF_SEARCH_PATH}?q=${encodeURIComponent(key)}`
+    + `&page_size=${limit * 4}&fields=${SEARCH_FIELDS}`;
   let rows: FoodRow[];
   try {
     const res = await deps.fetch(url, {
