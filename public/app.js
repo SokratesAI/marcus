@@ -2421,28 +2421,124 @@ function serverStateToBackup(state) {
   return { app: 'marcus', version: BACKUP_VERSION, exportedAt: state.updatedAt || null, data: state.data };
 }
 
-// Push, with exactly one retry, and the retry is the interesting part: a 409
-// means another browser wrote after this one last looked. This browser's copy
-// is then written on top, which is last-write-wins for the *server* copy only --
-// the other browser still holds its own. That is a backup, not a merge, and
-// calling it a merge would be the lie.
+// Two phones that both logged something hold two lists, and only one of them
+// can be the copy on the server. Until now the loser's records were written
+// over: a 409 was retried by re-sending this browser's payload at the server's
+// revision, which is last-write-wins and drops a session somebody actually did.
+//
+// So a conflicting push merges first. Identity is named per key rather than
+// assumed, because these records do not all carry an id -- `weights` is one
+// entry per date and `chat` is an append-only log -- and minting ids they do
+// not have would be worse than naming the fields that already make a record
+// itself.
+const MERGE_KEYS = {
+  sessions: { by: ['id'] },
+  meals: { by: ['id'] },
+  goals: { by: ['id'] },
+  weights: { by: ['date'] },
+  chat: { by: ['ts', 'role', 'text'], sort: 'ts' },
+};
+
+// null, never a partial key: two records missing the same field would otherwise
+// collide on the empty string and one of them would vanish.
+function recordKey(rec, fields) {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return null;
+  const parts = [];
+  for (let i = 0; i < fields.length; i++) {
+    const v = rec[fields[i]];
+    if (v === null || v === undefined) return null;
+    parts.push(String(v));
+  }
+  return parts.join('\u0000');
+}
+
+// Union, never subtraction. A record only one side holds is kept; a record both
+// sides hold is taken from `mine`, because this browser is the one that just
+// wrote.
+//
+// The cost of that direction is real and is stated rather than hidden: a record
+// deleted on the other phone comes back, because from here "deleted there" and
+// "never reached this browser" are the same observation. Resurrecting a deleted
+// meal is a smaller harm than deleting a logged session, which is the whole
+// reason the union runs this way round.
+//
+// A record with no usable identity is kept from `mine` and dropped from
+// `theirs` -- without a key there is no way to tell a duplicate from a second
+// record, and keeping both would grow the list on every sync.
+function mergeList(mine, theirs, spec) {
+  if (!Array.isArray(mine)) return Array.isArray(theirs) ? theirs.slice() : [];
+  if (!Array.isArray(theirs)) return mine.slice();
+  const seen = {};
+  const out = [];
+  mine.forEach(r => {
+    const k = recordKey(r, spec.by);
+    if (k !== null) seen[k] = true;
+    out.push(r);
+  });
+  theirs.forEach(r => {
+    const k = recordKey(r, spec.by);
+    if (k === null || seen[k]) return;
+    seen[k] = true;
+    out.push(r);
+  });
+  // Only where the stored order is the displayed order: every other list is
+  // sorted again at render time, so re-ordering it here would be noise.
+  if (spec.sort) out.sort((a, b) => (Number(a[spec.sort]) || 0) - (Number(b[spec.sort]) || 0));
+  return out;
+}
+
+// `plan` is one object with no identity of its own, so it cannot be merged per
+// record and this browser's wins. That is last-write-wins for exactly one key
+// instead of for the whole payload, and it is the honest limit of this.
+function mergeBackupData(mine, theirs) {
+  const a = mine && typeof mine === 'object' && !Array.isArray(mine) ? mine : {};
+  const b = theirs && typeof theirs === 'object' && !Array.isArray(theirs) ? theirs : {};
+  const out = {};
+  BACKUP_KEYS.forEach(k => {
+    const spec = MERGE_KEYS[k];
+    const mineHas = Array.isArray(a[k]);
+    const theirsHas = Array.isArray(b[k]);
+    if (spec && (mineHas || theirsHas)) {
+      out[k] = mergeList(mineHas ? a[k] : null, theirsHas ? b[k] : null, spec);
+      return;
+    }
+    if (k in a) out[k] = a[k];
+    else if (k in b) out[k] = b[k];
+  });
+  return out;
+}
+
+// Push, with exactly one retry. A 409 means another browser wrote after this
+// one last looked, and the retry now carries the union of both copies rather
+// than this browser's alone. `merged` comes back on the result when that
+// happened, because the caller has to put those records into this browser too
+// -- a merge only the server holds is half a merge.
+//
+// A 409 whose body carries no `data` (an older server, or a state with nothing
+// in it) falls back to the old behaviour of re-sending this payload: there is
+// nothing to merge with, so there is nothing to lose.
 async function pushServerCopy(fetchFn, payloadData, rev) {
-  const put = (r) => fetchFn('/api/state', {
+  const put = (r, body) => fetchFn('/api/state', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rev: r, data: payloadData }),
+    body: JSON.stringify({ rev: r, data: body }),
   });
-  let res = await put(rev);
+  let merged = null;
+  let res = await put(rev, payloadData);
   if (res.status === 409) {
     const body = await res.json().catch(() => null);
     const serverRev = body && body.state && typeof body.state.rev === 'number' ? body.state.rev : null;
     if (serverRev === null) return { ok: false, reason: 'conflict' };
-    res = await put(serverRev);
+    const theirs = body.state.data;
+    if (theirs && typeof theirs === 'object' && !Array.isArray(theirs)) {
+      merged = mergeBackupData(payloadData, theirs);
+    }
+    res = await put(serverRev, merged || payloadData);
   }
   if (!res.ok) return { ok: false, reason: 'refused', status: res.status };
   const saved = await res.json().catch(() => null);
   if (!saved || typeof saved.rev !== 'number') return { ok: false, reason: 'refused' };
-  return { ok: true, rev: saved.rev, updatedAt: saved.updatedAt };
+  return { ok: true, rev: saved.rev, updatedAt: saved.updatedAt, merged: merged };
 }
 
 // The one case where pushing loses data that nothing else holds: a browser
@@ -2490,8 +2586,10 @@ async function syncNow() {
   const payload = buildBackup();
   const result = await pushServerCopy(fetch, payload.data, syncRev()).catch(() => ({ ok: false, reason: 'unreachable' }));
   if (result.ok) {
+    const gained = result.merged ? adoptMergedCopy(result.merged) : null;
     store.set(SYNC_REV_KEY, result.rev);
     serverStatus = { state: 'saved', updatedAt: result.updatedAt };
+    if (gained) { toast('Merged in what the other device logged.'); switchTab(currentTab); }
   } else if (result.reason === 'unreachable') {
     serverStatus = { state: 'unreachable' };
   } else {
@@ -2524,6 +2622,34 @@ async function readServerCopy() {
     serverStatus = { state: 'unreachable' };
     return null;
   }
+}
+
+// A merge the server accepted has to land in this browser as well, or the
+// records the other phone logged are visible everywhere except here until the
+// next reload. This is not a restore: `mergeBackupData` already ran, so what is
+// written back is a superset of what this browser held, and nothing it holds is
+// dropped.
+//
+// Returns false when the merge added nothing this browser did not already have,
+// which is the ordinary case for the phone that just typed -- the caller uses
+// that to decide whether the screen is worth repainting.
+function adoptMergedCopy(merged) {
+  if (!merged || typeof merged !== 'object') return false;
+  let gained = false;
+  Object.keys(merged).forEach(k => {
+    const before = store.get(k, null);
+    // A key this browser did not hold at all counts as zero, not as absent:
+    // otherwise an empty list arriving where there was no key reads as a gain
+    // and toasts about records nobody logged.
+    const beforeCount = Array.isArray(before) ? before.length : 0;
+    if (!store.set(k, merged[k])) return;
+    if (Array.isArray(merged[k]) && merged[k].length > beforeCount) gained = true;
+  });
+  // `store.set` on a backup key armed a push of what was just pulled. The
+  // server already holds exactly this, so that push is a revision bump for
+  // nothing -- the same reason adoptServerCopy cancels it.
+  if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+  return gained;
 }
 
 // Returns null when it declined, so a caller can tell "did not fire" from

@@ -139,7 +139,7 @@ describe("pushServerCopy", () => {
     const fetchFn = async (_url: string, init: any) => { calls.push(JSON.parse(init.body)); return res(200, { rev: 5, updatedAt: "t" }); };
     const out = await ctx.pushServerCopy(fetchFn, { sessions: [] }, 4);
     expect(calls).toEqual([{ rev: 4, data: { sessions: [] } }]);
-    expect(out).toEqual({ ok: true, rev: 5, updatedAt: "t" });
+    expect(out).toEqual({ ok: true, rev: 5, updatedAt: "t", merged: null });
   });
 
   it("retries a 409 at the revision the server named, and only once", async () => {
@@ -331,5 +331,129 @@ describe("the boot pull", () => {
     expect(asked).toEqual(["/api/state"]);
     expect(ctx.store.get("sessions", [])).toEqual([{ id: "mine" }]);
     expect(ctx.store.get("syncRev", null)).toBe(null);
+  });
+});
+
+// Issue #153: a 409 used to be retried with this browser's payload, which
+// wrote over whatever the other phone had logged. These pin the union.
+describe("mergeBackupData", () => {
+  it("keeps a session only the server holds and one only this browser holds", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { sessions: [{ id: "a", date: "2026-09-01" }] },
+      { sessions: [{ id: "b", date: "2026-09-02" }] },
+    );
+    expect(out.sessions.map((s: any) => s.id).sort()).toEqual(["a", "b"]);
+  });
+
+  it("prefers this browser's copy of a record both sides hold", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { meals: [{ id: "m", name: "mine" }] },
+      { meals: [{ id: "m", name: "theirs" }] },
+    );
+    expect(out.meals).toEqual([{ id: "m", name: "mine" }]);
+  });
+
+  it("identifies a weight by its date, because those records carry no id", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { weights: [{ date: "2026-09-01", kg: 84 }] },
+      { weights: [{ date: "2026-09-01", kg: 99 }, { date: "2026-09-02", kg: 83 }] },
+    );
+    expect(out.weights).toEqual([{ date: "2026-09-01", kg: 84 }, { date: "2026-09-02", kg: 83 }]);
+  });
+
+  it("puts a merged chat back in time order, because it is rendered in stored order", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData(
+      { chat: [{ role: "you", text: "a", ts: 3 }] },
+      { chat: [{ role: "marcus", text: "b", ts: 1 }] },
+    );
+    expect(out.chat.map((m: any) => m.ts)).toEqual([1, 3]);
+  });
+
+  it("does not merge the plan -- one object with no identity, this browser wins", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData({ plan: { blockName: "mine" } }, { plan: { blockName: "theirs" } });
+    expect(out.plan).toEqual({ blockName: "mine" });
+  });
+
+  it("takes the server's list whole when this browser has no such key", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData({}, { goals: [{ id: "g" }] });
+    expect(out.goals).toEqual([{ id: "g" }]);
+  });
+
+  it("drops a server record with no usable identity rather than duplicating it every sync", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData({ sessions: [{ id: "a" }] }, { sessions: [{ date: "2026-09-01" }] });
+    expect(out.sessions).toEqual([{ id: "a" }]);
+  });
+
+  it("keeps this browser's own unidentifiable record, which is data nothing else holds", () => {
+    const ctx = loadApp();
+    const out = ctx.mergeBackupData({ sessions: [{ date: "2026-09-01" }] }, { sessions: [] });
+    expect(out.sessions).toEqual([{ date: "2026-09-01" }]);
+  });
+});
+
+describe("pushServerCopy on a conflict", () => {
+  it("re-sends the union of both copies, not this browser's payload", async () => {
+    const ctx = loadApp();
+    const sent: any[] = [];
+    const fetchFn = async (_url: string, opts: any) => {
+      const body = JSON.parse(opts.body);
+      sent.push(body);
+      return body.rev === 9
+        ? res(200, { rev: 10, updatedAt: "t" })
+        : res(409, { state: { rev: 9, updatedAt: "s", data: { sessions: [{ id: "theirs" }] } } });
+    };
+    const out = await ctx.pushServerCopy(fetchFn, { sessions: [{ id: "mine" }] }, 4);
+    expect(out.ok).toBe(true);
+    expect(sent[1].data.sessions.map((s: any) => s.id).sort()).toEqual(["mine", "theirs"]);
+    // And the caller is told, so it can put those records into this browser too.
+    expect(out.merged.sessions.map((s: any) => s.id).sort()).toEqual(["mine", "theirs"]);
+  });
+
+  it("reports no merge when the push landed first time", async () => {
+    const ctx = loadApp();
+    const out = await ctx.pushServerCopy(async () => res(200, { rev: 5, updatedAt: "t" }), { sessions: [] }, 4);
+    expect(out.merged).toBe(null);
+  });
+
+  it("falls back to re-sending this payload when the 409 carries no data", async () => {
+    const ctx = loadApp();
+    const sent: any[] = [];
+    const fetchFn = async (_url: string, opts: any) => {
+      const body = JSON.parse(opts.body);
+      sent.push(body);
+      return body.rev === 9 ? res(200, { rev: 10, updatedAt: "t" }) : res(409, { state: { rev: 9 } });
+    };
+    const out = await ctx.pushServerCopy(fetchFn, { sessions: [{ id: "mine" }] }, 4);
+    expect(out.ok).toBe(true);
+    expect(out.merged).toBe(null);
+    expect(sent[1].data).toEqual({ sessions: [{ id: "mine" }] });
+  });
+});
+
+describe("adoptMergedCopy", () => {
+  it("writes the merged records into this browser and says it gained some", () => {
+    const ctx = loadApp({ "marcus.sessions": JSON.stringify([{ id: "mine" }]) });
+    const gained = ctx.adoptMergedCopy({ sessions: [{ id: "mine" }, { id: "theirs" }] });
+    expect(gained).toBe(true);
+    expect(ctx.store.get("sessions", []).map((s: any) => s.id).sort()).toEqual(["mine", "theirs"]);
+  });
+
+  it("says it gained nothing when the merge added nothing, so nothing repaints", () => {
+    const ctx = loadApp({ "marcus.sessions": JSON.stringify([{ id: "mine" }]) });
+    expect(ctx.adoptMergedCopy({ sessions: [{ id: "mine" }] })).toBe(false);
+  });
+});
+
+describe("adoptMergedCopy on an empty list", () => {
+  it("does not call an empty list arriving where there was no key a gain", () => {
+    const ctx = loadApp();
+    expect(ctx.adoptMergedCopy({ goals: [] })).toBe(false);
   });
 });
