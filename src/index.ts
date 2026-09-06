@@ -4,6 +4,7 @@ import express, { type Express } from "express";
 import pino from "pino";
 import { StateStore } from "./state-store.js";
 import { FoodCache, lookupBarcode } from "./food-lookup.js";
+import { askCoach, coachConfig, type CoachConfig } from "./coach.js";
 import {
   initTracing,
   parentContext,
@@ -30,6 +31,9 @@ export interface AppOptions {
    * writes a cache file next to a real state file. Production passes neither. */
   foodCache?: FoodCache;
   fetchImpl?: typeof globalThis.fetch;
+  /** Null means the coach route answers 503 and the app keeps its built-in
+   * replies. Production resolves it from the environment. */
+  coach?: CoachConfig | null;
   /** Passed by the entrypoint after `initTracing`. Null, and therefore a
    * pass-through, everywhere else -- a test must not open a span. */
   tracer?: TracerLike | null;
@@ -47,6 +51,7 @@ export function createApp(
   const app = express();
   const foodCache = options.foodCache ?? new FoodCache(path.dirname(store.filePath));
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const coach = options.coach !== undefined ? options.coach : coachConfig(process.env);
 
   // First, so the span covers the body parser and the static handler as well
   // as the API routes.
@@ -108,6 +113,44 @@ export function createApp(
       return;
     }
     res.status(200).json({ food: result.row, cached: result.cached });
+  });
+
+
+  app.post("/api/chat", express.json({ limit: MAX_BODY }), async (req, res) => {
+    const { message, context, history } = req.body as {
+      message?: unknown;
+      context?: unknown;
+      history?: unknown;
+    };
+    if (typeof message !== "string" || message.trim().length === 0) {
+      res.status(400).json({ error: "message is required" });
+      return;
+    }
+    const result = await askCoach(
+      message.trim(),
+      (context ?? {}) as Parameters<typeof askCoach>[1],
+      Array.isArray(history) ? (history as Parameters<typeof askCoach>[2]) : [],
+      { config: coach, fetch: fetchImpl },
+    );
+    if (result.status === "ok") {
+      res.status(200).json({ reply: result.reply });
+      return;
+    }
+    if (result.status === "unconfigured") {
+      // 503 and not 500: nothing is broken, this deployment simply has no
+      // coach wired, and the client's own answer is the right thing to use.
+      res.status(503).json({ error: "the coach is not configured here" });
+      return;
+    }
+    if (result.status === "metered") {
+      // Refused before anything left this pod. Loud, because a coach pointed
+      // at a metered model spends real money on every message Edvard types.
+      logger.error({ model: result.model }, "coach conversation is not on a subscription model");
+      res.status(503).json({ error: "the coach is not on a subscription model" });
+      return;
+    }
+    logger.warn({ detail: result.detail }, "coach did not answer");
+    res.status(502).json({ error: "the coach did not answer" });
   });
 
   app.use(express.static(path.join(__dirname, "..", "public")));
