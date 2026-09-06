@@ -488,12 +488,65 @@ describe("recordDeletion", () => {
     expect(ctx.store.get("deletions", []).map((d: any) => d.id)).toEqual(["m1", "g1"]);
   });
 
+  it("writes one tombstone for one record, however many times the delete fires", () => {
+    const ctx = loadApp();
+    ctx.store.set("deletions", []);
+    ctx.recordDeletion("sessions", "s1");
+    expect(ctx.recordDeletion("sessions", "s1")).toBe(true);
+    expect(ctx.store.get("deletions", [])).toHaveLength(1);
+  });
+
   it("refuses a store with no delete button and one with no id", () => {
     const ctx = loadApp();
     ctx.store.set("deletions", []);
     expect(ctx.recordDeletion("weights", "2026-09-01")).toBe(false);
     expect(ctx.recordDeletion("sessions", undefined)).toBe(false);
     expect(ctx.store.get("deletions", [])).toEqual([]);
+  });
+});
+
+// The reviewer's finding, and it falsifies what the first pass claimed: a
+// backup file preserves ids, so a restore is the one path that brings a record
+// back under the id its tombstone still names. Without this the record appeared
+// and the next conflicting sync silently took it away again.
+describe("restoring a file forgets the tombstones for what it put back", () => {
+  it("drops a tombstone naming a session the restored file carries", () => {
+    const ctx = loadApp();
+    ctx.store.set("deletions", [{ store: "sessions", id: "s1", ts: 1 }]);
+    ctx.restoreBackup({ data: { sessions: [{ id: "s1" }] } });
+    expect(ctx.store.get("deletions", [])).toEqual([]);
+  });
+
+  it("keeps a tombstone for a record the restored file does not carry", () => {
+    const ctx = loadApp();
+    ctx.store.set("deletions", [
+      { store: "sessions", id: "s1", ts: 1 },
+      { store: "meals", id: "m9", ts: 2 },
+    ]);
+    ctx.restoreBackup({ data: { sessions: [{ id: "s1" }] } });
+    expect(ctx.store.get("deletions", []).map((d: any) => d.id)).toEqual(["m9"]);
+  });
+
+  it("survives the merge afterwards -- the restored session is not stripped out again", () => {
+    const ctx = loadApp();
+    ctx.store.set("deletions", [{ store: "sessions", id: "s1", ts: 1 }]);
+    ctx.restoreBackup({ data: { sessions: [{ id: "s1" }] } });
+    const out = ctx.mergeBackupData(
+      { sessions: [{ id: "s1" }], deletions: ctx.store.get("deletions", []) },
+      { sessions: [] },
+    );
+    expect(out.sessions.map((x: any) => x.id)).toEqual(["s1"]);
+  });
+});
+
+describe("adoptMergedCopy", () => {
+  it("does not report a gain when all that arrived was a tombstone", () => {
+    const ctx = loadApp();
+    ctx.store.set("sessions", [{ id: "a" }]);
+    expect(ctx.adoptMergedCopy({
+      sessions: [{ id: "a" }],
+      deletions: [{ store: "meals", id: "m1", ts: 1 }],
+    })).toBe(false);
   });
 });
 

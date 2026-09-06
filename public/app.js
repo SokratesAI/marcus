@@ -2263,14 +2263,22 @@ const DELETABLE_STORES = ['sessions', 'meals', 'goals'];
 // back on the next push -- which is the limit `mergeBackupData` used to state
 // and this closes.
 //
-// A tombstone can never suppress a record the user re-created, because the id
+// A tombstone cannot suppress a record the user logged afresh, because the id
 // is minted per record: re-logging a session writes a new id, and the old
-// tombstone names the one that is gone.
+// tombstone names the one that is gone. The one path that does reuse an id is a
+// restore -- a backup file preserves them -- and `forgetDeletionsOf` is what
+// covers that.
 function recordDeletion(storeKey, id) {
   if (DELETABLE_STORES.indexOf(storeKey) === -1) return false;
   if (id === null || id === undefined || id === '') return false;
   const log = store.get('deletions', []);
-  return store.set('deletions', (Array.isArray(log) ? log : []).concat([
+  const rows = Array.isArray(log) ? log : [];
+  // Two tabs of the app share one localStorage, so the same delete can be
+  // recorded twice. `mergeList` only ever dedups this side against the other
+  // one, so a duplicate written here would survive every merge from now on.
+  const key = recordKey({ store: storeKey, id: String(id) }, ['store', 'id']);
+  if (rows.some(d => recordKey(d, ['store', 'id']) === key)) return true;
+  return store.set('deletions', rows.concat([
     { store: storeKey, id: String(id), ts: Date.now() },
   ]));
 }
@@ -2342,7 +2350,37 @@ function restoreBackup(parsed) {
     if (!ok) failed.push(k);
     else if (k !== 'deletions') restored.push(k);
   });
+  forgetDeletionsOf(parsed.data);
   return { restored, failed };
+}
+
+// A restore is the one way a record comes back carrying the id it had when it
+// was deleted -- `recordDeletion`'s "the id is minted per record" holds for
+// anything the user logs afresh and does not hold here, because a backup file
+// preserves ids by design. Without this, restoring an old file put the session
+// back on screen and the next conflicting sync quietly took it away again: the
+// tombstone outlived the record it named.
+//
+// So a restore forgets the tombstones for exactly the records it just wrote
+// back. The file is the user saying these exist, which is newer information
+// than a delete recorded before it.
+function forgetDeletionsOf(data) {
+  const log = store.get('deletions', []);
+  if (!Array.isArray(log) || !log.length) return false;
+  const alive = {};
+  DELETABLE_STORES.forEach(name => {
+    if (!Array.isArray(data[name])) return;
+    data[name].forEach(r => {
+      const k = recordKey({ store: name, id: r && r.id }, ['store', 'id']);
+      if (k !== null) alive[k] = true;
+    });
+  });
+  const kept = log.filter(d => {
+    const k = recordKey(d, ['store', 'id']);
+    return k === null || !alive[k];
+  });
+  if (kept.length === log.length) return false;
+  return store.set('deletions', kept);
 }
 
 // A restore is destructive, so the file is parsed and described before
@@ -2710,6 +2748,10 @@ function adoptMergedCopy(merged) {
     // and toasts about records nobody logged.
     const beforeCount = Array.isArray(before) ? before.length : 0;
     if (!store.set(k, merged[k])) return;
+    // `deletions` is bookkeeping, not something the other phone logged, so a
+    // tombstone arriving on its own must not toast about records nobody wrote
+    // -- the same call backupSummary and restoreBackup make.
+    if (k === 'deletions') return;
     if (Array.isArray(merged[k]) && merged[k].length > beforeCount) gained = true;
   });
   // `store.set` on a backup key armed a push of what was just pulled. The
