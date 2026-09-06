@@ -226,6 +226,11 @@ export function createApp(
   // it, and that is a decision about a training log on a private network. This
   // one reaches Edvard's lock screen, so an unconfigured deployment must not be
   // one that anybody who can reach the pod may buzz his phone through.
+  // One send at a time, per process. Marcus runs a single replica and that is
+  // the whole of the guard it needs; a second replica would need the lock to
+  // live beside the subscriptions instead.
+  let sendInFlight = false;
+
   app.post("/api/push/send", express.json({ limit: "16kb" }), async (req, res) => {
     const token = process.env.MARCUS_PUSH_TOKEN;
     if (!token) {
@@ -251,6 +256,15 @@ export function createApp(
       res.status(400).json({ error: "body is required" });
       return;
     }
+    if (sendInFlight) {
+      // 409 and not a queue: a CronJob that times out and retries, or a retry
+      // racing the scheduled run, would otherwise buzz his phone twice for one
+      // logical reminder. Refusing the second is the behaviour a caller can
+      // reason about; silently sending twice is not.
+      res.status(409).json({ error: "a send is already in flight" });
+      return;
+    }
+    sendInFlight = true;
     try {
       const payload = declarativePayload({
         title: title.trim(),
@@ -261,7 +275,18 @@ export function createApp(
         navigate: typeof navigate === "string" && navigate.length > 0 ? navigate : "/",
         tag: typeof tag === "string" && tag.length > 0 ? tag : undefined,
       });
-      const keys = await vapidKeys.ensure();
+      // Its own try, with `err` dropped: CodeQL treats every access to
+      // `vapidKeys` as a private-key source, and the wider catch below wants
+      // to log the error object rather than throw it away.
+      let keys;
+      try {
+        keys = await vapidKeys.ensure();
+      } catch (err) {
+        void err;
+        logger.error("could not read or generate the VAPID keypair");
+        res.status(500).json({ error: "could not send the notification" });
+        return;
+      }
       const result = await sendToAll(
         subscriptions,
         payload,
@@ -278,9 +303,14 @@ export function createApp(
       // counts are the answer. A caller that wants "did it land" reads `sent`.
       res.status(200).json({ sent: result.sent, failed: result.failed, pruned: result.pruned });
     } catch (err) {
-      void err;
-      logger.error("could not send the push notification");
+      // Logged whole, unlike the key path above: everything that can throw
+      // here -- encryption, the subscription file, the prune -- is something
+      // an operator reading a run of silent 500s needs to see, and none of it
+      // is derived from the keypair.
+      logger.error({ err }, "could not send the push notification");
       res.status(500).json({ error: "could not send the notification" });
+    } finally {
+      sendInFlight = false;
     }
   });
 

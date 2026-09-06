@@ -107,6 +107,51 @@ describe("POST /api/push/send", () => {
     expect((await subscriptions.list()).map((s) => s.endpoint)).toEqual(["https://web.push.apple.com/two"]);
   });
 
+  it("refuses a second send while the first is still in flight", async () => {
+    await subscribe("https://web.push.apple.com/one");
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let entered: () => void = () => {};
+    // Resolved from inside the hanging fetch, so the second request provably
+    // arrives while the first is mid-send rather than after a guessed delay.
+    const inFlight = new Promise<void>((resolve) => (entered = resolve));
+    const slow = createApp(new StateStore(dir), undefined, {
+      subscriptions,
+      vapidKeys: new VapidKeyStore(dir),
+      coach: null,
+      fetchImpl: (async (url: string) => {
+        posted.push(url);
+        entered();
+        await held;
+        return new Response(null, { status: 201 });
+      }) as unknown as typeof globalThis.fetch,
+    });
+    const send1 = request(slow)
+      .post("/api/push/send")
+      .set("Authorization", "Bearer a-token-nobody-guesses")
+      // `.then` and not a bare assignment: supertest does not dispatch until
+      // the request is awaited, so without this the "first" send never starts.
+      .send({ title: "t", body: "b" })
+      .then((r) => r);
+    await inFlight;
+    const res2 = await request(slow)
+      .post("/api/push/send")
+      .set("Authorization", "Bearer a-token-nobody-guesses")
+      .send({ title: "t", body: "b" });
+    expect(res2.status).toBe(409);
+    release();
+    expect((await send1).status).toBe(200);
+    // One device, one notification -- not two.
+    expect(posted).toEqual(["https://web.push.apple.com/one"]);
+  });
+
+  it("lets a later send through once the first has finished", async () => {
+    await subscribe("https://web.push.apple.com/one");
+    expect((await send({ title: "t", body: "b" })).status).toBe(200);
+    expect((await send({ title: "t", body: "b" })).status).toBe(200);
+    expect(posted.length).toBe(2);
+  });
+
   it("answers with zeroes rather than an error when nobody has subscribed", async () => {
     const res = await send({ title: "t", body: "b" });
     expect(res.status).toBe(200);
