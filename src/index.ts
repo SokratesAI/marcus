@@ -164,7 +164,15 @@ export function createApp(
       // not over HTTP.
       res.status(200).json({ key: keys.publicKey });
     } catch (err) {
-      logger.error({ err }, "could not read or generate the VAPID keypair");
+      // The error object itself is deliberately not logged here and CodeQL is
+      // right to insist: everything on this path is derived from an object
+      // that holds a private key, and a log line is the one place it could
+      // leave the process by accident. The file and the error's kind are
+      // enough to go and look, and neither can carry key material.
+      logger.error(
+        { file: vapidKeys.filePath, kind: (err as Error)?.constructor?.name ?? "Error" },
+        "could not read or generate the VAPID keypair",
+      );
       res.status(500).json({ error: "could not read the push key" });
     }
   });
