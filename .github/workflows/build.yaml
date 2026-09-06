@@ -63,9 +63,24 @@ jobs:
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
             | tar -xz -C /usr/local/bin gitleaks
           gitleaks detect --source . --no-banner --redact
+      # Read the major from the Dockerfile rather than pinning it here. The
+      # two were separate constants and both said 24, so nothing ever
+      # disagreed -- which is exactly why the drift was invisible. Dependabot
+      # opened marcus#29 (node:24-alpine -> node:26-alpine) on 2026-09-06 and
+      # every check passed, because this job installed Node 24 and no check on
+      # a pull request builds the image at all (build-push below is
+      # main-only). A green tick on that PR was guaranteed in advance: it said
+      # nothing about the runtime the change actually ships.
+      - name: Read the Node major the image is built on
+        id: node
+        run: |
+          major="$(sed -n 's/^FROM node:\([0-9][0-9]*\).*/\1/p' Dockerfile | head -1)"
+          test -n "$major" || { echo "no FROM node:<major> line in Dockerfile"; exit 1; }
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+          echo "testing on Node $major, read from the Dockerfile"
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ steps.node.outputs.major }}
       - run: npm install
       - run: npm run build
       - run: npm test
