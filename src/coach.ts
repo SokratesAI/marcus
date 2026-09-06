@@ -91,19 +91,36 @@ export async function askCoach(
   message: string,
   context: CoachContext,
   history: ChatTurn[],
-  deps: { config: CoachConfig | null; fetch: typeof globalThis.fetch; timeoutMs?: number },
+  deps: {
+    config: CoachConfig | null;
+    fetch: typeof globalThis.fetch;
+    /** Separate from `timeoutMs` on purpose: the listing read is a cheap JSON
+     * fetch and the ask is a model call behind a queue. */
+    readTimeoutMs?: number;
+    timeoutMs?: number;
+  },
 ): Promise<CoachResult> {
   const { config } = deps;
   if (!config) return { status: "unconfigured" };
 
+  // Agora has no `GET /conversations/<id>` -- measured live, it answers 404 --
+  // so the model is read off the listing, which carries it per row. `?active=true`
+  // is the filtered listing (53 rows rather than 1,083); an archived coach
+  // conversation is absent from it, which is the right answer here anyway,
+  // because a conversation somebody archived should stop answering.
   let model: unknown;
   try {
-    const res = await deps.fetch(`${config.baseUrl}/conversations/${config.conversationId}`, {
-      signal: AbortSignal.timeout(deps.timeoutMs ?? 10_000),
+    const res = await deps.fetch(`${config.baseUrl}/conversations?active=true`, {
+      signal: AbortSignal.timeout(deps.readTimeoutMs ?? 10_000),
     });
     if (!res.ok) return { status: "upstream", detail: `conversation read returned ${res.status}` };
-    const body = (await res.json()) as { conversation?: { model?: unknown }; model?: unknown };
-    model = body.conversation?.model ?? body.model;
+    const body = (await res.json()) as { conversations?: unknown } | unknown[];
+    const rows = Array.isArray(body) ? body : Array.isArray(body?.conversations) ? body.conversations : [];
+    const row = (rows as { id?: unknown; model?: unknown }[]).find(
+      (c) => c?.id === config.conversationId,
+    );
+    if (!row) return { status: "upstream", detail: "conversation not in the active listing" };
+    model = row.model;
   } catch (err) {
     return { status: "upstream", detail: String((err as Error)?.message ?? err) };
   }
