@@ -1,0 +1,58 @@
+# Version updates. This is the half that alerts cannot do: an alert fires
+# only once an advisory names a version marcus actually uses, so a dependency
+# that is simply three majors behind never produces one. Security updates are
+# enabled on the repo itself and need no entry here.
+#
+# Grouped and weekly on purpose. Ungrouped daily updates on this dependency
+# tree open roughly one pull request per package per bump, and every one of
+# them runs the full `test` job; marcus is public so those minutes are free,
+# but a review queue nobody reads is the same as no review queue.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    open-pull-requests-limit: 5
+    groups:
+      opentelemetry:
+        patterns:
+          - "@opentelemetry/*"
+      types:
+        patterns:
+          - "@types/*"
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # The build workflow pins actions by major (`actions/checkout@v7`), so this
+  # only ever opens a pull request when a new major ships -- which is exactly
+  # the case a major pin does not cover and nobody notices for a year.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # The Dockerfile's base image. A node base image is where a CVE lands
+  # without any package.json entry changing, and nothing else in this repo
+  # watches it.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    open-pull-requests-limit: 2
