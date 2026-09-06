@@ -5,6 +5,7 @@ import pino from "pino";
 import { StateStore } from "./state-store.js";
 import { FoodCache, SearchCache, lookupBarcode, searchFoodsByName } from "./food-lookup.js";
 import { askCoach, coachConfig, type CoachConfig } from "./coach.js";
+import { SubscriptionStore, VapidKeyStore, validateSubscription } from "./push.js";
 import {
   initTracing,
   parentContext,
@@ -35,6 +36,11 @@ export interface AppOptions {
   /** Null means the coach route answers 503 and the app keeps its built-in
    * replies. Production resolves it from the environment. */
   coach?: CoachConfig | null;
+  /** Both injected only so a test never generates a keypair beside a real
+   * state file, nor reads the phones actually subscribed. Production passes
+   * neither. */
+  vapidKeys?: VapidKeyStore;
+  subscriptions?: SubscriptionStore;
   /** Passed by the entrypoint after `initTracing`. Null, and therefore a
    * pass-through, everywhere else -- a test must not open a span. */
   tracer?: TracerLike | null;
@@ -54,6 +60,8 @@ export function createApp(
   const searchCache = options.searchCache ?? new SearchCache(path.dirname(store.filePath));
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const coach = options.coach !== undefined ? options.coach : coachConfig(process.env);
+  const vapidKeys = options.vapidKeys ?? new VapidKeyStore(path.dirname(store.filePath));
+  const subscriptions = options.subscriptions ?? new SubscriptionStore(path.dirname(store.filePath));
 
   // First, so the span covers the body parser and the static handler as well
   // as the API routes.
@@ -144,6 +152,61 @@ export function createApp(
     res.status(200).json({ foods: result.rows, cached: result.cached });
   });
 
+
+  // Idea #217, first slice. The browser needs the application server's public
+  // key before it can subscribe at all, so this is the first call the phone
+  // makes -- and the keypair is minted on this request the first time anyone
+  // ever asks, which is why there is no setup step anywhere.
+  app.get("/api/push/key", async (_req, res) => {
+    try {
+      const keys = await vapidKeys.ensure();
+      // Only ever the public half. The private key has one reader and it is
+      // not over HTTP.
+      res.status(200).json({ key: keys.publicKey });
+    } catch (err) {
+      logger.error({ err }, "could not read or generate the VAPID keypair");
+      res.status(500).json({ error: "could not read the push key" });
+    }
+  });
+
+  app.post("/api/push/subscribe", express.json({ limit: "16kb" }), async (req, res) => {
+    const record = validateSubscription(req.body);
+    if (record === null) {
+      res.status(400).json({ error: "that is not a push subscription" });
+      return;
+    }
+    try {
+      const result = await subscriptions.save(record, now());
+      if (!result.ok) {
+        // 507, not 400: the body was fine and the server is the one that has
+        // run out, so the phone should say so rather than retry a fixed body.
+        res.status(result.reason === "full" ? 507 : 400).json({ error: result.message });
+        return;
+      }
+      res.status(result.created ? 201 : 200).json({ subscribed: true, count: result.count });
+    } catch (err) {
+      logger.error({ err }, "could not store the push subscription");
+      res.status(500).json({ error: "could not store the subscription" });
+    }
+  });
+
+  app.delete("/api/push/subscribe", express.json({ limit: "16kb" }), async (req, res) => {
+    const endpoint = (req.body as { endpoint?: unknown } | undefined)?.endpoint;
+    if (typeof endpoint !== "string" || endpoint.length === 0) {
+      res.status(400).json({ error: "endpoint is required" });
+      return;
+    }
+    try {
+      const result = await subscriptions.remove(endpoint);
+      // 200 either way: a phone that has already forgotten its subscription and
+      // one that never had it want the same thing to happen next, which is
+      // nothing.
+      res.status(200).json({ subscribed: false, removed: result.removed, count: result.count });
+    } catch (err) {
+      logger.error({ err }, "could not remove the push subscription");
+      res.status(500).json({ error: "could not remove the subscription" });
+    }
+  });
 
   app.post("/api/chat", express.json({ limit: MAX_BODY }), async (req, res) => {
     const { message, context, history } = req.body as {
