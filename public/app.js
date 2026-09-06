@@ -275,6 +275,42 @@ async function lookupBarcodeFood(code, fetchImpl) {
   return { ok: true, food, cached: Boolean(body.cached) };
 }
 
+// --- A phrase, looked up by name --------------------------------------------
+// Idea #205. The sentence parser below hands back the phrases it could not
+// place, and until now the only thing to do with one was type the food in by
+// hand. This asks the same proxy the barcode path uses, by name instead of by
+// number, so "pizza Grandiosa" reaches the database that has one.
+//
+// The four answers are kept apart for the same reason as the barcode path:
+// "nothing matched" and "the database did not answer" mean opposite things to
+// the person holding the plate.
+async function lookUpFoodByName(query, fetchImpl) {
+  const trimmed = String(query == null ? '' : query).trim().replace(/\s+/g, ' ');
+  if (trimmed.length < 2 || trimmed.length > 60) return { ok: false, message: 'Type 2 to 60 characters to look up.' };
+  const get = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!get) return { ok: false, message: 'No connection \u2014 type the food in yourself below.' };
+  let res;
+  try {
+    res = await get(`/api/food/search?q=${encodeURIComponent(trimmed)}`);
+  } catch (err) {
+    return { ok: false, message: 'No connection \u2014 type the food in yourself below.' };
+  }
+  if (res.status === 404) return { ok: false, message: `Nothing matched \u201c${trimmed}\u201d \u2014 type it in yourself below.` };
+  if (!res.ok) return { ok: false, message: 'The food database did not answer \u2014 try again, or type it in yourself.' };
+  let body;
+  try {
+    body = await res.json();
+  } catch (err) {
+    return { ok: false, message: 'The food database did not answer \u2014 try again, or type it in yourself.' };
+  }
+  const foods = (body && Array.isArray(body.foods) ? body.foods : [])
+    // A row with no name or no calorie number is not a food however well the
+    // request went; pricing a meal off it writes a 0 kcal entry into the log.
+    .filter((f) => f && f.name && typeof f.kcal === 'number');
+  if (!foods.length) return { ok: false, message: `Nothing matched \u201c${trimmed}\u201d \u2014 type it in yourself below.` };
+  return { ok: true, foods, cached: Boolean(body.cached) };
+}
+
 // --- Reading a meal sentence ------------------------------------------------
 // "two eggs and a slice of wholemeal bread" is how a person describes dinner,
 // and the picker above makes them do it one food at a time. This turns the
@@ -1402,8 +1438,17 @@ function renderMealParse() {
         </div>
       </div>`;
   }).join('');
+  // Every phrase the table could not place gets its own button rather than one
+  // button for all of them: they are separate foods and the database has an
+  // answer for some and not others, so a single "look these up" would report
+  // one verdict for several questions.
   const missed = mealParse.unmatched.length
-    ? `<div class="list-item__meta">Not in the food table: ${esc(mealParse.unmatched.join(', '))}. Type those in yourself below.</div>`
+    ? `<div class="list-item__meta">Not in the food table \u2014 look one up, or type it in yourself below.</div>`
+      + mealParse.unmatched.map((phrase, i) => `
+      <div class="list-item">
+        <div>${esc(phrase)}</div>
+        <button class="btn btn--tonal" id="lookUpPhrase${i}" onclick="lookUpParsedPhrase(${i})"><span class="material-icons-round">search</span> Look it up</button>
+      </div>`).join('')
     : '';
   const ready = mealParse.items.filter((i) => i.amount != null).length;
   const button = mealParse.items.length
@@ -1424,6 +1469,37 @@ function setParsedAmount(index, value) {
   label.textContent = r && r.ok
     ? `${r.meal.calories} kcal \u00b7 P ${r.meal.protein} g \u00b7 C ${r.meal.carbs} g \u00b7 F ${r.meal.fat} g`
     : (r ? r.message : 'needs an amount');
+}
+
+// The looked-up food lands in the same picker a searched or scanned food lands
+// in -- amount, live macro preview, add to today -- rather than going straight
+// into the log: the database answers with a 100 g row and nobody ate 100 g of
+// anything by coincidence. The phrase leaves the unmatched list on success only,
+// so a lookup that found nothing leaves it there to try again or type in.
+async function lookUpParsedPhrase(index) {
+  if (!mealParse) return;
+  const phrase = mealParse.unmatched[index];
+  if (!phrase) return;
+  const button = document.getElementById('lookUpPhrase' + index);
+  // Disabled while it is in flight: the upstream call is the slow part and a
+  // second tap would queue a second request against someone else's API.
+  if (button) button.disabled = true;
+  const result = await lookUpFoodByName(phrase);
+  if (button) button.disabled = false;
+  if (!result.ok) { toast(result.message); return; }
+  foodPick = result.foods[0];
+  // The parse can be gone or re-ordered by the time the answer lands -- adding
+  // the ready rows clears it, and dropping one shifts every index after it --
+  // so the phrase is found again rather than spliced at the index it was at
+  // when the request went out. The food still goes in the picker either way:
+  // he waited for that answer and it is right whatever happened to the list.
+  const at = mealParse ? mealParse.unmatched.indexOf(phrase) : -1;
+  if (at !== -1) {
+    mealParse.unmatched.splice(at, 1);
+    if (!mealParse.items.length && !mealParse.unmatched.length) mealParse = null;
+  }
+  renderMealParse();
+  renderFoodPick();
 }
 
 function dropParsedItem(index) {
