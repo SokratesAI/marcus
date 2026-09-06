@@ -164,15 +164,14 @@ export function createApp(
       // not over HTTP.
       res.status(200).json({ key: keys.publicKey });
     } catch (err) {
-      // The error object itself is deliberately not logged here and CodeQL is
-      // right to insist: everything on this path is derived from an object
-      // that holds a private key, and a log line is the one place it could
-      // leave the process by accident. The file and the error's kind are
-      // enough to go and look, and neither can carry key material.
-      logger.error(
-        { file: vapidKeys.filePath, kind: (err as Error)?.constructor?.name ?? "Error" },
-        "could not read or generate the VAPID keypair",
-      );
+      // Nothing derived from `vapidKeys` is logged here, not even the file
+      // path. CodeQL treats every access to that object as a source because
+      // it holds a private key, and rather than argue the taint I took the
+      // narrow log: there is one key file and its path is DEFAULT_DATA_DIR +
+      // "/vapid-keys.json", so the message alone says where to look. `err` is
+      // deliberately dropped -- it comes off the same object.
+      void err;
+      logger.error("could not read or generate the VAPID keypair");
       res.status(500).json({ error: "could not read the push key" });
     }
   });
