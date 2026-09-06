@@ -2392,6 +2392,51 @@ function marcusReply(text) {
   return fallback[Math.floor(Math.random() * fallback.length)];
 }
 
+// The coach lives on the server (idea #206): POST /api/chat assembles the
+// prompt from this data and asks a real model through Agora. The rule-based
+// marcusReply above is the fallback and stays exactly as it was -- a deploy
+// with no coach configured, a phone offline at the gym, or Agora being busy
+// all land there rather than on an error bubble. So this can only make the
+// chat better, never worse.
+//
+// The pause is deliberate on the fallback path only: a rule-based answer that
+// arrives instantly reads as a canned answer, and it used to be the whole
+// behaviour. A real reply has already taken its own time to arrive.
+function marcusReplyAfterAPause(text) {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(marcusReply(text)), 650 + Math.random() * 500);
+  });
+}
+
+async function askMarcus(text) {
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        // Only what the coach is meant to reason about. Nothing else in the
+        // store is sent.
+        context: {
+          plan: store.get('plan'),
+          sessions: store.get('sessions', []),
+          weights: store.get('weights', []),
+          meals: store.get('meals', []),
+          goals: store.get('goals', []),
+        },
+        // The turn just typed is already in the store; it goes in as the
+        // message, not a second time as history.
+        history: store.get('chat', []).slice(0, -1).map(m => ({ role: m.role, text: m.text })),
+      }),
+    });
+    if (!res.ok) return marcusReplyAfterAPause(text);
+    const body = await res.json();
+    return typeof body.reply === 'string' && body.reply.trim() ? body.reply : marcusReplyAfterAPause(text);
+  } catch {
+    return marcusReplyAfterAPause(text);
+  }
+}
+
 document.getElementById('chatForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const input = document.getElementById('chatInput');
@@ -2411,16 +2456,15 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
   chatMessages.appendChild(typing);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
-  setTimeout(() => {
+  askMarcus(text).then((reply) => {
     typing.remove();
     chatStatus.textContent = 'online';
     chatStatus.classList.remove('is-typing');
-    const reply = marcusReply(text);
     const all = store.get('chat', []);
     all.push({ role: 'marcus', text: reply, ts: Date.now() });
     store.set('chat', all);
     renderChatMessages();
-  }, 650 + Math.random() * 500);
+  });
 });
 
 // ---------- updates ----------
