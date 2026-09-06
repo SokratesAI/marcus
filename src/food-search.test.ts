@@ -6,6 +6,7 @@ import request from "supertest";
 import { createApp } from "./index.js";
 import { StateStore } from "./state-store.js";
 import {
+  OFF_USER_AGENT,
   SEARCH_EMPTY_TTL_MS,
   SEARCH_HIT_TTL_MS,
   SEARCH_LIMIT,
@@ -41,8 +42,13 @@ const halfEntered = { code: "1111111111111", product_name: "Someone's pizza", nu
 
 function stubFetch(answer: { status?: number; body?: unknown; html?: boolean }) {
   const calls: string[] = [];
-  const fn = (async (url: string) => {
+  // The init is captured, not just the URL: an assertion that only reads the URL
+  // would pass with the identifying User-Agent deleted, which is the half of
+  // this their documentation actually asks for.
+  const inits: (RequestInit | undefined)[] = [];
+  const fn = (async (url: string, init?: RequestInit) => {
     calls.push(String(url));
+    inits.push(init);
     return {
       status: answer.status ?? 200,
       ok: (answer.status ?? 200) >= 200 && (answer.status ?? 200) < 300,
@@ -52,7 +58,7 @@ function stubFetch(answer: { status?: number; body?: unknown; html?: boolean }) 
       },
     };
   }) as unknown as typeof globalThis.fetch;
-  return { fn, calls };
+  return { fn, calls, inits };
 }
 
 describe("searchKey and isSearchQuery", () => {
@@ -89,11 +95,12 @@ describe("normalizeSearch", () => {
 
 describe("searchFoodsByName", () => {
   it("asks the cgi search endpoint with an identifying User-Agent", async () => {
-    const { fn, calls } = stubFetch({ body: { products: [grandiosa] } });
+    const { fn, calls, inits } = stubFetch({ body: { products: [grandiosa] } });
     const result = await searchFoodsByName("pizza grandiosa", { cache, fetch: fn });
     expect(result).toMatchObject({ status: "found", cached: false });
     expect(calls[0]).toContain("/cgi/search.pl?search_terms=pizza%20grandiosa");
     expect(calls[0]).toContain("json=1");
+    expect((inits[0]?.headers as Record<string, string>)["User-Agent"]).toBe(OFF_USER_AGENT);
   });
 
   it("never reaches the network for a query it refuses", async () => {
