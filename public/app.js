@@ -1488,8 +1488,16 @@ async function lookUpParsedPhrase(index) {
   if (button) button.disabled = false;
   if (!result.ok) { toast(result.message); return; }
   foodPick = result.foods[0];
-  mealParse.unmatched.splice(index, 1);
-  if (!mealParse.items.length && !mealParse.unmatched.length) mealParse = null;
+  // The parse can be gone or re-ordered by the time the answer lands -- adding
+  // the ready rows clears it, and dropping one shifts every index after it --
+  // so the phrase is found again rather than spliced at the index it was at
+  // when the request went out. The food still goes in the picker either way:
+  // he waited for that answer and it is right whatever happened to the list.
+  const at = mealParse ? mealParse.unmatched.indexOf(phrase) : -1;
+  if (at !== -1) {
+    mealParse.unmatched.splice(at, 1);
+    if (!mealParse.items.length && !mealParse.unmatched.length) mealParse = null;
+  }
   renderMealParse();
   renderFoodPick();
 }

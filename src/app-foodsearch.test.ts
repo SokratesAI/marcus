@@ -212,3 +212,31 @@ describe("lookUpParsedPhrase", () => {
     expect(ctx.mealParse).toBe(null);
   });
 });
+
+// The upstream call is seconds long and the parse box is live underneath it:
+// tapping Add clears the parse, and dropping a row shifts every index after it.
+// An index captured before the await is a stale one by the time it is used.
+describe("lookUpParsedPhrase while the parse box moves under it", () => {
+  const slowApp = () => {
+    const app = loadApp({ status: 200, body: { foods: [GRANDIOSA] } });
+    app.ctx.mealParse = { label: null, items: [], unmatched: ["kveldsmat", "pizza grandiosa"] };
+    return app;
+  };
+
+  it("still puts the food in the picker when the parse is cleared mid-flight", async () => {
+    const { ctx } = slowApp();
+    const inFlight = ctx.lookUpParsedPhrase(1);
+    ctx.mealParse = null;
+    await inFlight;
+    expect(ctx.foodPick.name).toBe("Grandiosa Original");
+    expect(ctx.mealParse).toBe(null);
+  });
+
+  it("drops the phrase it looked up, not whatever moved into that index", async () => {
+    const { ctx } = slowApp();
+    const inFlight = ctx.lookUpParsedPhrase(1);
+    ctx.mealParse.unmatched.splice(0, 1);
+    await inFlight;
+    expect(ctx.mealParse).toBe(null);
+  });
+});
