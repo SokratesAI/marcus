@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Express } from "express";
@@ -6,6 +7,7 @@ import { StateStore } from "./state-store.js";
 import { FoodCache, SearchCache, lookupBarcode, searchFoodsByName } from "./food-lookup.js";
 import { askCoach, coachConfig, type CoachConfig } from "./coach.js";
 import { SubscriptionStore, VapidKeyStore, validateSubscription } from "./push.js";
+import { declarativePayload, sendToAll } from "./push-send.js";
 import {
   initTracing,
   parentContext,
@@ -212,6 +214,73 @@ export function createApp(
     } catch (err) {
       logger.error({ err }, "could not remove the push subscription");
       res.status(500).json({ error: "could not remove the subscription" });
+    }
+  });
+
+  // Idea #217, second slice: the send itself. This is the route the 20:00
+  // CronJob calls; it is not a route a phone calls, which is why it is the one
+  // route here that needs a credential.
+  //
+  // Closed rather than open when `MARCUS_PUSH_TOKEN` is unset. Every other
+  // route on this server takes an unauthenticated body from whoever can reach
+  // it, and that is a decision about a training log on a private network. This
+  // one reaches Edvard's lock screen, so an unconfigured deployment must not be
+  // one that anybody who can reach the pod may buzz his phone through.
+  app.post("/api/push/send", express.json({ limit: "16kb" }), async (req, res) => {
+    const token = process.env.MARCUS_PUSH_TOKEN;
+    if (!token) {
+      res.status(503).json({ error: "sending is not configured here" });
+      return;
+    }
+    const offered = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+    // Constant time, and length-checked first because timingSafeEqual throws
+    // on a length mismatch rather than returning false.
+    const ok =
+      offered.length === token.length &&
+      crypto.timingSafeEqual(Buffer.from(offered, "utf8"), Buffer.from(token, "utf8"));
+    if (!ok) {
+      res.status(401).json({ error: "not authorised to send" });
+      return;
+    }
+    const { title, body, navigate, tag } = req.body as Record<string, unknown>;
+    if (typeof title !== "string" || title.trim().length === 0) {
+      res.status(400).json({ error: "title is required" });
+      return;
+    }
+    if (typeof body !== "string" || body.trim().length === 0) {
+      res.status(400).json({ error: "body is required" });
+      return;
+    }
+    try {
+      const payload = declarativePayload({
+        title: title.trim(),
+        body: body.trim(),
+        // A tap has to land somewhere and the declarative format requires it,
+        // so a caller that names nothing gets the app's own root rather than a
+        // notification the browser refuses to render.
+        navigate: typeof navigate === "string" && navigate.length > 0 ? navigate : "/",
+        tag: typeof tag === "string" && tag.length > 0 ? tag : undefined,
+      });
+      const keys = await vapidKeys.ensure();
+      const result = await sendToAll(
+        subscriptions,
+        payload,
+        keys,
+        // RFC 8292 wants a way for the push service operator to reach the
+        // sender if it misbehaves. A role address and not Edvard's own: this
+        // repo is public, and the default in a public file is the one that
+        // gets read by everybody. `MARCUS_PUSH_SUBJECT` overrides it.
+        process.env.MARCUS_PUSH_SUBJECT ?? "mailto:nova@sokrates.ai",
+        Date.now(),
+        fetchImpl,
+      );
+      // 200 even when every device failed: the request was well formed and the
+      // counts are the answer. A caller that wants "did it land" reads `sent`.
+      res.status(200).json({ sent: result.sent, failed: result.failed, pruned: result.pruned });
+    } catch (err) {
+      void err;
+      logger.error("could not send the push notification");
+      res.status(500).json({ error: "could not send the notification" });
     }
   });
 
