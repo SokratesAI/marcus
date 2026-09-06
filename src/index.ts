@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import express, { type Express } from "express";
 import pino from "pino";
 import { StateStore } from "./state-store.js";
-import { FoodCache, lookupBarcode } from "./food-lookup.js";
+import { FoodCache, SearchCache, lookupBarcode, searchFoodsByName } from "./food-lookup.js";
 import { askCoach, coachConfig, type CoachConfig } from "./coach.js";
 import {
   initTracing,
@@ -30,6 +30,7 @@ export interface AppOptions {
   /** Both injected only so a test never reaches Open Food Facts and never
    * writes a cache file next to a real state file. Production passes neither. */
   foodCache?: FoodCache;
+  searchCache?: SearchCache;
   fetchImpl?: typeof globalThis.fetch;
   /** Null means the coach route answers 503 and the app keeps its built-in
    * replies. Production resolves it from the environment. */
@@ -50,6 +51,7 @@ export function createApp(
 ): Express {
   const app = express();
   const foodCache = options.foodCache ?? new FoodCache(path.dirname(store.filePath));
+  const searchCache = options.searchCache ?? new SearchCache(path.dirname(store.filePath));
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const coach = options.coach !== undefined ? options.coach : coachConfig(process.env);
 
@@ -113,6 +115,33 @@ export function createApp(
       return;
     }
     res.status(200).json({ food: result.row, cached: result.cached });
+  });
+
+  // Idea #205's remaining half. The barcode route above answers "what is in
+  // this packet"; this answers "what is a Grandiosa", which is the question the
+  // meal-sentence parser is left holding when a phrase matches nothing in the
+  // 31-food table. Same proxy, same reasons, same row shape out -- the browser
+  // learns no second format and Open Food Facts sees one identified caller.
+  app.get("/api/food/search", async (req, res) => {
+    const query = String(req.query.q ?? "");
+    const result = await searchFoodsByName(query, { cache: searchCache, fetch: fetchImpl });
+    if (result.status === "invalid") {
+      res.status(400).json({ error: "a search needs 2 to 60 characters" });
+      return;
+    }
+    if (result.status === "upstream") {
+      // 502 rather than 500, and the same call the barcode route makes: nothing
+      // here is broken, and the client should offer the hand-typed path instead
+      // of retrying against someone else's API.
+      logger.warn({ query }, "open food facts search did not answer");
+      res.status(502).json({ error: "the food database did not answer" });
+      return;
+    }
+    if (result.status === "missing") {
+      res.status(404).json({ error: "nothing matched that", cached: result.cached });
+      return;
+    }
+    res.status(200).json({ foods: result.rows, cached: result.cached });
   });
 
 
