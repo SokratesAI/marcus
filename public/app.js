@@ -764,7 +764,7 @@ function renderPlan() {
   const plan = store.get('plan');
   const todayName = planDayName();
   const goals = goalsSorted();
-  const review = planReview(plan, store.get('sessions', []), todayStr());
+  const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, goals[0]);
   view.innerHTML = `
     <div class="section-title">Goals</div>
     ${goals.length ? goals.map(g => `
@@ -798,7 +798,7 @@ function renderPlan() {
     <div class="section-title">This week</div>
     <div class="card">
       <h2>${plan.blockName}</h2>
-      <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Prepared by Marcus</div>
+      <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Sized for the ${esc(plan.phase || PLAN_DEFAULT_PHASE)} phase &middot; ${planTotalSets(plan)} sets across ${planTrainingDays(plan).length} training day(s)</div>
     </div>
     ${plan.days.map(d => `
       <div class="card plan-day ${d.day===todayName?'is-today':''}" style="display:block">
@@ -823,7 +823,7 @@ function renderPlan() {
 
 function acceptProposal(id) {
   const plan = store.get('plan');
-  const review = planReview(plan, store.get('sessions', []), todayStr());
+  const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, goalsSorted()[0]);
   const proposal = review.proposals.find(p => p.id === id);
   if (!proposal) { toast('That suggestion is no longer current'); return; }
   if (!store.set('plan', applyProposal(plan, proposal))) return;
@@ -1623,26 +1623,93 @@ function adherenceByWeekday(plan, sessions, todayISO, windowDays) {
 
 // The chip has to read on its own -- a one-word kind like 'rest' tells a
 // reader nothing unless they already know the four kinds.
-const PROPOSAL_CHIPS = { deload: 'ease off', build: 'add volume', move: 'move a day', rest: 'drop a day' };
+const PROPOSAL_CHIPS = { deload: 'ease off', build: 'add volume', move: 'move a day', rest: 'drop a day', phase: 'match the phase' };
 function proposalChip(kind) { return PROPOSAL_CHIPS[kind] || kind; }
 
 function totalSets(day) {
   return (day.exercises || []).reduce((sum, e) => sum + (e.sets || 0), 0);
 }
 
+// The written week is supposed to serve the goal, and until now it did not: the
+// seed plan was the same four days whether the target was eight weeks out or two
+// years, and it stayed the same the day the goal crossed from Base into Taper.
+// This is the step that connects them, and it is arithmetic rather than coaching.
+//
+// A plan carries the phase it was last sized for. PHASE_VOLUME already says what
+// each phase does to a week's volume -- Base 1.10, Build 1.00, Peak 0.90, Taper
+// 0.60 -- so moving from one to another is a ratio, and that ratio times the
+// week's total sets is a whole number of sets to add or take away. A plan with no
+// phase recorded is read as Build: the seed block is a straight hypertrophy week
+// at 1.00, so that is a description of what is there rather than a default picked
+// for convenience.
+//
+// It proposes nothing when the arithmetic rounds to zero sets, which is the
+// common case for one step along the phase list. A proposal that changes nothing
+// is worse than silence -- the user accepts it, sees no difference, and stops
+// reading the next one.
+const PLAN_DEFAULT_PHASE = 'Build';
+
+function planTotalSets(plan) {
+  return planTrainingDays(plan).reduce((sum, d) => sum + totalSets(d), 0);
+}
+
+function phaseProposal(plan, goal, todayISO) {
+  const phase = currentPhase(goal, todayISO);
+  if (!phase) return null;
+  const was = (plan && plan.phase) || PLAN_DEFAULT_PHASE;
+  if (phase.label === was) return null;
+  const to = PHASE_VOLUME[phase.label];
+  const from = PHASE_VOLUME[was];
+  if (to == null || from == null) return null;
+  const sets = planTotalSets(plan);
+  if (!sets) return null;
+  const wanted = Math.round(sets * (to / from)) - sets;
+  // Clamped to what the deload floor actually allows, so the headline is the
+  // number of sets that will move rather than the number the ratio asked for.
+  // The seed week has exactly enough room for its own Build-to-Taper cut (58
+  // sets over 18 exercises: 23 wanted, 23 spare), so the clamp is invisible
+  // there and bites on a week the user has already trimmed.
+  const room = planTrainingDays(plan).reduce((sum, d) =>
+    sum + (d.exercises || []).reduce((n, e) => n + Math.max(0, (e.sets || 0) - DELOAD_SET_FLOOR), 0), 0);
+  const delta = wanted < 0 ? -Math.min(-wanted, room) : wanted;
+  if (!delta) return null;
+  const pct = Math.round(Math.abs(to / from - 1) * 100);
+  const word = delta < 0 ? 'takes' : 'adds';
+  return {
+    id: 'phase-' + phase.label,
+    kind: 'phase',
+    phase: phase.label,
+    setDelta: delta,
+    title: (delta < 0 ? 'Take ' + (-delta) + ' set' + (delta === -1 ? '' : 's') + ' off the week'
+                     : 'Add ' + delta + ' set' + (delta === 1 ? '' : 's') + ' to the week')
+         + ' for the ' + phase.label + ' phase',
+    reason: 'Your goal is in its ' + phase.label + ' phase through ' + niceDate(phase.date)
+          + ', and the written week was last sized for ' + was + '. ' + phase.label + ' runs at '
+          + Math.round(to * 100) + '% of a ' + was + ' week, which is ' + pct + '% ' + (delta < 0 ? 'less' : 'more')
+          + ' \u2014 on ' + sets + ' sets that ' + word + ' ' + Math.abs(delta) + '.',
+  };
+}
+
 // Proposals, most urgent first. Each one carries the number that produced it,
 // because a change with no measurement behind it is just an opinion.
-function planReview(plan, sessions, todayISO, windowDays) {
+//
+// The phase proposal is the one that does not wait for REVIEW_MIN_WEEKS: it is
+// arithmetic on the goal's dates and the plan's own sets, so it is exactly as
+// true on the first day as on the fiftieth, and holding it back would leave a
+// brand-new goal staring at a week written for a phase it is not in.
+function planReview(plan, sessions, todayISO, windowDays, goal) {
   const windowSize = windowDays || REVIEW_WINDOW_DAYS;
   const weeks = reviewWeeks(sessions, todayISO, windowSize);
+  const phaseFirst = phaseProposal(plan, goal, todayISO);
   if (weeks < REVIEW_MIN_WEEKS) {
-    return { weeks, proposals: [], note: 'Marcus reviews the plan once you have ' + REVIEW_MIN_WEEKS + ' weeks of sessions logged. ' + weeks + ' so far.' };
+    return { weeks, proposals: phaseFirst ? [phaseFirst] : [],
+      note: 'Marcus reviews the rest of the plan once you have ' + REVIEW_MIN_WEEKS + ' weeks of sessions logged. ' + weeks + ' so far.' };
   }
 
   const load = trainingLoad(sessions || [], todayISO);
   const rows = adherenceByWeekday(plan, sessions, todayISO, windowSize);
   const training = planTrainingDays(plan);
-  const proposals = [];
+  const proposals = phaseFirst ? [phaseFirst] : [];
 
   if (load.verdict === 'load spike' || load.verdict === 'overreaching') {
     const cuttable = training.filter(d => (d.exercises || []).some(e => (e.sets || 0) > DELOAD_SET_FLOOR));
@@ -1680,7 +1747,10 @@ function planReview(plan, sessions, todayISO, windowDays) {
     }
   });
 
-  if (!proposals.length && load.verdict === 'backing off') {
+  // 'add volume' is the fallback when nothing else needed saying. A phase
+  // resize already changed the week's volume this render, so it does not count
+  // as nothing -- stacking both would move the same number twice.
+  if (!proposals.some(p => p.kind !== 'phase') && !phaseFirst && load.verdict === 'backing off') {
     const lightest = training.slice().sort((a, b) => totalSets(a) - totalSets(b))[0];
     if (lightest) {
       proposals.push({
@@ -1720,6 +1790,25 @@ function applyProposal(plan, proposal) {
   } else if (proposal.kind === 'rest') {
     const day = next.days.find(d => d.day === proposal.day);
     if (day) { day.focus = 'Rest'; day.exercises = []; }
+  } else if (proposal.kind === 'phase') {
+    // Sets come off the exercise carrying the most and go onto the one carrying
+    // the least, one at a time, so a week loses breadth last: cutting six sets
+    // from one exercise would delete a movement, and this is a volume change,
+    // not a decision about which lift matters.
+    const exercises = planTrainingDays(next).reduce((all, d) => all.concat(d.exercises || []), []);
+    let left = Math.abs(proposal.setDelta || 0);
+    const down = (proposal.setDelta || 0) < 0;
+    while (left > 0 && exercises.length) {
+      const pool = down ? exercises.filter(e => (e.sets || 0) > DELOAD_SET_FLOOR) : exercises;
+      if (!pool.length) break;
+      const pick = pool.reduce((best, e) => (down ? (e.sets || 0) > (best.sets || 0) : (e.sets || 0) < (best.sets || 0)) ? e : best, pool[0]);
+      pick.sets = (pick.sets || 0) + (down ? -1 : 1);
+      left -= 1;
+    }
+    // Recorded whether or not every set landed. The plan really has been sized
+    // for this phase now -- if the floor stopped it short, re-proposing the same
+    // change every render would be a button that never finishes.
+    next.phase = proposal.phase;
   }
   return next;
 }
