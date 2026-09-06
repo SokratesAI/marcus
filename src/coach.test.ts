@@ -19,7 +19,17 @@ function fakeAgora(model: unknown, reply: unknown = "Nice work on the deadlift."
     if (u.endsWith("/ask")) {
       return new Response(JSON.stringify({ reply }), { status: 200 });
     }
-    return new Response(JSON.stringify({ conversation: { model } }), { status: 200 });
+    // The shape Agora's listing actually returns, which is where the model has
+    // to be read from: there is no GET /conversations/<id>.
+    return new Response(
+      JSON.stringify({
+        conversations: [
+          { id: "someone-else", model: "anthropic:claude-opus-5" },
+          ...(model === "absent" ? [] : [{ id: "conv-1", model }]),
+        ],
+      }),
+      { status: 200 },
+    );
   }) as unknown as typeof globalThis.fetch;
   return { calls, fetchImpl };
 }
@@ -68,7 +78,7 @@ describe("askCoach", () => {
     const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl });
     expect(result).toEqual({ status: "ok", reply: "Nice work on the deadlift." });
     expect(calls.map((c) => c.url)).toEqual([
-      "http://agora.test:8080/conversations/conv-1",
+      "http://agora.test:8080/conversations?active=true",
       "http://agora.test:8080/conversations/conv-1/ask",
     ]);
   });
@@ -105,11 +115,28 @@ describe("askCoach", () => {
     expect(result.status).toBe("upstream");
   });
 
-  it("reports upstream when the conversation cannot be read", async () => {
+  it("reports upstream when the listing cannot be read", async () => {
     const fetchImpl = (async () =>
       new Response("nope", { status: 404 })) as unknown as typeof globalThis.fetch;
     const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl });
     expect(result).toEqual({ status: "upstream", detail: "conversation read returned 404" });
+  });
+
+  it("refuses, rather than asking, when the coach is not in the active listing", async () => {
+    // An archived conversation is absent from ?active=true. Asking it anyway
+    // would be asking a conversation somebody deliberately shut.
+    const { calls, fetchImpl } = fakeAgora("absent");
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl });
+    expect(result).toEqual({ status: "upstream", detail: "conversation not in the active listing" });
+    expect(calls.some((c) => c.url.endsWith("/ask"))).toBe(false);
+  });
+
+  it("reads the model off its own row and not off some other conversation's", async () => {
+    // The first row in the listing is metered. A reader that took the first row
+    // it saw would refuse a coach that is perfectly fine.
+    const { fetchImpl } = fakeAgora("claude-cli:claude-haiku-4-5-20251001");
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl });
+    expect(result.status).toBe("ok");
   });
 });
 
