@@ -167,6 +167,7 @@ body{
 .exercise-row{margin-bottom:8px;}
 .ex-fields{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr auto;gap:6px;align-items:center;}
 .ex-warmup{font-size:12px;color:var(--md-on-surface-variant);padding:4px 2px 0;}
+.ex-last{font-size:12px;color:var(--md-on-surface-variant);padding:2px 2px 0;}
 .exercise-row input{padding:10px 8px;border-radius:8px;border:1px solid var(--md-outline);background:var(--md-surface-container);color:var(--md-on-surface);font-family:inherit;font-size:13px;width:100%;}
 
 .icon-btn{

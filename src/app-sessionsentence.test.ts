@@ -526,6 +526,10 @@ describe("the kilos reach the form, not just the summary", () => {
   it("puts a weight read out of the sentence into the row's kg input", () => {
     const { ctx, byId } = loadApp();
     ctx.store.set("plan", PLAN);
+    // No history, so the only thing that can put a number in a kg box here is
+    // the sentence. The Log tab also prefills an empty box from the last time
+    // you did the lift, which is a different question and is tested below.
+    ctx.store.set("sessions", []);
     const rows = recordingTemplate(byId);
     const heard = ctx.parseSessionSentence("3x10 squats at 80kg and 3x12 lunges", PLAN, TUE);
     ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
@@ -544,6 +548,7 @@ describe("the kilos reach the form, not just the summary", () => {
   it("leaves every weight blank when the sentence carried none", () => {
     const { ctx, byId } = loadApp();
     ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", []);
     const rows = recordingTemplate(byId);
     const heard = ctx.parseSessionSentence("followed the plan today", PLAN, TUE);
     ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
@@ -551,5 +556,40 @@ describe("the kilos reach the form, not just the summary", () => {
     ctx.renderLog();
     expect(rows.length).toBe(1);
     expect(rows[0][".ex-weight"].value).toBe("");
+  });
+
+  it("fills an empty kg box with what you lifted last time", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", [
+      { id: "s1", date: "2026-01-05", kind: "strength", day: "Tuesday",
+        exercises: [{ name: "Deadlift", sets: [{ reps: 5, weight: 82.5 }] }] },
+    ]);
+    const rows = recordingTemplate(byId);
+    const heard = ctx.parseSessionSentence("followed the plan today", PLAN, TUE);
+    ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    expect(rows.length).toBe(1);
+    // The precondition: the sentence carried no weight, so 82.5 can only have
+    // come out of the session above -- the test right before this one is the
+    // control, same sentence and an empty history, and it reads "".
+    expect(rows[0][".ex-name"].value).toBe("Deadlift");
+    expect(rows[0][".ex-weight"].value).toBe("82.5");
+  });
+
+  it("does not let history overwrite a weight the sentence gave", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", [
+      { id: "s1", date: "2026-01-05", kind: "strength", day: "Tuesday",
+        exercises: [{ name: "Squats", sets: [{ reps: 10, weight: 82.5 }] }] },
+    ]);
+    const rows = recordingTemplate(byId);
+    const heard = ctx.parseSessionSentence("3x10 squats at 80kg", PLAN, TUE);
+    ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    expect(rows[0][".ex-weight"].value).toBe(80);
   });
 });
