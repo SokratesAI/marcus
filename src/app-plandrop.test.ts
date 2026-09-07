@@ -131,6 +131,18 @@ describe("dropping a lift the plan names and you never do", () => {
     expect(all.some((x: any) => x.day === "Friday" && (x.kind === "rest" || x.kind === "move"))).toBe(true);
   });
 
+  it("stays silent on a day he never trains even when only some of its lifts are unlogged", () => {
+    const app = loadApp();
+    // Squat is logged every Thursday, so Friday is not all-unlogged and the
+    // empty-day guard does not cover this. Only the kept-day guard does.
+    const p = plan([{ day: "Friday", focus: "Legs", exercises: [
+      { name: "Squat", sets: 4, reps: 6 }, { name: "Curl", sets: 3, reps: 12 },
+    ] }]);
+    const all = app.planReview(p, kept(), TODAY, 28, null).proposals;
+    expect(all.filter((x: any) => x.kind === "drop" && x.day === "Friday").length).toBe(0);
+    expect(all.some((x: any) => x.day === "Friday" && (x.kind === "rest" || x.kind === "move"))).toBe(true);
+  });
+
   it("keeps a lift he does on another weekday -- that is the day being wrong, not the lift", () => {
     const app = loadApp();
     const sessions = kept().concat([sess("2026-08-26", ["Dip"])]); // a Wednesday
