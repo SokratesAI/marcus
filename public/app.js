@@ -40,6 +40,7 @@ function renderHome() {
   const lastWeight = weights[weights.length - 1];
   const firstWeight = weights[0];
   const delta = lastWeight && firstWeight ? (lastWeight.kg - firstWeight.kg).toFixed(1) : '—';
+  const doneToday = todayLogged(store.get('sessions', []), todayStr());
   const meals = store.get('meals', []).filter(m => m.date === todayStr());
   const kcal = meals.reduce((s, m) => s + m.calories, 0);
   // The nearest goal, and the first phase of it still outstanding -- that pair is
@@ -54,7 +55,8 @@ function renderHome() {
       ${todayPlan.exercises.length ? todayPlan.exercises.map(e => `<div class="exercise-line"><span>${e.name}</span><span>${e.sets}×${e.reps}</span></div>`).join('') : ``}
       ${todayPlan.cardio ? `<div class="exercise-line"><span>${esc(todayPlan.cardio.activity)}</span><span>${todayPlan.cardio.minutes} min</span></div>` : ``}
       ${!todayPlan.exercises.length && !todayPlan.cardio ? `<div class="empty">Rest day — recovery is training too.</div>` : ``}
-      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="switchTab('log')"><span class="material-icons-round">add</span> Log this session</button>
+      ${doneToday ? `<div class="exercise-line exercise-line--done"><span><span class="material-icons-round">check_circle</span> Logged today</span><span>${esc(doneToday.label)}</span></div>` : ``}
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="switchTab('log')"><span class="material-icons-round">add</span> ${doneToday ? 'Log another session' : 'Log this session'}</button>
     </div>
 
     <div class="stat-grid">
