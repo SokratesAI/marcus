@@ -1190,10 +1190,11 @@ const PROPOSAL_REFERENCES = {
   }],
 };
 
-// Proposals with no honest reference: `deload`, `move` and `rest`. The 1.5
+// Proposals with no honest reference: `deload`, `move`, `rest` and `drop`. The 1.5
 // acute-to-chronic line the deload fires on comes from injury-risk workload
 // research, not from any of the endurance papers above, and `move`/`rest` are
-// about whether you keep the week you wrote -- adherence, not physiology.
+// about whether you keep the week you wrote -- adherence, not physiology, and
+// `drop` is the same question asked about one lift on a day you do keep.
 // Attaching a Norwegian endurance paper to any of the three would be the exact
 // invented citation this table exists to avoid.
 function referenceById(id) {
