@@ -621,6 +621,131 @@ function measurementTrend(records, siteKey) {
   };
 }
 
+// ---------- progress photos ----------
+// Idea #202. A scale and a tape both compress a body into one number, and the
+// change a photo shows is the one neither of them can: the same pose, the same
+// light, eight weeks apart.
+//
+// The photos live in the same state document as everything else, on purpose.
+// Marcus syncs by PUTting that whole document, so a photo kept anywhere else
+// would need its own sync, its own conflict rule and its own place in the
+// backup, none of which exist. The cost of that choice is a ceiling I can point
+// at rather than a preference: the server refuses a body over 4MB (`MAX_BODY`
+// in src/index.ts), and an unbounded photo list does not degrade gracefully
+// against that -- it makes *every* save fail, and the save that fails is the one
+// carrying the session just logged. So the budget below is what keeps the
+// training log writable, and it sits well under the server's limit because the
+// photos share the document with everything else in it.
+const PHOTO_BUDGET_BYTES = 2 * 1024 * 1024;
+const PHOTO_MAX_BYTES = 320 * 1024;
+// The strip shows these a few centimetres wide on a phone. 720px on the long
+// edge is what the browser downscales to before storing, so the bytes above are
+// a budget the app can actually keep rather than one a modern camera blows
+// through on the first photo.
+const PHOTO_MAX_EDGE = 720;
+
+const PHOTO_POSES = [
+  { key: 'front', label: 'Front' },
+  { key: 'side', label: 'Side' },
+  { key: 'back', label: 'Back' }
+];
+
+function photoPose(key) {
+  return PHOTO_POSES.find(p => p.key === key) || null;
+}
+
+// The cost of a photo is the decoded image, not the data URL string: base64 is
+// four characters per three bytes, so measuring the string overstates every
+// photo by a third and the budget would refuse a set that fits.
+function photoBytes(dataUrl) {
+  const s = typeof dataUrl === 'string' ? dataUrl : '';
+  const comma = s.indexOf(',');
+  if (comma === -1) return 0;
+  const b64 = s.slice(comma + 1);
+  const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((b64.length * 3) / 4) - pad);
+}
+
+function photoTotalBytes(records) {
+  return (Array.isArray(records) ? records : []).reduce(
+    (n, r) => n + (r && typeof r.bytes === 'number' ? r.bytes : photoBytes(r && r.dataUrl)),
+    0
+  );
+}
+
+function photoSizeLabel(bytes) {
+  const n = typeof bytes === 'number' && isFinite(bytes) && bytes > 0 ? bytes : 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${Math.round((n / (1024 * 1024)) * 10) / 10} MB`;
+}
+
+// A photo replaces the one already taken for the same pose on the same day, so
+// the record it is about to overwrite must not count against the budget --
+// otherwise a retake near the ceiling is refused while the room it needs is
+// sitting in the record being replaced.
+function validatePhoto(rawPose, dataUrl, records, dateISO) {
+  const pose = photoPose(String(rawPose == null ? '' : rawPose).trim());
+  if (!pose) return { ok: false, message: 'Pick which pose this is.' };
+  const s = typeof dataUrl === 'string' ? dataUrl : '';
+  if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(s)) {
+    return { ok: false, message: 'That file is not an image Marcus can store.' };
+  }
+  const bytes = photoBytes(s);
+  if (bytes <= 0) return { ok: false, message: 'That file is not an image Marcus can store.' };
+  if (bytes > PHOTO_MAX_BYTES) {
+    return {
+      ok: false,
+      message: `That photo is ${photoSizeLabel(bytes)}, over the ${photoSizeLabel(PHOTO_MAX_BYTES)} limit for one photo.`
+    };
+  }
+  const date = dateISO || todayStr();
+  const rows = Array.isArray(records) ? records : [];
+  const replaced = rows.filter(r => r && r.date === date && r.pose === pose.key);
+  const used = photoTotalBytes(rows) - photoTotalBytes(replaced);
+  if (used + bytes > PHOTO_BUDGET_BYTES) {
+    return {
+      ok: false,
+      message: `No room: that would take photos to ${photoSizeLabel(used + bytes)} of ${photoSizeLabel(PHOTO_BUDGET_BYTES)}. Delete an older one first.`
+    };
+  }
+  return { ok: true, pose: pose.key, dataUrl: s, bytes, date };
+}
+
+// One record per pose per day, second photo of the day replaces the first --
+// the same rule as a measurement, and for the same reason: `MERGE_KEYS`
+// identifies a photo by (date, pose), so two records sharing both would collide
+// in a two-phone merge and one would vanish with nothing saying so.
+function upsertPhoto(records, entry) {
+  const out = (Array.isArray(records) ? records : []).filter(
+    r => !(r && r.date === entry.date && r.pose === entry.pose)
+  );
+  out.push(entry);
+  return out;
+}
+
+// Oldest first, so the strip reads left to right like the charts above it.
+function photoSeries(records, poseKey) {
+  return (Array.isArray(records) ? records : [])
+    .filter(r => r && r.pose === poseKey && typeof r.dataUrl === 'string' && r.dataUrl && r.date)
+    .slice()
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+// What the first and last photo of a pose are separated by, because the gap is
+// the whole point of keeping them. One photo is a starting point rather than a
+// comparison and reports a null span, never 0 days -- a zero would read as "no
+// time has passed", which is a different claim.
+function photoSpan(records, poseKey) {
+  const series = photoSeries(records, poseKey);
+  if (!series.length) return null;
+  const first = series[0];
+  const last = series[series.length - 1];
+  if (series.length === 1) return { count: 1, days: null, first: first.date, last: first.date };
+  const ms = new Date(last.date + 'T00:00').getTime() - new Date(first.date + 'T00:00').getTime();
+  return { count: series.length, days: Math.round(ms / 86400000), first: first.date, last: last.date };
+}
+
 // ---------- goals ----------
 // A goal is Edvard's own sentence plus a date. Marcus does not interpret the
 // sentence yet -- turning "Olympic triathlon next summer" into actual sessions
