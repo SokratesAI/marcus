@@ -181,6 +181,8 @@ function renderPlan() {
         ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min <button class="icon-btn" onclick="clearPlanCardio('${esc(d.day)}')"><span class="material-icons-round">close</span></button></span></div>` : ``}
       </div>
     `).join('')}
+
+    ${exerciseLibraryCard(formGuideLibrary())}
   `;
 
   document.getElementById('addGoal').addEventListener('click', () => {
@@ -1906,6 +1908,24 @@ function trainingLoadCard(load) {
 // is loaded async and a stalled CDN must not take the number with it. Its width
 // is the count against MUSCLE_SETS_MAX, capped, so a group at 30 sets fills the
 // bar rather than overflowing the card.
+// Idea #193, the browse half. Every button carries `data-form`, which the one
+// delegated `[data-form]` listener at the bottom of this file already turns into
+// the same sheet the Log row opens -- so there is no second opener and no second
+// sheet to keep in step with this one.
+function exerciseLibraryCard(library) {
+  if (!library.length) return '';
+  return `
+    <div class="section-title">How to do the lifts</div>
+    <div class="card">
+      ${library.map(g => `
+      <div class="lib-group">
+        <div class="lib-group__name">${esc(g.group)}</div>
+        ${g.lifts.map(l => `<button class="btn btn--tonal btn--block lib-lift" data-form="${esc(l.name)}"><span class="material-icons-round">fitness_center</span> ${esc(l.name)}</button>`).join('')}
+      </div>`).join('')}
+      <p class="card__note">Set-up, execution and the mistakes that actually happen, for every lift Marcus has cues for. The same sheet opens from the dumbbell handle on a Log row once the name in the box matches one of these.</p>
+    </div>`;
+}
+
 function muscleBalanceCard(balance) {
   const rows = balance.groups;
   // An unplaceable lift is still a set that was logged, so it keeps the card
