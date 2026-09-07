@@ -1261,6 +1261,127 @@ const GLOSSARY = [
   }
 ];
 
+// ---------- how to do the lift (idea #193) ----------
+// The glossary above answers "what does this word mean". This answers the other
+// question you have standing at the rack: "am I doing this right". It is the
+// "how" half of idea #193; the video/GIF half is not here, because a
+// demonstration is somebody else's footage and its licence is a decision Edvard
+// makes, not one a cycle makes for him.
+//
+// Two boundaries, and the second is the one that decides whether this ever
+// shows up. The entries cover the eighteen lifts the seeded plan actually names
+// -- not a general exercise encyclopedia, because a library nobody's plan
+// reaches is a library nobody opens. And matching is `exerciseKey`, the same
+// case- and space-insensitive exact match the last-weight prefill uses, with
+// explicit `aka` spellings rather than a fuzzy matcher: showing bench-press
+// cues on a row that says something else is worse than showing nothing.
+const FORM_GUIDE = [
+  { name: 'Barbell Bench Press', aka: ['Bench Press', 'Flat Bench Press'],
+    setup: 'Eyes under the bar, shoulder blades pulled back and down into the bench, feet flat and driving into the floor. Grip a little wider than shoulders.',
+    execution: 'Unrack, bring the bar down under control to the lower chest, touch, then press back up and slightly towards your face. Wrists stacked over elbows the whole way.',
+    mistakes: ['Flaring the elbows straight out to the sides — keep them at roughly 45 degrees to the ribs.', 'Bouncing the bar off the chest instead of touching it.', 'Losing the arch and letting the shoulders roll forward at the bottom.'] },
+  { name: 'Incline Bench Press',
+    setup: 'Bench at 30 degrees, not 45 — the steeper it gets the more it becomes an overhead press. Same shoulder blades, same foot drive.',
+    execution: 'Lower to just below the collarbone, touch, press back over the upper chest.',
+    mistakes: ['Setting the bench too steep and turning it into a shoulder day.', 'Letting the bar drift down to the sternum as if it were a flat bench.'] },
+  { name: 'Incline Dumbbell Press',
+    setup: 'Bench at 30 degrees. Kick the dumbbells up into position with your knees rather than curling them into place.',
+    execution: 'Lower until the dumbbells are level with the chest, elbows under the wrists, then press up and slightly together without clanging them at the top.',
+    mistakes: ['Going so deep the shoulder takes over from the chest.', 'Pressing in an arc so far in that the dumbbells collide and the last inch does nothing.'] },
+  { name: 'Overhead Press', aka: ['Shoulder Press', 'Military Press'],
+    setup: 'Bar on the front of the shoulders, grip just outside the shoulders, ribs down and glutes tight so the press does not become a standing back bend.',
+    execution: 'Press straight up, moving your head back out of the way and then forward under the bar as it passes. Finish with the bar over the middle of your feet.',
+    mistakes: ['Leaning back to clear the chin instead of moving the head.', 'Stopping short of a locked-out overhead position.'] },
+  { name: 'Deadlift', aka: ['Conventional Deadlift'],
+    setup: 'Bar over the middle of the foot, shins close, hips higher than the knees, chest up, lats pulling the bar into the legs.',
+    execution: 'Push the floor away and let the bar drag up the legs. Hips and shoulders rise together; lock out by standing tall, not by leaning back.',
+    mistakes: ['Letting the hips shoot up first so it becomes a stiff-legged pull.', 'Rounding the lower back — stop the set when position goes, not when the reps run out.', 'Jerking the bar off the floor instead of taking the slack out first.'] },
+  { name: 'Romanian Deadlift', aka: ['RDL'],
+    setup: 'Start standing with the bar already in your hands, knees softly bent and then kept at that angle throughout.',
+    execution: 'Push the hips back and let the bar slide down the thighs until you feel a strong stretch in the hamstrings — usually somewhere around the knee — then drive the hips forward.',
+    mistakes: ['Turning it into a squat by bending the knees more as you descend.', 'Chasing depth past where the hamstrings stop and the lower back starts.'] },
+  { name: 'Back Squat', aka: ['Squat', 'Barbell Squat'],
+    setup: 'Bar on the upper back, not the neck. Feet about shoulder-width, toes slightly out, whole foot planted.',
+    execution: 'Break at the hips and knees together, sit down between your feet to at least parallel, then drive up with the chest staying where it was.',
+    mistakes: ['Knees collapsing inward on the way up.', 'Heels lifting — that is usually ankle mobility, not effort.', 'Cutting depth as the weight climbs, so the sets stop comparing to each other.'] },
+  { name: 'Leg Press',
+    setup: 'Feet mid-platform, shoulder-width, hips and lower back flat against the pad.',
+    execution: 'Lower until the knees reach roughly 90 degrees, then press back without snapping the knees straight at the top.',
+    mistakes: ['Going so deep the pelvis lifts off the pad and the lower back rounds.', 'Locking the knees out hard at the top.'] },
+  { name: 'Calf Raise',
+    setup: 'Balls of the feet on the edge of the step or platform, heels free to drop below.',
+    execution: 'Drop the heels for a full stretch, pause, then push all the way up onto the toes and pause there too. Slow at both ends.',
+    mistakes: ['Bouncing through short reps that use the tendon rather than the muscle.'] },
+  { name: 'Pull-ups', aka: ['Pull-up', 'Chin-ups', 'Chin-up'],
+    setup: 'Grip a little outside the shoulders, hang with the shoulders pulled down out of the ears rather than dead.',
+    execution: 'Lead with the elbows down to the ribs, chest towards the bar, chin over it, then lower all the way to straight arms.',
+    mistakes: ['Kipping with the legs when the reps get hard.', 'Stopping halfway down, which quietly halves the range.'] },
+  { name: 'Lat Pulldown',
+    setup: 'Thighs locked under the pad, slight lean back that you then hold constant.',
+    execution: 'Pull the bar to the upper chest by driving the elbows down, hold for a beat, and let it rise under control.',
+    mistakes: ['Rocking the torso to move the weight.', 'Pulling behind the neck.'] },
+  { name: 'Barbell Row', aka: ['Bent-over Row', 'Bent Over Row'],
+    setup: 'Hinge until the torso is around 45 degrees or lower, back flat, bar hanging under the shoulders.',
+    execution: 'Row to the lower ribs, elbows past the torso, then lower fully without letting the chest drop.',
+    mistakes: ['Standing up a little on every rep so the torso angle drifts.', 'Shrugging the weight up with the traps instead of rowing it.'] },
+  { name: 'Face Pull',
+    setup: 'Rope at roughly face height, arms straight, a step back so there is tension before the first rep.',
+    execution: 'Pull the rope towards your face with the hands finishing beside your ears and the elbows high. Squeeze, then return slowly.',
+    mistakes: ['Loading it heavy enough that it becomes a row.', 'Letting the elbows drop below the wrists.'] },
+  { name: 'Lateral Raise',
+    setup: 'Dumbbells at your sides, small bend in the elbows, torso still.',
+    execution: 'Raise out to the sides to roughly shoulder height, leading with the elbows, then lower slower than you lifted.',
+    mistakes: ['Swinging the weight up with the hips.', 'Going far above shoulder height, where the traps take over.'] },
+  { name: 'Barbell Curl',
+    setup: 'Shoulder-width grip, elbows tucked at the ribs, ribs down.',
+    execution: 'Curl by bending the elbow only, squeeze at the top, then lower all the way to straight.',
+    mistakes: ['Swinging the bar up with the lower back.', 'Letting the elbows travel forward so the front delts take the work.'] },
+  { name: 'Triceps Pushdown', aka: ['Tricep Pushdown', 'Cable Pushdown'],
+    setup: 'Elbows pinned at your sides, small forward lean, shoulders down.',
+    execution: 'Straighten the arms against the cable, pause at lockout, then let the forearms rise back to 90 degrees only.',
+    mistakes: ['Letting the elbows drift forward and away from the ribs.', 'Leaning your bodyweight onto the bar when it gets heavy.'] },
+  { name: 'Kettlebell Swing',
+    setup: 'Bell about a foot in front of you, hinge and hike it back between the legs like a rugby pass.',
+    execution: 'Snap the hips forward hard and let the bell float to chest height. It is a hinge, not a squat, and not a front raise.',
+    mistakes: ['Squatting the bell up instead of hinging.', 'Lifting the bell with the arms rather than letting the hips throw it.', 'Letting the bell swing below the knees on the backswing.'] },
+  { name: 'Rowing Erg', aka: ['Row Erg', 'Rowing Machine', 'Erg'],
+    setup: 'Straps over the widest part of the foot, damper somewhere around 3–5 rather than at 10.',
+    execution: 'Legs, then body, then arms on the drive; arms, then body, then legs on the recovery. Roughly one second out, two seconds back.',
+    mistakes: ['Opening the back before the legs have finished pushing.', 'Yanking with the arms early, which is where sore elbows come from.'] }
+];
+
+// Same shape as `glossaryEntries`: every spelling of an entry, flattened, so
+// lookup and the "is there a guide for this" test read the same table.
+function formGuideEntries() {
+  const out = [];
+  FORM_GUIDE.forEach(function (e) {
+    [e.name].concat(e.aka || []).forEach(function (word) { out.push({ key: exerciseKey(word), entry: e }); });
+  });
+  return out;
+}
+
+// A typed exercise name in, its guide out, or null. Exact on `exerciseKey`
+// deliberately -- see the note above the table.
+function formGuide(name) {
+  const key = exerciseKey(name);
+  if (!key) return null;
+  const hit = formGuideEntries().filter(function (e) { return e.key === key; })[0];
+  return hit ? hit.entry : null;
+}
+
+// The sheet renders one block of text rather than markup, because it reuses the
+// glossary's sheet and that sets `textContent`. Blank lines separate the three
+// parts and the stylesheet keeps them.
+function formGuideBody(entry) {
+  if (!entry) return '';
+  const parts = ['Set up\n' + entry.setup, 'Do it\n' + entry.execution];
+  const mistakes = entry.mistakes || [];
+  if (mistakes.length) {
+    parts.push('Common mistakes\n' + mistakes.map(function (m) { return '• ' + m; }).join('\n'));
+  }
+  return parts.join('\n\n');
+}
+
 // Longest first, so a shorter entry that happens to start inside a longer one
 // cannot half-match it, and every spelling of an entry lands on the same entry.
 function glossaryEntries() {
