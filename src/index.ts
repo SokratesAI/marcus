@@ -8,7 +8,7 @@ import { FoodCache, SearchCache, lookupBarcode, searchFoodsByName } from "./food
 import { askCoach, coachConfig, type CoachConfig } from "./coach.js";
 import { draftWeek } from "./plan-draft.js";
 import { SubscriptionStore, VapidKeyStore, validateSubscription } from "./push.js";
-import { declarativePayload, sendToAll } from "./push-send.js";
+import { declarativePayload, sendPush, sendToAll } from "./push-send.js";
 import {
   initTracing,
   parentContext,
@@ -312,6 +312,101 @@ export function createApp(
       res.status(500).json({ error: "could not send the notification" });
     } finally {
       sendInFlight = false;
+    }
+  });
+
+  // Issue #154, the last piece a phone can reach: proving the chain works
+  // without waiting for 20:00.
+  //
+  // Everything above this line was shipped without Edvard ever tapping "Turn
+  // on reminders", and the reason is worth stating rather than guessing at: a
+  // tap on that button produces silence for up to a day, and silence is what a
+  // broken feature produces too. This route makes the answer immediate.
+  //
+  // Its authorisation is the endpoint itself and nothing else. `/api/push/send`
+  // needs a bearer token because it buzzes every device with text of the
+  // caller's choosing; this one sends fixed text to exactly ONE device, and
+  // only if that device's full push-service URL is already in the store. That
+  // URL is a long unguessable secret the browser holds, so the only caller who
+  // can reach a phone here is one that could already unsubscribe it through
+  // DELETE /api/push/subscribe. No new capability is handed to anybody.
+  //
+  // The title and body are written here rather than taken from the request, on
+  // purpose: a route that puts caller-supplied text on Edvard's lock screen is
+  // a different route with a different threat model, and it already exists
+  // behind a token.
+  let testInFlight = false;
+
+  app.post("/api/push/test", express.json({ limit: "16kb" }), async (req, res) => {
+    const endpoint = (req.body as { endpoint?: unknown } | undefined)?.endpoint;
+    if (typeof endpoint !== "string" || endpoint.length === 0) {
+      res.status(400).json({ error: "endpoint is required" });
+      return;
+    }
+    if (testInFlight) {
+      // Its own flag rather than sharing `sendInFlight`: a test tap at 20:00:00
+      // must not make the scheduled reminder report a failure, and a scheduled
+      // reminder must not make the button look broken.
+      res.status(409).json({ error: "a test is already on its way" });
+      return;
+    }
+    testInFlight = true;
+    try {
+      const subs = await subscriptions.list();
+      const match = subs.find((s) => s.endpoint === endpoint);
+      if (!match) {
+        // 404 and not 403: from the caller's side these are the same fact, and
+        // the useful one is "Marcus has no record of this device", which is
+        // exactly what a cleared site data or a pruned endpoint leaves behind.
+        res.status(404).json({ error: "this device is not subscribed" });
+        return;
+      }
+      let keys;
+      try {
+        keys = await vapidKeys.ensure();
+      } catch (err) {
+        void err;
+        logger.error("could not read or generate the VAPID keypair");
+        res.status(500).json({ error: "could not send the test" });
+        return;
+      }
+      const payload = declarativePayload({
+        title: "Marcus",
+        body: "Reminders are working. This is the only test notification you asked for.",
+        navigate: "/",
+        // A tag, so a second tap replaces the first on the lock screen instead
+        // of stacking. The evening reminder uses its own.
+        tag: "marcus-test",
+      });
+      const outcome = await sendPush(
+        match,
+        payload,
+        keys,
+        process.env.MARCUS_PUSH_SUBJECT ?? "mailto:nova@sokrates.ai",
+        Date.now(),
+        fetchImpl,
+      );
+      if (outcome.gone) {
+        // The one moment anything ever learns a phone is gone, same as
+        // sendToAll. Pruning here means the button's own failure repairs the
+        // list rather than leaving a dead row for the 20:00 job to trip on.
+        await subscriptions.remove(endpoint);
+        res.status(410).json({ error: "this device's subscription has expired", pruned: true });
+        return;
+      }
+      if (outcome.status < 200 || outcome.status >= 300) {
+        // 502: Marcus did its part and the push service refused. The status is
+        // reported because it is the only thing that separates "Apple had a bad
+        // minute" from "this will never work".
+        res.status(502).json({ error: "the push service would not take it", status: outcome.status });
+        return;
+      }
+      res.status(200).json({ sent: true });
+    } catch (err) {
+      logger.error({ err }, "could not send the test notification");
+      res.status(500).json({ error: "could not send the test" });
+    } finally {
+      testInFlight = false;
     }
   });
 
