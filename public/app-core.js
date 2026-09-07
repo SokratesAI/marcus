@@ -131,7 +131,11 @@ function roundToIncrement(value, increment) {
 // weights, and printing them would put the same set on the screen twice.
 function warmupRamp(rawWeight) {
   const weight = Number(rawWeight);
-  if (!Number.isFinite(weight) || weight <= 0) return [];
+  // Only the non-number case needs a guard here. Zero and a negative weight
+  // fall out of the step loop on their own -- every step of them lands at or
+  // below zero and is dropped -- and a second check for them would be a line
+  // no test could ever fail on.
+  if (!Number.isFinite(weight)) return [];
   const out = [];
   WARMUP_STEPS.forEach(function (step) {
     const load = roundToIncrement(weight * step.share, WARMUP_INCREMENT);
