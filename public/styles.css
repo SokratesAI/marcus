@@ -343,3 +343,15 @@ body{
   cursor: pointer;
 }
 .photo-strip__del .material-icons-round { font-size: 16px; }
+
+/* A meal photo sits inside its list row, so it is square and small: it is a
+   reminder of what was on the plate, not something to compare over months the
+   way the progress strip is. */
+.meal-photo {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
+  flex: 0 0 auto;
+}

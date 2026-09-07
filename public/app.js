@@ -812,6 +812,47 @@ function saveMeal(meal) {
   return store.set('meals', all);
 }
 
+// Which meal the file picker is about to write to. One hidden input serves
+// every row, because a file input per meal would put one in the DOM for each
+// meal logged today and only ever one of them is used.
+let mealPhotoTarget = null;
+
+function wireMealPhotos() {
+  const input = document.getElementById('mealPhotoFile');
+  if (!input) return;
+
+  view.querySelectorAll('[data-meal-photo]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      mealPhotoTarget = btn.getAttribute('data-meal-photo');
+      input.click();
+    });
+  });
+
+  view.querySelectorAll('[data-meal-photo-delete]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const kept = detachMealPhoto(store.get('meals', []), btn.getAttribute('data-meal-photo-delete'));
+      if (!store.set('meals', kept)) return;
+      renderNutrition();
+    });
+  });
+
+  input.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    const target = mealPhotoTarget;
+    mealPhotoTarget = null;
+    if (!file || !target) return;
+    shrinkImage(file, MEAL_PHOTO_MAX_EDGE, (dataUrl) => {
+      if (!dataUrl) { toast('Marcus could not read that image.'); return; }
+      const result = validateMealPhoto(target, dataUrl, store.get('meals', []), store.get('photos', []));
+      if (!result.ok) { toast(result.message); return; }
+      const all = attachMealPhoto(store.get('meals', []), result);
+      if (!store.set('meals', all)) return;
+      renderNutrition();
+    });
+  });
+}
+
 function renderNutrition() {
   const meals = store.get('meals', []);
   const today = meals.filter(m => m.date === todayStr()).sort((a, b) => a.time.localeCompare(b.time));
@@ -848,15 +889,23 @@ function renderNutrition() {
       </details>
     </div>
     <div class="section-title">Logged today</div>
+    <input id="mealPhotoFile" type="file" accept="image/*" hidden>
     <div id="mealList">${today.length ? today.map(m => `
       <div class="list-item">
-        <div><div>${esc(m.name)}</div><div class="list-item__meta">${esc(m.time)} · P ${m.protein || 0} g · C ${m.carbs || 0} g · F ${m.fat || 0} g</div></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${m.photo ? `<img class="meal-photo" src="${esc(m.photo)}" alt="Photo of ${esc(m.name)}" loading="lazy">` : ''}
+          <div><div>${esc(m.name)}</div><div class="list-item__meta">${esc(m.time)} · P ${m.protein || 0} g · C ${m.carbs || 0} g · F ${m.fat || 0} g</div></div>
+        </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span>${m.calories} kcal</span>
+          <button class="icon-btn" data-meal-photo="${esc(String(m.id))}" aria-label="${m.photo ? 'Replace the photo of' : 'Add a photo of'} ${esc(m.name)}"><span class="material-icons-round">photo_camera</span></button>
+          ${m.photo ? `<button class="icon-btn" data-meal-photo-delete="${esc(String(m.id))}" aria-label="Remove the photo of ${esc(m.name)}"><span class="material-icons-round">hide_image</span></button>` : ''}
           <button class="icon-btn" onclick="deleteMeal('${m.id}')"><span class="material-icons-round">delete</span></button>
         </div>
       </div>`).join('') : `<div class="empty">No meals logged today.</div>`}</div>
   `;
+
+  wireMealPhotos();
 
   const search = document.getElementById('foodSearch');
   search.addEventListener('input', () => {
@@ -1906,7 +1955,7 @@ function renderProgress() {
     if (!file) return;
     shrinkImage(file, PHOTO_MAX_EDGE, (dataUrl) => {
       if (!dataUrl) { toast('Marcus could not read that image.'); return; }
-      const result = validatePhoto(photoPoseKey, dataUrl, store.get('photos', []), todayStr());
+      const result = validatePhoto(photoPoseKey, dataUrl, store.get('photos', []), todayStr(), store.get('meals', []));
       if (!result.ok) { toast(result.message); return; }
       const all = upsertPhoto(store.get('photos', []), {
         id: uid(), date: result.date, pose: result.pose, dataUrl: result.dataUrl, bytes: result.bytes
