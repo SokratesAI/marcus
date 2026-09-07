@@ -382,3 +382,10 @@ body{
 .mg-bar{height:6px;border-radius:3px;background:var(--md-surface-variant);overflow:hidden;margin-top:4px;}
 .mg-bar > span{display:block;height:100%;background:var(--md-primary);}
 .chip--muted{background:var(--md-surface-variant);color:var(--md-on-surface-variant);}
+
+/* The exercise library (idea #193). A lift button reads as a list row rather
+   than a call to action -- there are eighteen of them and they are all equal. */
+.lib-group{margin-bottom:12px;}
+.lib-group__name{font-size:12px;font-weight:600;color:var(--md-on-surface-variant);margin:8px 0 4px;}
+.lib-lift{justify-content:flex-start;margin-top:4px;}
+.lib-lift__aka{display:block;font-size:11px;font-weight:400;text-transform:none;opacity:0.7;}

@@ -1833,6 +1833,42 @@ function weeklyMuscleSets(sessions, todayISO, days) {
   };
 }
 
+// The eighteen guides above are reachable from exactly one place: a Log row
+// whose name box already matches one of them. So the lift you have never tried
+// is precisely the lift you cannot look up, and idea #193 asked for a library
+// rather than a lookup. This is the browse side of it -- every guide, grouped
+// the way the weekly-balance card already groups them.
+//
+// Groups keep MUSCLE_GROUPS order rather than sorting alphabetically, because
+// the balance card prints those five words in that order and two lists of the
+// same words in two different orders read as two different things. A group
+// MUSCLE_GROUPS has never heard of is kept and sorted after them rather than
+// dropped -- a guide that renders nowhere is worse than a heading nobody
+// expected, and it is the failure this whole function exists to end.
+function formGuideLibrary() {
+  const byGroup = Object.create(null);
+  FORM_GUIDE.forEach(function (e) {
+    const group = e.group || 'Other';
+    if (!byGroup[group]) byGroup[group] = [];
+    byGroup[group].push(e);
+  });
+  const extra = Object.keys(byGroup).filter(function (g) {
+    return MUSCLE_GROUPS.indexOf(g) === -1;
+  }).sort();
+  return MUSCLE_GROUPS.concat(extra).filter(function (g) {
+    return !!byGroup[g];
+  }).map(function (g) {
+    return {
+      group: g,
+      lifts: byGroup[g].slice().sort(function (a, b) {
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      }).map(function (e) {
+        return { name: e.name, aka: (e.aka || []).slice() };
+      }),
+    };
+  });
+}
+
 // The sheet renders one block of text rather than markup, because it reuses the
 // glossary's sheet and that sets `textContent`. Blank lines separate the three
 // parts and the stylesheet keeps them.
