@@ -1836,6 +1836,26 @@ onStoreWrite = scheduleServerSync;
 const SYNC_REV_KEY = 'syncRev';
 const SYNC_DEBOUNCE_MS = 1500;
 
+// A failed sync used to be the end of it: `serverStatus` went to 'unreachable'
+// and nothing tried again, so a set logged on gym wifi stayed in this browser
+// until the next thing typed happened to succeed. localStorage never lost it --
+// but the copy on the server is what a second phone reads and what survives
+// clearing this browser's site data, so "not lost" is not the same as "saved".
+const SYNC_RETRY_BASE_MS = 5000;
+const SYNC_RETRY_MAX_MS = 300000;
+
+// Doubling, capped. `attempt` is how many failures have already happened, so
+// the first retry sits one base delay out. A huge attempt count overflows to
+// Infinity rather than to a negative, and `Math.min` takes the cap, so no
+// second guard on the exponent is needed -- I wrote one, mutated it away, and
+// every test still passed, which is the definition of a line that does nothing.
+// What DOES need guarding is a non-number: `setTimeout` reads NaN as 0 and
+// would turn the backoff into a busy loop on the one device already struggling.
+function nextSyncRetryDelay(attempt) {
+  const n = Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0;
+  return Math.min(SYNC_RETRY_BASE_MS * Math.pow(2, n), SYNC_RETRY_MAX_MS);
+}
+
 // What this browser thinks the server is at. It starts at 0, which is also what
 // an untouched server answers, so a first push from a fresh browser succeeds.
 const syncRev = () => { const v = store.get(SYNC_REV_KEY, 0); return typeof v === 'number' && Number.isFinite(v) ? v : 0; };
@@ -1844,7 +1864,7 @@ const syncRev = () => { const v = store.get(SYNC_REV_KEY, 0); return typeof v ==
 // which of the three states it is actually in rather than a green tick.
 function describeServerCopy(status) {
   if (!status || status.state === 'unknown') return 'Server copy: checking...';
-  if (status.state === 'unreachable') return 'Server copy: not reachable right now. This browser still has everything.';
+  if (status.state === 'unreachable') return 'Server copy: not reachable right now. This browser still has everything, and keeps trying until it saves.';
   if (status.state === 'empty') return 'Server copy: nothing saved there yet.';
   if (status.state === 'ahead') return 'Server copy: there is one on the server that this browser has never seen. Load it before this browser starts saving over it.';
   const when = status.updatedAt ? new Date(status.updatedAt) : null;
@@ -2063,6 +2083,44 @@ function shouldAdoptServerCopy(localRev, serverRev, freshBoot) {
 
 let serverStatus = { state: 'unknown' };
 let syncTimer = null;
+let retryTimer = null;
+let syncFailures = 0;
+
+function cancelSyncRetry() {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+}
+
+function scheduleSyncRetry() {
+  cancelSyncRetry();
+  retryTimer = setTimeout(() => { retryTimer = null; syncNow(); }, nextSyncRetryDelay(syncFailures));
+  syncFailures += 1;
+}
+
+// Only ever retries something that is actually unsent. A phone comes back to
+// the foreground constantly, and pushing the whole state every time it does
+// would be a new cost paid by every user for a problem only an offline one has.
+function retryServerSyncNow() {
+  if (!serverStatus || serverStatus.state !== 'unreachable') return;
+  cancelSyncRetry();
+  syncFailures = 0;
+  syncNow();
+}
+
+// A phone that walks out of the gym fires `online`; one that was in a pocket
+// fires `visibilitychange`. Both mean the network may be back, and sitting out
+// the rest of a five-minute backoff when the answer is already available is the
+// difference between a save the user sees and one they do not.
+function retryWhenBackOnline(win, doc, retry) {
+  if (win && typeof win.addEventListener === 'function') {
+    win.addEventListener('online', () => retry());
+  }
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('visibilitychange', () => {
+      if (doc.visibilityState !== 'visible') return;
+      retry();
+    });
+  }
+}
 
 function renderServerCopy() {
   const host = document.getElementById('serverCopy');
@@ -2085,11 +2143,16 @@ async function syncNow() {
     const gained = result.merged ? adoptMergedCopy(result.merged) : null;
     store.set(SYNC_REV_KEY, result.rev);
     serverStatus = { state: 'saved', updatedAt: result.updatedAt };
+    cancelSyncRetry();
+    syncFailures = 0;
     if (gained) { toast('Merged in what the other device logged.'); switchTab(currentTab); }
-  } else if (result.reason === 'unreachable') {
-    serverStatus = { state: 'unreachable' };
   } else {
+    // A refusal and an unreachable server are both retried. A 4xx that will
+    // never succeed costs one request every five minutes; a 500 or a dropped
+    // connection that WOULD succeed is the whole point of the retry, and
+    // deciding which is which from a status code is a guess.
     serverStatus = { state: 'unreachable' };
+    scheduleSyncRetry();
   }
   renderServerCopy();
 }
@@ -2103,6 +2166,10 @@ function scheduleServerSync(key) {
   // which matters because the boot fetch below can still be in flight.
   seededThisBoot = false;
   if (syncTimer) clearTimeout(syncTimer);
+  // The debounced sync below carries the whole payload, so it supersedes a
+  // pending retry. `syncFailures` is deliberately NOT reset: if the network is
+  // still down, typing more should not walk the backoff back to five seconds.
+  cancelSyncRetry();
   syncTimer = setTimeout(() => { syncTimer = null; syncNow(); }, SYNC_DEBOUNCE_MS);
 }
 
@@ -2601,6 +2668,7 @@ function showUpdateBanner() {
 // ---------- boot ----------
 switchTab('home');
 adoptServerCopyOnBoot().catch(() => {});
+retryWhenBackOnline(window, document, retryServerSyncNow);
 document.getElementById('updateReload')?.addEventListener('click', () => window.location.reload());
 if ('serviceWorker' in navigator) {
   watchForUpdate(navigator.serviceWorker, showUpdateBanner);

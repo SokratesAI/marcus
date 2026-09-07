@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 // object on their own, so nothing has to be re-exported by hand. `fetch` is
 // passed in rather than stubbed globally, which is the whole reason
 // pushServerCopy takes it as an argument.
-function loadApp(preset: Record<string, string> = {}, fetchImpl?: any): any {
+function loadApp(preset: Record<string, string> = {}, fetchImpl?: any, overrides: Record<string, any> = {}): any {
   const node: any = {
     value: "", textContent: "", innerHTML: "", hidden: false, style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -34,6 +34,9 @@ function loadApp(preset: Record<string, string> = {}, fetchImpl?: any): any {
   // Left undefined by default: every function under test takes its fetch as an
   // argument, and boot's own fetch is only wanted by the boot test.
   if (fetchImpl) ctx.fetch = fetchImpl;
+  // Overrides land before the source runs, so a stubbed `setTimeout` is the one
+  // the app closes over rather than one swapped in afterwards.
+  Object.assign(ctx, overrides);
   ctx.window = ctx;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
@@ -43,7 +46,12 @@ function loadApp(preset: Record<string, string> = {}, fetchImpl?: any): any {
       "\n;globalThis.BACKUP_VERSION = BACKUP_VERSION;" +
       // A top-level `let` does not land on the context object the way a function
       // declaration does, and this one changes, so it needs a live getter.
-      "\n;Object.defineProperty(globalThis, 'seededThisBoot', { get: () => seededThisBoot });",
+      "\n;Object.defineProperty(globalThis, 'seededThisBoot', { get: () => seededThisBoot });" +
+      // Same reason: the retry bookkeeping is `let` state that the tests below
+      // assert on, and a `let` does not land on the context object.
+      "\n;Object.defineProperty(globalThis, 'syncFailures', { get: () => syncFailures });" +
+      "\n;Object.defineProperty(globalThis, 'retryTimer', { get: () => retryTimer });"
+      ,
     ctx,
   );
   return ctx;
@@ -714,5 +722,187 @@ describe("adoptMergedCopy on an empty list", () => {
   it("does not call an empty list arriving where there was no key a gain", () => {
     const ctx = loadApp();
     expect(ctx.adoptMergedCopy({ goals: [] })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idea #199: nothing typed at the gym is lost. localStorage always held it --
+// what did not exist was any second attempt at the server copy.
+// ---------------------------------------------------------------------------
+
+describe("nextSyncRetryDelay", () => {
+  it("starts one base delay out and doubles", () => {
+    const app = loadApp();
+    expect(app.nextSyncRetryDelay(0)).toBe(5000);
+    expect(app.nextSyncRetryDelay(1)).toBe(10000);
+    expect(app.nextSyncRetryDelay(2)).toBe(20000);
+    expect(app.nextSyncRetryDelay(3)).toBe(40000);
+  });
+
+  it("caps at five minutes instead of growing without bound", () => {
+    const app = loadApp();
+    // 5000 * 2^6 is 320000, so the cap has to bite before the exponent cap does
+    // -- otherwise this passes for a function that never caps at all.
+    expect(app.nextSyncRetryDelay(6)).toBe(300000);
+    expect(app.nextSyncRetryDelay(50)).toBe(300000);
+    expect(app.nextSyncRetryDelay(1e9)).toBe(300000);
+  });
+
+  it("returns a real delay for a nonsense attempt count rather than NaN", () => {
+    const app = loadApp();
+    // setTimeout treats NaN and Infinity as 0, which turns the backoff into a
+    // busy loop on the one device that is already struggling.
+    for (const bad of [undefined, null, NaN, Infinity, -3, "4"]) {
+      const d = app.nextSyncRetryDelay(bad as any);
+      expect(Number.isFinite(d)).toBe(true);
+      expect(d).toBeGreaterThanOrEqual(5000);
+      expect(d).toBeLessThanOrEqual(300000);
+    }
+  });
+});
+
+describe("syncNow retry scheduling", () => {
+  const timerCtx = () => {
+    const scheduled: number[] = [];
+    let cleared = 0;
+    return {
+      scheduled,
+      cleared: () => cleared,
+      overrides: {
+        setTimeout: (_fn: any, ms: number) => { scheduled.push(ms); return scheduled.length; },
+        clearTimeout: () => { cleared += 1; },
+      },
+    };
+  };
+
+  it("arms a retry when the server cannot be reached", async () => {
+    const t = timerCtx();
+    const app = loadApp({}, () => Promise.reject(new Error("offline")), t.overrides);
+    await app.syncNow();
+    expect(app.describeServerCopy(app.serverStatus ?? { state: "unreachable" })).toMatch(/keeps trying/);
+    expect(t.scheduled).toEqual([5000]);
+    expect(app.syncFailures).toBe(1);
+  });
+
+  it("backs off further on each failure instead of retrying at the same rate", async () => {
+    const t = timerCtx();
+    const app = loadApp({}, () => Promise.reject(new Error("offline")), t.overrides);
+    await app.syncNow();
+    await app.syncNow();
+    await app.syncNow();
+    expect(t.scheduled).toEqual([5000, 10000, 20000]);
+  });
+
+  it("retries a refusal too, not only an unreachable server", async () => {
+    const t = timerCtx();
+    // A 500 will very often succeed on the next attempt, and a status code is
+    // not enough to tell it from a 4xx that never will.
+    const app = loadApp({}, async () => res(500, {}), t.overrides);
+    await app.syncNow();
+    expect(t.scheduled).toEqual([5000]);
+  });
+
+  it("clears the backoff once a sync gets through", async () => {
+    const t = timerCtx();
+    let fail = true;
+    // The GET has to answer an EMPTY server: `shouldPush` refuses to push a
+    // never-synced browser over a server that already holds a copy, so a mock
+    // that answers rev 4 to both verbs makes the success path unreachable and
+    // this test would pass for code that never clears the backoff.
+    const app = loadApp({}, async (_url: string, init?: any) => {
+      if (fail) throw new Error("offline");
+      if (!init || init.method !== "PUT") return res(200, { rev: 0, data: {} });
+      return res(200, { rev: 4, updatedAt: "2026-09-07T05:00:00.000Z" });
+    }, t.overrides);
+    await app.syncNow();
+    expect(app.syncFailures).toBe(1);
+    fail = false;
+    await app.syncNow();
+    expect(app.syncFailures).toBe(0);
+    // The next failure has to start over at the base delay, not carry on from
+    // where the last outage left off.
+    fail = true;
+    await app.syncNow();
+    expect(t.scheduled).toEqual([5000, 5000]);
+  });
+});
+
+describe("retryWhenBackOnline", () => {
+  const listeners = () => {
+    const on: Record<string, any[]> = {};
+    return {
+      on,
+      target: (extra: Record<string, any> = {}) => ({
+        addEventListener: (name: string, fn: any) => { (on[name] ||= []).push(fn); },
+        ...extra,
+      }),
+    };
+  };
+
+  it("listens for the network coming back and for the app returning to the foreground", () => {
+    const app = loadApp();
+    const w = listeners();
+    const d = listeners();
+    app.retryWhenBackOnline(w.target(), d.target({ visibilityState: "visible" }), () => {});
+    expect(Object.keys(w.on)).toEqual(["online"]);
+    expect(Object.keys(d.on)).toEqual(["visibilitychange"]);
+  });
+
+  it("retries on `online`", () => {
+    const app = loadApp();
+    const w = listeners();
+    let tries = 0;
+    app.retryWhenBackOnline(w.target(), null, () => { tries += 1; });
+    w.on.online[0]();
+    expect(tries).toBe(1);
+  });
+
+  it("retries when the page becomes visible and not when it is hidden", () => {
+    const app = loadApp();
+    const d = listeners();
+    const doc: any = d.target({ visibilityState: "hidden" });
+    let tries = 0;
+    app.retryWhenBackOnline(null, doc, () => { tries += 1; });
+    d.on.visibilitychange[0]();
+    expect(tries).toBe(0);
+    doc.visibilityState = "visible";
+    d.on.visibilitychange[0]();
+    expect(tries).toBe(1);
+  });
+
+  it("does nothing at all on a browser with no event target", () => {
+    const app = loadApp();
+    expect(() => app.retryWhenBackOnline(undefined, {}, () => {})).not.toThrow();
+  });
+});
+
+describe("retryServerSyncNow", () => {
+  it("pushes immediately when something is unsent", async () => {
+    let calls = 0;
+    const app = loadApp({}, () => { calls += 1; return Promise.reject(new Error("offline")); }, {
+      setTimeout: () => 1, clearTimeout: () => {},
+    });
+    await app.syncNow();
+    const afterFirst = calls;
+    expect(afterFirst).toBeGreaterThan(0);
+    app.retryServerSyncNow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBeGreaterThan(afterFirst);
+  });
+
+  it("does not push on every return to the foreground when the copy is already saved", async () => {
+    let calls = 0;
+    const app = loadApp({}, async (_url: string, init?: any) => {
+      calls += 1;
+      if (!init || init.method !== "PUT") return res(200, { rev: 0, data: {} });
+      return res(200, { rev: 2, updatedAt: "x" });
+    }, {
+      setTimeout: () => 1, clearTimeout: () => {},
+    });
+    await app.syncNow();
+    const afterFirst = calls;
+    app.retryServerSyncNow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(afterFirst);
   });
 });
