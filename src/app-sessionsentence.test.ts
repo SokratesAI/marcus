@@ -277,7 +277,7 @@ describe("renderLog with a sentence in hand", () => {
     byId["tpl-log-exercise-row"] = {
       content: {
         cloneNode: () => ({
-          querySelector: () => ({ value: "", addEventListener() {}, closest: () => ({ remove() {} }) }),
+          querySelector: () => ({ value: "", dataset: {}, addEventListener() {}, closest: () => ({ remove() {} }) }),
         }),
       },
     };
@@ -509,13 +509,13 @@ describe("the kilos reach the form, not just the summary", () => {
           // Seeded with all four inputs, so "the render never touched this one"
           // is a blank value rather than a missing key.
           const fields: Record<string, any> = {};
-          for (const sel of [".ex-name", ".ex-sets", ".ex-reps", ".ex-weight", ".ex-remove"]) {
-            fields[sel] = { value: "", addEventListener() {}, closest: () => ({ remove() {} }) };
+          for (const sel of [".ex-name", ".ex-sets", ".ex-reps", ".ex-weight", ".ex-remove", ".ex-form"]) {
+            fields[sel] = { value: "", dataset: {}, addEventListener() {}, closest: () => ({ remove() {} }) };
           }
           rows.push(fields);
           return {
             querySelector: (sel: string) =>
-              (fields[sel] ??= { value: "", addEventListener() {}, closest: () => ({ remove() {} }) }),
+              (fields[sel] ??= { value: "", dataset: {}, addEventListener() {}, closest: () => ({ remove() {} }) }),
           };
         },
       },
@@ -595,13 +595,13 @@ describe("the kilos reach the form, not just the summary", () => {
           const fields: Record<string, any> = {};
           const make = () => {
             const node: any = {
-              value: "", textContent: "", hidden: false, listeners: {} as Record<string, any[]>,
+              value: "", textContent: "", hidden: false, dataset: {} as Record<string, string>, listeners: {} as Record<string, any[]>,
               addEventListener(evt: string, fn: any) { (node.listeners[evt] ??= []).push(fn); },
               closest: () => ({ remove() {} }),
             };
             return node;
           };
-          for (const sel of [".ex-name", ".ex-sets", ".ex-reps", ".ex-weight", ".ex-rpe", ".ex-remove", ".ex-warmup", ".ex-last"]) {
+          for (const sel of [".ex-name", ".ex-sets", ".ex-reps", ".ex-weight", ".ex-rpe", ".ex-remove", ".ex-warmup", ".ex-last", ".ex-form"]) {
             fields[sel] = make();
           }
           rows.push(fields);

@@ -297,7 +297,7 @@ body{
 }
 .term-sheet__header{display:flex;align-items:center;gap:8px;}
 .term-sheet__title{flex:1;font-size:17px;font-weight:700;margin:0;}
-.term-sheet__body{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--md-on-surface-variant);}
+.term-sheet__body{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--md-on-surface-variant);white-space:pre-line;}
 
 /* Progress photos (idea #202). A horizontal strip rather than a grid: the
    comparison the photos exist for is the first against the last, and a strip

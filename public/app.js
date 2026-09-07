@@ -724,10 +724,21 @@ function renderLog() {
     const lastNode = node.querySelector('.ex-last');
     const nameInput = node.querySelector('.ex-name');
     const dateInput = document.getElementById('logDate');
+    // How to do the lift (idea #193). The handle is hidden unless the name in
+    // the box actually has a guide, so an empty row and an exercise Marcus has
+    // no cues for both show nothing rather than an icon that opens nothing.
+    const formNode = node.querySelector('.ex-form');
+    const showForm = () => {
+      const guide = formGuide(nameInput.value);
+      formNode.hidden = !guide;
+      if (guide) formNode.dataset.form = guide.name;
+      else delete formNode.dataset.form;
+    };
     const showLast = () => {
       const last = lastPerformance(store.get('sessions', []), nameInput.value, dateInput ? dateInput.value : todayStr());
       lastNode.textContent = lastPerformanceLabel(last);
       lastNode.hidden = !last;
+      showForm();
       return last;
     };
     nameInput.addEventListener('input', showLast);
@@ -3154,7 +3165,21 @@ function openTerm(word) {
 }
 function closeTerm() { termSheet.hidden = true; }
 
+// The form cues reuse the glossary's sheet rather than adding a second one --
+// same panel, same scrim, same Escape key. Only the text differs.
+function openForm(name) {
+  const entry = formGuide(name);
+  if (!entry) return false;
+  document.getElementById('termTitle').textContent = entry.name;
+  document.getElementById('termBody').textContent = formGuideBody(entry);
+  termSheet.hidden = false;
+  document.getElementById('termClose').focus();
+  return true;
+}
+
 document.addEventListener('click', (ev) => {
+  const form = ev.target.closest('[data-form]');
+  if (form) { if (openForm(form.dataset.form)) ev.preventDefault(); return; }
   const handle = ev.target.closest('[data-term]');
   if (!handle) return;
   if (openTerm(handle.dataset.term)) ev.preventDefault();
