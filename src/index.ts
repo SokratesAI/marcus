@@ -6,6 +6,7 @@ import pino from "pino";
 import { StateStore } from "./state-store.js";
 import { FoodCache, SearchCache, lookupBarcode, searchFoodsByName } from "./food-lookup.js";
 import { askCoach, coachConfig, type CoachConfig } from "./coach.js";
+import { draftWeek } from "./plan-draft.js";
 import { SubscriptionStore, VapidKeyStore, validateSubscription } from "./push.js";
 import { declarativePayload, sendToAll } from "./push-send.js";
 import {
@@ -345,6 +346,42 @@ export function createApp(
       // at a metered model spends real money on every message Edvard types.
       logger.error({ model: result.model }, "coach conversation is not on a subscription model");
       res.status(503).json({ error: "the coach is not on a subscription model" });
+      return;
+    }
+    logger.warn({ detail: result.detail }, "coach did not answer");
+    res.status(502).json({ error: "the coach did not answer" });
+  });
+
+  // Idea #187's remaining half. Separate from /api/chat rather than a prompt
+  // Edvard types there, because the answer is structured and is refused when
+  // it is not -- see plan-draft.ts. It never writes to the store: the response
+  // is a proposal the page shows behind an accept gate.
+  app.post("/api/plan-draft", express.json({ limit: MAX_BODY }), async (req, res) => {
+    const { goal, context } = req.body as { goal?: unknown; context?: unknown };
+    const result = await draftWeek(
+      (goal ?? null) as Parameters<typeof draftWeek>[0],
+      (context ?? {}) as Parameters<typeof draftWeek>[1],
+      { config: coach, fetch: fetchImpl },
+    );
+    if (result.status === "ok") {
+      res.status(200).json({ days: result.days, note: result.note });
+      return;
+    }
+    if (result.status === "unconfigured") {
+      res.status(503).json({ error: "the coach is not configured here" });
+      return;
+    }
+    if (result.status === "metered") {
+      logger.error({ model: result.model }, "coach conversation is not on a subscription model");
+      res.status(503).json({ error: "the coach is not on a subscription model" });
+      return;
+    }
+    if (result.status === "unusable") {
+      // 502 and not 500: the coach answered, and what it said was not a week.
+      // The reason is returned because it is the only thing that tells Edvard
+      // whether to press the button again or give up on it.
+      logger.warn({ reason: result.reason }, "coach draft was not a week");
+      res.status(502).json({ error: `the coach did not draft a week: ${result.reason}` });
       return;
     }
     logger.warn({ detail: result.detail }, "coach did not answer");

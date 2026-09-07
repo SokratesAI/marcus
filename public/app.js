@@ -135,6 +135,27 @@ function renderPlan() {
       </div>`).join('') : `<div class="empty">${esc(review.note)}</div>`}
     <div class="card__note" style="padding:0 4px 4px">Every number above is read off your own log. Where endurance research points the same way, the paper is quoted under the suggestion with how far it actually goes; suggestions about which days you keep carry none, because that is adherence rather than physiology.</div>
 
+    <div class="section-title">Let Marcus draft the week</div>
+    <div class="card">
+      <p class="card__note">He reads your goal and your log and writes a full week. Nothing changes until you accept it.</p>
+      <button class="btn btn--tonal btn--block" id="draftWeek"${planDraftBusy ? ' disabled' : ''}><span class="material-icons-round">auto_awesome</span> ${planDraftBusy ? 'Marcus is writing…' : 'Draft my week'}</button>
+    </div>
+    ${planDraft ? `
+      <div class="card" style="display:block">
+        <div class="card__title-row"><h2>Marcus's week</h2><span class="chip chip--primary">Not applied</span></div>
+        ${planDraft.note ? `<p class="card__note">${esc(planDraft.note)}</p>` : ``}
+        ${planDraft.days.map(d => `
+          <div class="plan-day" style="margin-top:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span class="plan-day__name">${esc(d.day)}</span>
+              <span class="plan-day__focus">${esc(d.focus)}</span>
+            </div>
+            ${d.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}\u00d7${e.reps}</span></div>`).join('')}
+          </div>`).join('')}
+        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> Use this week</button>
+        <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="discardDraft()">Discard</button>
+      </div>` : ``}
+
     <div class="section-title">The research behind this</div>
     ${TRAINING_REFERENCES.map(r => `
       <div class="card" style="display:block">
@@ -176,6 +197,8 @@ function renderPlan() {
     renderPlan();
   });
 
+  document.getElementById('draftWeek').addEventListener('click', requestDraft);
+
   document.getElementById('addPlanCardio').addEventListener('click', () => {
     const result = validatePlanCardio(
       document.getElementById('planCardioActivity').value,
@@ -210,6 +233,49 @@ function acceptProposal(id) {
   if (!proposal) { toast('That suggestion is no longer current'); return; }
   if (!setPlan(applyProposal(plan, proposal))) return;
   toast('Plan updated');
+  renderPlan();
+}
+
+async function requestDraft() {
+  if (planDraftBusy) return;
+  planDraftBusy = true;
+  renderPlan();
+  try {
+    const res = await fetch('/api/plan-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        goal: goalsSorted()[0] || null,
+        context: {
+          plan: store.get('plan'),
+          sessions: store.get('sessions', []),
+          weights: store.get('weights', []),
+          goals: store.get('goals', []),
+        },
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(body.error || 'Marcus could not draft a week'); return; }
+    if (!body.days || !body.days.length) { toast('Marcus did not draft a week'); return; }
+    planDraft = { days: body.days, note: body.note || '' };
+  } catch {
+    toast('Marcus could not be reached');
+  } finally {
+    planDraftBusy = false;
+    renderPlan();
+  }
+}
+
+function acceptDraft() {
+  if (!planDraft) return;
+  if (!setPlan(applyDraft(store.get('plan'), planDraft.days))) return;
+  planDraft = null;
+  toast('Plan updated');
+  renderPlan();
+}
+
+function discardDraft() {
+  planDraft = null;
   renderPlan();
 }
 
@@ -1310,6 +1376,37 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
   }
 
   return { weeks, proposals, note: proposals.length ? '' : 'Nothing to change. You are keeping the plan and your load is in the range that builds fitness.' };
+}
+
+// ---------- a week drafted by the coach (idea #187) ----------
+// The one piece of the Plan tab that a model writes. Everything else here is
+// arithmetic off Edvard's own log, so it is checkable; a drafted week is not,
+// and that is why it goes through a gate rather than into the plan. The draft
+// lives in this variable until he presses Use this week or Discard, and it is
+// deliberately not stored: a proposal that survives a reload is a plan nobody
+// agreed to.
+let planDraft = null;
+let planDraftBusy = false;
+
+// Pure: a plan and the coach's days in, a new plan out. A day the draft does
+// not name becomes a rest day rather than keeping last week's exercises --
+// "here is your week" has to mean the whole week, or the days it left out read
+// as ones it endorsed. Cardio is kept either way, because Edvard put it there
+// himself and the coach was never asked about it.
+function applyDraft(plan, days) {
+  const next = JSON.parse(JSON.stringify(plan || {}));
+  const drafted = days || [];
+  next.days = (next.days || []).map(d => {
+    const match = drafted.find(x => x && x.day === d.day);
+    // Spreading the existing day first is what keeps its cardio: only focus and
+    // exercises are ever overwritten, on a drafted day and on a cleared one.
+    if (!match) return Object.assign({}, d, { focus: 'Rest', exercises: [] });
+    return Object.assign({}, d, {
+      focus: match.focus,
+      exercises: (match.exercises || []).map(e => ({ name: e.name, sets: e.sets, reps: e.reps })),
+    });
+  });
+  return next;
 }
 
 // Pure: takes a plan, returns a new one. Nothing here writes to storage, so a
