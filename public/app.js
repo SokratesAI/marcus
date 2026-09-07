@@ -1961,10 +1961,6 @@ function personalBestsCard(rows) {
     </div>`;
 }
 
-// Goals go at the top of Progress because the graphs below are supposed to
-// serve them. Drawn in plain CSS, not Chart.js: the library is loaded async so
-// a stalled CDN can leave it absent, and the one thing on this tab that
-// answers "am I on track" should not be the thing that disappears.
 // Sits under Personal bests, because the two are the same reading taken from
 // opposite ends: that card is every lift at its best, this one is every lift
 // that has not reached a new best in a while. Plain CSS and no chart, for the
@@ -1997,6 +1993,10 @@ function stalledLiftsCard(report) {
     </div>`;
 }
 
+// Goals go at the top of Progress because the graphs below are supposed to
+// serve them. Drawn in plain CSS, not Chart.js: the library is loaded async so
+// a stalled CDN can leave it absent, and the one thing on this tab that
+// answers "am I on track" should not be the thing that disappears.
 function goalProgressCard(goal, todayISO) {
   const p = goalProgress(goal, todayISO);
   const left = p.daysLeft < 0 ? 'target date passed'

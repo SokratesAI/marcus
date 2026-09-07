@@ -578,11 +578,6 @@ function stalledLifts(sessions) {
   return { stalled: stalled, watched: keys.length, threshold: STALL_SESSIONS };
 }
 
-function stalledLiftLabel(row) {
-  if (!row) return '';
-  return row.sessions + ' sessions stuck at ' + personalBestLabel(row.best);
-}
-
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
 // walk are all real sessions with no kilometres attached, and demanding one
 // would push the user to invent a number. Duration is what every cardio

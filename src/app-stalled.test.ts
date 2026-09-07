@@ -37,7 +37,6 @@ function loadApp(): any {
   vm.runInContext(
     APP_SOURCE +
       "\n;globalThis.stalledLifts = stalledLifts;" +
-      "\n;globalThis.stalledLiftLabel = stalledLiftLabel;" +
       "\n;globalThis.stalledLiftsCard = stalledLiftsCard;" +
       "\n;globalThis.STALL_SESSIONS = STALL_SESSIONS;",
     ctx,
@@ -232,25 +231,6 @@ describe("stalledLifts", () => {
     ]);
     expect(report.watched).toBe(2);
     expect(report.stalled).toHaveLength(1);
-  });
-});
-
-describe("stalledLiftLabel", () => {
-  it("reads as a sentence about the set it is stuck on", () => {
-    const app = loadApp();
-    expect(app.stalledLiftLabel({ name: "Bench Press", sessions: 3, best: { weight: 80, reps: 5 } }))
-      .toBe("3 sessions stuck at 80 kg × 5");
-  });
-
-  it("says bodyweight rather than 0 kg", () => {
-    const app = loadApp();
-    expect(app.stalledLiftLabel({ name: "Pull-Up", sessions: 4, best: { weight: 0, reps: 8 } }))
-      .toBe("4 sessions stuck at bodyweight × 8");
-  });
-
-  it("is empty for nothing", () => {
-    const app = loadApp();
-    expect(app.stalledLiftLabel(null)).toBe("");
   });
 });
 
