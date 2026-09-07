@@ -292,6 +292,10 @@ function restSeconds(rawReps) {
   // nothing to rest between. Zero is the one spelling of "say nothing", the
   // same as the empty string is for every label on this row.
   if (!Number.isFinite(reps) || reps < 1) return 0;
+  // A fractional rep count is reachable -- the reps box is a number input and
+  // "5.5" is a valid one -- and it falls into the band above it rather than
+  // being rejected. Half a rep does not change how long you need, and refusing
+  // to answer would be a stricter opinion about the box than the box has.
   for (let i = 0; i < REST_BANDS.length; i++) {
     if (reps <= REST_BANDS[i].maxReps) return REST_BANDS[i].seconds;
   }

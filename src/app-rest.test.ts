@@ -87,6 +87,12 @@ describe("restSeconds", () => {
     expect(app.restSeconds(undefined)).toBe(0);
   });
 
+  it("puts a fractional rep count in the band above it", () => {
+    const app = loadApp();
+    expect(app.restSeconds(5.5)).toBe(90);
+    expect(app.restSeconds(12.5)).toBe(60);
+  });
+
   it("reads the reps box as the string an input actually holds", () => {
     const app = loadApp();
     expect(app.restSeconds("3")).toBe(180);
