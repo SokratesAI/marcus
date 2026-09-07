@@ -1,11 +1,7 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { APP_SOURCE } from "./app-source.js";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const APP_SOURCE = readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
 
 // Same vm shape as app-load.test.ts. Everything under test here is pure --
 // a plan and a list of sessions in, proposals or a new plan out -- so no DOM
