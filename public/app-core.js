@@ -179,6 +179,95 @@ function warmupLabel(rawWeight) {
   }).join(', ');
 }
 
+// Loading the bar (idea #187). The warm-up ramp above hands you 60 kg and 90 kg
+// and then says nothing about how to get there, which is the arithmetic you
+// actually do standing at the rack between sets.
+//
+// Barbell lifts are an explicit list for the same reason the form guide is: a
+// lift Marcus does not know gets no line at all, rather than a guessed bar
+// weight. "Bar 20 kg" under a dumbbell press is worse than saying nothing.
+const BAR_KG = 20;
+const BARBELL_LIFTS = [
+  { name: 'Barbell Bench Press', aka: ['Bench Press', 'Flat Bench Press'] },
+  { name: 'Incline Bench Press' },
+  { name: 'Overhead Press', aka: ['Shoulder Press', 'Military Press'] },
+  { name: 'Deadlift', aka: ['Conventional Deadlift'] },
+  { name: 'Romanian Deadlift', aka: ['RDL'] },
+  { name: 'Back Squat', aka: ['Squat', 'Barbell Squat'] },
+  { name: 'Front Squat' },
+  { name: 'Barbell Row', aka: ['Bent-over Row', 'Bent Over Row'] },
+  { name: 'Barbell Curl' },
+];
+
+// One pair of each of these is what the gym has. Nothing here models how MANY
+// of each are on the rack -- that is an inventory nobody has entered, and a
+// wrong count would refuse a load that is sitting right there.
+const PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
+
+// Same flatten-every-spelling shape as `formGuideEntries`, and matched exactly
+// on `exerciseKey` for the same reason: "Front Squat" and "Back Squat" are
+// different lifts and a fuzzy matcher would put the wrong bar under one of them.
+function barbellLiftKeys() {
+  const out = [];
+  BARBELL_LIFTS.forEach(function (e) {
+    [e.name].concat(e.aka || []).forEach(function (word) { out.push(exerciseKey(word)); });
+  });
+  return out;
+}
+
+function isBarbellLift(name) {
+  const key = exerciseKey(name);
+  if (!key) return false;
+  return barbellLiftKeys().indexOf(key) !== -1;
+}
+
+// Biggest plate first, which is how a bar is actually loaded -- the 25s go on
+// innermost. That is not the same as the fewest plates and no claim is made
+// that it is; it is the order that produces a bar you can look at and check.
+//
+// The arithmetic is done in hundredths of a kilo as integers. Every plate here
+// is an exact binary fraction so plain floats would survive them, but a weight
+// typed as 61.1 is not, and float dust in the remainder reads on the phone as
+// "0.09999999999 kg short".
+function plateLoad(rawTotal) {
+  const total = Number(rawTotal);
+  if (!Number.isFinite(total)) return null;
+  // At or below the bar there is nothing to load. A bodyweight row is 0 kg and
+  // lands here, which is the right answer for it too.
+  if (total <= BAR_KG) return null;
+  let left = Math.round((total - BAR_KG) * 50);
+  const perSide = [];
+  PLATES.forEach(function (plate) {
+    const unit = plate * 100;
+    const count = Math.floor(left / unit);
+    if (count <= 0) return;
+    perSide.push({ kg: plate, count: count });
+    left -= count * unit;
+  });
+  const loadedSide = perSide.reduce(function (sum, p) { return sum + p.kg * p.count; }, 0);
+  return { bar: BAR_KG, perSide: perSide, loaded: BAR_KG + loadedSide * 2, short: left / 100 };
+}
+
+// The sentence is separate from the numbers, same as `warmupLabel`, and "nothing
+// to show" has exactly one spelling: the empty string, which the Log tab hides
+// on.
+//
+// A weight the plates cannot reach is reported as the closest weight they can,
+// rather than silently rounded to it. 61 kg is not a lie the app should tell.
+function plateLoadLabel(name, rawTotal) {
+  if (!isBarbellLift(name)) return '';
+  const load = plateLoad(rawTotal);
+  if (!load) return '';
+  const parts = load.perSide.map(function (p) {
+    return p.count > 1 ? String(p.kg) + ' \u00d7 ' + p.count : String(p.kg);
+  });
+  const head = parts.length
+    ? 'Bar ' + load.bar + ' kg + ' + parts.join(', ') + ' per side'
+    : 'Bar ' + load.bar + ' kg alone';
+  if (load.short === 0) return head;
+  return head + ' = ' + load.loaded + ' kg, the closest you can load';
+}
+
 // The plan is a template: it carries an exercise, its sets and its reps, and it
 // never carries a weight. The weight only ever exists in what was actually
 // lifted, so a Log row for an exercise done a hundred times still opens with an
