@@ -149,6 +149,7 @@ body{
 .exercise-line{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;color:var(--md-on-surface-variant);}
 .exercise-line--done{color:var(--md-primary);font-weight:500;}
 .exercise-line--done .material-icons-round{font-size:15px;vertical-align:-3px;margin-right:4px;}
+.exercise-line--cleared{color:var(--md-on-surface-variant);font-style:italic;}
 
 .btn{
   border:none;border-radius:20px;padding:10px 20px;font-family:inherit;font-weight:500;
