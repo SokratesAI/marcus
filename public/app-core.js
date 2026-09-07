@@ -722,6 +722,129 @@ function referencesFor(kind) {
   return out;
 }
 
+// ---------- the glossary: explain a word where it is used (idea #197) ----------
+// Edvard wants to understand his own training, and the app keeps using words it
+// never defines. This is not an article list: an entry earns its place only by
+// being a term Marcus already puts on the screen, and it is read where that word
+// appears rather than on a page you have to go and find.
+//
+// Three boundaries, all deliberate and all tested. A term the app already
+// explains in the sentence it uses it in gets no entry -- the Fitness/Fatigue
+// card spells itself out, and the four goal phases each carry their own note --
+// because a tappable word that repeats the line above it is noise. And nothing
+// here is a training recommendation: each entry says what the word means and
+// where in Marcus the number behind it comes from, which is a fact about this
+// app, not advice about a body.
+//
+// The third boundary is the one I got wrong first, and it is why its test is
+// written against live strings rather than against the source. `deload` and
+// `acute:chronic` had entries here and both looked obviously right: the app is
+// full of both words. It is full of them in `kind === 'deload'` and in a comment
+// about the acute:chronic literature -- the chip a reader actually sees says
+// "ease off", and the ratio is never named on screen at all. A grep over the
+// source passes for a word only my own comments say, so the test instead asks
+// linkGlossary to produce a button out of text the app really renders.
+const GLOSSARY = [
+  {
+    term: 'RPE',
+    aka: ['rate of perceived exertion'],
+    title: 'RPE — rate of perceived exertion',
+    body: 'How hard a set felt, on a scale of 1 to 10, where 10 is a set you could not have added a rep to. It is the one training signal that needs no watch and no maths: you type the number you felt. Marcus stores it beside the reps and the weight, and leaves it off entirely if you skip the box, because a blank is not a zero.'
+  },
+  {
+    term: 'hypertrophy',
+    title: 'Hypertrophy',
+    body: 'Training for muscle size rather than for a single maximum lift: moderate weights, more reps, more total sets, shorter rests. It is the block Marcus assumes on the strength days of a plan unless the goal you wrote says otherwise.'
+  },
+  {
+    term: 'taper',
+    aka: ['tapering'],
+    title: 'Taper',
+    body: 'The last stretch before the day you are aiming at, where the volume drops but the intensity does not, so you arrive rested without going stale. It is the shortest of the four phases Marcus splits a goal into for exactly that reason.'
+  },
+  {
+    term: 'ventilatory threshold',
+    title: 'Ventilatory threshold',
+    body: 'The effort at which your breathing steps up out of proportion to the pace — roughly the top of easy. It is how endurance research draws the line between the easy work that fills most of a week and the hard work that fills the rest, and it is why "easy" in a plan means slower than it feels like it should.'
+  }
+];
+
+// Longest first, so a shorter entry that happens to start inside a longer one
+// cannot half-match it, and every spelling of an entry lands on the same entry.
+function glossaryEntries() {
+  const out = [];
+  GLOSSARY.forEach(function (e) {
+    [e.term].concat(e.aka || []).forEach(function (word) { out.push({ word: word, entry: e }); });
+  });
+  out.sort(function (a, b) { return b.word.length - a.word.length; });
+  return out;
+}
+
+// One word in, its entry out. Case-insensitive because the app writes `RPE` and
+// `Deload` and `deload` in different places, and an explainer that depends on
+// capitalisation is one that silently stops appearing.
+function glossaryTerm(word) {
+  const needle = String(word == null ? '' : word).trim().toLowerCase();
+  if (!needle) return null;
+  const hit = glossaryEntries().filter(function (e) { return e.word.toLowerCase() === needle; })[0];
+  return hit ? hit.entry : null;
+}
+
+// Plain text in, escaped HTML out, with the first mention of each term wrapped
+// in a button that opens its explainer. It escapes rather than expecting escaped
+// input on purpose: this replaces an `esc()` call at every site that uses it, so
+// the safe thing has to be the thing you get by default.
+//
+// First mention only, and one per entry -- a paragraph that says "taper" three
+// times should not become three buttons, and `rate of perceived exertion` after
+// `RPE` is the same idea a second time.
+function linkGlossary(text) {
+  const raw = String(text == null ? '' : text);
+  const used = Object.create(null);
+  const spans = [];
+  glossaryEntries().forEach(function (candidate) {
+    if (used[candidate.entry.term]) return;
+    const at = findTerm(raw, candidate.word);
+    if (at < 0) return;
+    if (overlapsAny(spans, at, at + candidate.word.length)) return;
+    used[candidate.entry.term] = true;
+    spans.push({ start: at, end: at + candidate.word.length, entry: candidate.entry });
+  });
+  spans.sort(function (a, b) { return a.start - b.start; });
+  let out = '';
+  let cursor = 0;
+  spans.forEach(function (s) {
+    out += esc(raw.slice(cursor, s.start));
+    out += '<button type="button" class="term" data-term="' + esc(s.entry.term) +
+           '" aria-label="What ' + esc(s.entry.term) + ' means">' + esc(raw.slice(s.start, s.end)) + '</button>';
+    cursor = s.end;
+  });
+  return out + esc(raw.slice(cursor));
+}
+
+// A term only matches as a whole word, so `taper` never fires inside `tapered`
+// and `RPE` never fires inside a longer token. A term may hold a space or a
+// hyphen, which is why this is a scan rather than one regex over a joined list.
+function findTerm(text, word) {
+  const lower = text.toLowerCase();
+  const needle = word.toLowerCase();
+  let from = 0;
+  for (;;) {
+    const at = lower.indexOf(needle, from);
+    if (at < 0) return -1;
+    const before = at === 0 ? '' : lower[at - 1];
+    const after = lower[at + needle.length] || '';
+    if (!isWordChar(before) && !isWordChar(after)) return at;
+    from = at + 1;
+  }
+}
+
+function isWordChar(ch) { return !!ch && /[a-z0-9]/.test(ch); }
+
+function overlapsAny(spans, start, end) {
+  return spans.some(function (s) { return start < s.end && s.start < end; });
+}
+
 // Phase ends are cumulative shares of the whole window rather than per-phase
 // lengths added up, so the last one lands exactly on the target date instead of
 // four roundings away from it.

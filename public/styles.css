@@ -275,3 +275,25 @@ body{
 .seg{display:flex;gap:0;border:1px solid var(--md-outline,#79747e);border-radius:999px;overflow:hidden;margin-bottom:14px;}
 .seg__btn{flex:1;padding:10px 12px;border:0;background:transparent;color:var(--md-on-surface-variant);font:inherit;font-weight:600;cursor:pointer;min-height:44px;}
 .seg__btn--on{background:var(--md-secondary-container);color:var(--md-on-secondary-container);}
+
+/* Term explainers (idea #197) — a glossary word reads as text with a hint under
+   it, not as a link: it sits inside a sentence and a blue underlined word there
+   would look like it leaves the app. */
+.term{
+  background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;
+  border-bottom:1px dotted var(--md-primary);
+}
+.term--icon{
+  border:1px solid var(--md-outline,#ccc);border-radius:50%;width:22px;height:22px;
+  line-height:1;color:var(--md-on-surface-variant);flex:0 0 auto;
+}
+.term-sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center;}
+.term-sheet[hidden]{display:none;}
+.term-sheet__scrim{position:absolute;inset:0;background:rgba(0,0,0,.4);}
+.term-sheet__panel{
+  position:relative;width:100%;max-width:520px;background:var(--md-surface,#fff);
+  border-radius:20px 20px 0 0;padding:16px 20px calc(20px + env(safe-area-inset-bottom));
+}
+.term-sheet__header{display:flex;align-items:center;gap:8px;}
+.term-sheet__title{flex:1;font-size:17px;font-weight:700;margin:0;}
+.term-sheet__body{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--md-on-surface-variant);}

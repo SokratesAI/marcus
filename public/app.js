@@ -126,10 +126,10 @@ function renderPlan() {
     ${review.proposals.length ? review.proposals.map(p => `
       <div class="card" style="display:block">
         <div class="card__title-row"><h2>${esc(p.title)}</h2><span class="chip ${p.kind === 'deload' ? 'chip--alert' : 'chip--primary'}">${esc(proposalChip(p.kind))}</span></div>
-        <p class="card__note">${esc(p.reason)}</p>
+        <p class="card__note">${linkGlossary(p.reason)}</p>
         ${referencesFor(p.kind).map(c => `
           <div class="card__note" style="margin-top:8px;padding-left:8px;border-left:2px solid var(--md-outline, #ccc)">
-            <a href="${esc(c.ref.url)}" target="_blank" rel="noopener noreferrer">${esc(c.ref.authors)} (${c.ref.year})</a> &middot; ${esc(c.ref.venue)}<br>${esc(c.ref.finding)}<br><em>${esc(c.stretch)}</em>
+            <a href="${esc(c.ref.url)}" target="_blank" rel="noopener noreferrer">${esc(c.ref.authors)} (${c.ref.year})</a> &middot; ${esc(c.ref.venue)}<br>${linkGlossary(c.ref.finding)}<br><em>${linkGlossary(c.stretch)}</em>
           </div>`).join('')}
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="acceptProposal('${p.id}')">Change the plan</button>
       </div>`).join('') : `<div class="empty">${esc(review.note)}</div>`}
@@ -166,7 +166,7 @@ function renderPlan() {
 
     <div class="section-title">This week</div>
     <div class="card">
-      <h2>${plan.blockName}</h2>
+      <h2>${linkGlossary(plan.blockName)}</h2>
       <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Sized for the ${esc(plan.phase || PLAN_DEFAULT_PHASE)} phase &middot; ${planTotalSets(plan)} sets across ${planTrainingDays(plan).length} training day(s)</div>
     </div>
     <div class="card">
@@ -772,7 +772,7 @@ function sessionCard(s) {
   const volume = exercises.reduce((sum, e) => sum + e.sets.reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
   return `<div class="card">
     <div class="card__title-row"><h2>${niceDate(s.date)} · ${esc(s.day || 'Session')}</h2>${del}</div>
-    ${exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets${e.rpe != null ? ` \u00b7 RPE ${e.rpe}` : ''}</span></div>`).join('')}
+    ${exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets${e.rpe != null ? ` \u00b7 ${linkGlossary('RPE')} ${e.rpe}` : ''}</span></div>`).join('')}
     <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">Volume: ${Math.round(volume).toLocaleString()} kg</div>
     ${sessionNoteLine(s)}
   </div>`;
@@ -2901,6 +2901,33 @@ function showUpdateBanner() {
   const host = document.getElementById('updateBanner');
   if (host) host.hidden = false;
 }
+
+// ---------- term explainers (idea #197) ----------
+// One listener on the document rather than one per button: the terms are
+// rendered inside innerHTML that is rebuilt on every tab switch, so a handler
+// bound to a button would be thrown away with it. This also means a `data-term`
+// written straight into index.html works with no extra wiring.
+const termSheet = document.getElementById('termSheet');
+
+function openTerm(word) {
+  const entry = glossaryTerm(word);
+  if (!entry) return false;
+  document.getElementById('termTitle').textContent = entry.title;
+  document.getElementById('termBody').textContent = entry.body;
+  termSheet.hidden = false;
+  document.getElementById('termClose').focus();
+  return true;
+}
+function closeTerm() { termSheet.hidden = true; }
+
+document.addEventListener('click', (ev) => {
+  const handle = ev.target.closest('[data-term]');
+  if (!handle) return;
+  if (openTerm(handle.dataset.term)) ev.preventDefault();
+});
+document.getElementById('termClose').addEventListener('click', closeTerm);
+termSheet.querySelector('.term-sheet__scrim').addEventListener('click', closeTerm);
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !termSheet.hidden) closeTerm(); });
 
 // ---------- boot ----------
 switchTab('home');
