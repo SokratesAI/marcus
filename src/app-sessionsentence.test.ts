@@ -578,6 +578,51 @@ describe("the kilos reach the form, not just the summary", () => {
     expect(rows[0][".ex-weight"].value).toBe("82.5");
   });
 
+  it("re-reads history when the exercise name is retyped", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", [
+      { id: "s1", date: "2026-01-05", kind: "strength", day: "Thursday",
+        exercises: [{ name: "Back Squat", sets: [{ reps: 6, weight: 95 }] }] },
+    ]);
+    // A template stub that keeps the listeners as well as the values, so the
+    // typing can actually be replayed. The plain recordingTemplate above drops
+    // them, which is why removing the listener survived every other test here.
+    const rows: Array<Record<string, any>> = [];
+    byId["tpl-log-exercise-row"] = {
+      content: {
+        cloneNode: () => {
+          const fields: Record<string, any> = {};
+          const make = () => {
+            const node: any = {
+              value: "", textContent: "", hidden: false, listeners: {} as Record<string, any[]>,
+              addEventListener(evt: string, fn: any) { (node.listeners[evt] ??= []).push(fn); },
+              closest: () => ({ remove() {} }),
+            };
+            return node;
+          };
+          for (const sel of [".ex-name", ".ex-sets", ".ex-reps", ".ex-weight", ".ex-rpe", ".ex-remove", ".ex-warmup", ".ex-last"]) {
+            fields[sel] = make();
+          }
+          rows.push(fields);
+          return { querySelector: (sel: string) => (fields[sel] ??= make()) };
+        },
+      },
+    };
+    ctx.logSentence = null;
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    const row = rows[0];
+    // The precondition: the row the plan opened with is NOT the lift in the
+    // history, so the line starts empty and the retype is what finds it.
+    expect(row[".ex-name"].value).not.toBe("Back Squat");
+    expect(row[".ex-last"].hidden).toBe(true);
+    row[".ex-name"].value = "back  SQUAT";
+    for (const fn of row[".ex-name"].listeners["input"]) fn();
+    expect(row[".ex-last"].hidden).toBe(false);
+    expect(row[".ex-last"].textContent).toContain("Last time 95 kg × 6");
+  });
+
   it("does not let history overwrite a weight the sentence gave", () => {
     const { ctx, byId } = loadApp();
     ctx.store.set("plan", PLAN);
