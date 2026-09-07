@@ -614,6 +614,59 @@ function trainingStreak(sessions, todayISO) {
   return count;
 }
 
+// Home's Today card said exactly the same thing whether or not the session had
+// already been logged: it listed the plan and offered "Log this session".
+// Nutrition on the same screen already answers "what have I eaten today";
+// training did not, so the one screen the app opens on could not tell you
+// whether today was done.
+//
+// A set counts here on the same rule weeklyMuscleSets uses -- a finite,
+// positive rep count -- so this number and the one on Progress can never
+// disagree. A session logged with no completed set is still a real session and
+// says so in words rather than as "0 lifts / 0 sets": a zero there reads as
+// nothing logged, which is the exact thing this card exists to distinguish.
+function todayLogged(sessions, todayISO) {
+  const today = todayISO || todayStr();
+  const mine = (sessions || []).filter(function (s) { return s && s.date === today; });
+  if (!mine.length) return null;
+  const strength = mine.filter(function (s) { return sessionKind(s) === 'strength'; });
+  const cardio = mine.filter(function (s) { return sessionKind(s) === 'cardio'; });
+  let lifts = 0;
+  let sets = 0;
+  strength.forEach(function (s) {
+    (s.exercises || []).forEach(function (ex) {
+      if (!ex || !exerciseKey(ex.name)) return;
+      const hard = (ex.sets || []).filter(function (st) {
+        return st && typeof st.reps === 'number' && Number.isFinite(st.reps) && st.reps > 0;
+      }).length;
+      if (!hard) return;
+      lifts++;
+      sets += hard;
+    });
+  });
+  const minutes = cardio.reduce(function (sum, s) {
+    const m = s.minutes;
+    return sum + (typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : 0);
+  }, 0);
+  // Two treadmill runs read as one activity; a run and a swim read as "cardio",
+  // because naming only the first of them would be a wrong label rather than a
+  // vaguer one.
+  const activities = Array.from(new Set(cardio
+    .map(function (s) { return String(s.activity == null ? '' : s.activity).trim(); })
+    .filter(Boolean)));
+  const parts = [];
+  if (strength.length) {
+    parts.push(sets
+      ? lifts + (lifts === 1 ? ' lift \u00b7 ' : ' lifts \u00b7 ') + sets + (sets === 1 ? ' set' : ' sets')
+      : 'strength session logged');
+  }
+  if (cardio.length) {
+    const what = activities.length === 1 ? activities[0] : 'cardio';
+    parts.push(minutes ? minutes + ' min ' + what : what + ' logged');
+  }
+  return { count: mine.length, lifts: lifts, sets: sets, cardioMinutes: minutes, label: parts.join(' \u00b7 ') };
+}
+
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
 // walk are all real sessions with no kilometres attached, and demanding one
 // would push the user to invent a number. Duration is what every cardio
