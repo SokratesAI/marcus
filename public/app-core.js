@@ -351,6 +351,223 @@ async function lookupBarcodeFood(code, fetchImpl) {
   return { ok: true, food, cached: Boolean(body.cached) };
 }
 
+// --- A barcode, read off the camera -----------------------------------------
+// The other half of idea #204. The lookup above needs thirteen digits, and
+// until now the only way to get them in was to read them off the packet and
+// type them. The obvious mechanism -- BarcodeDetector -- does not exist in
+// WebKit, so on an iPhone there is nothing to call. The alternatives were
+// shipping a decoder library (about a megabyte of wasm, cached forever by the
+// service worker, for one field on one tab) or writing the one symbology that
+// is actually on food: EAN-13. This is that.
+//
+// UPC-A is not a separate case: it is EAN-13 with a leading zero, and Open
+// Food Facts wants the thirteen-digit form, so a 12-digit American packet
+// comes back here as '0' + its digits and looks up correctly. EAN-8 (the short
+// code on small packets) is deliberately NOT decoded -- it is a different
+// module layout, and a decoder that half-reads it would return digits that
+// pass no checksum.
+//
+// The input is one row of luminance samples straight off a canvas. Everything
+// here is pure, which is the point: the camera is the untestable part, so the
+// camera holds no logic.
+
+// Widths of the four runs of each digit, in modules, for the L (odd) set.
+// The G set is the same list reversed, and the R set is the same list read
+// starting on a bar instead of a space -- so one table is all three.
+const EAN_DIGIT_RUNS = [
+  [3, 2, 1, 1], [2, 2, 2, 1], [2, 1, 2, 2], [1, 4, 1, 1], [1, 1, 3, 2],
+  [1, 2, 3, 1], [1, 1, 1, 4], [1, 3, 1, 2], [1, 2, 1, 3], [3, 1, 1, 2],
+];
+
+// Which of the six left digits are G-coded, indexed by the first digit. This
+// is the whole reason EAN-13 holds thirteen digits in twelve digits' worth of
+// bars: the thirteenth is carried by the parity pattern, not by any bar.
+const EAN_PARITY = [
+  'LLLLLL', 'LLGLGG', 'LLGGLG', 'LLGGGL', 'LGLLGG',
+  'LGGLLG', 'LGGGLL', 'LGLGLG', 'LGGLGL', 'LGLGGL',
+];
+
+// ZXing's tolerances, and they are not arbitrary: a camera frame stretches the
+// wide runs and eats the narrow ones, so an exact match never happens. Any one
+// run may be 0.7 modules out and the average across the four may be 0.48.
+const RUN_MAX_INDIVIDUAL_VARIANCE = 0.7;
+const RUN_MAX_AVG_VARIANCE = 0.48;
+
+// Returns { digit, set } for four run widths, or null if nothing fits. `set` is
+// 'L' or 'G' on the left half; the right half only ever answers 'L' because the
+// R patterns share their widths with L.
+function matchEanDigit(runs, allowG) {
+  const total = runs[0] + runs[1] + runs[2] + runs[3];
+  if (total <= 0) return null;
+  const unit = total / 7;
+  let best = null;
+  for (let d = 0; d < 10; d++) {
+    for (const set of allowG ? ['L', 'G'] : ['L']) {
+      const pattern = set === 'G' ? EAN_DIGIT_RUNS[d].slice().reverse() : EAN_DIGIT_RUNS[d];
+      let sum = 0;
+      let ok = true;
+      for (let i = 0; i < 4; i++) {
+        const variance = Math.abs(runs[i] / unit - pattern[i]);
+        if (variance > RUN_MAX_INDIVIDUAL_VARIANCE) { ok = false; break; }
+        sum += variance;
+      }
+      if (!ok) continue;
+      const avg = sum / 4;
+      if (avg > RUN_MAX_AVG_VARIANCE) continue;
+      if (!best || avg < best.avg) best = { digit: d, set, avg };
+    }
+  }
+  return best ? { digit: best.digit, set: best.set } : null;
+}
+
+// The last digit is a check digit over the first twelve. It is the only reason
+// a misread is a refusal rather than a wrong food: three bars misjudged gives
+// a code that fails this, and the scanner keeps looking at the next frame
+// instead of logging somebody else's dinner.
+function ean13ChecksumOk(digits) {
+  if (!/^[0-9]{13}$/.test(digits)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(digits[i]) * (i % 2 === 0 ? 1 : 3);
+  return (10 - (sum % 10)) % 10 === Number(digits[12]);
+}
+
+// One row of samples -> alternating run lengths, plus the colour the first run
+// is. Anything below the midpoint of the row's own range is a bar, so a dim
+// frame and a bright one are read the same way and no absolute brightness is
+// assumed anywhere. There is deliberately no minimum-contrast gate: a flat row
+// has one run in it, which no guard matches, so the structure below already
+// refuses it and a threshold would be a second rule saying the same thing --
+// one I could not have written a failing test for.
+function runsFromRow(row) {
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] < min) min = row[i];
+    if (row[i] > max) max = row[i];
+  }
+  const mid = (min + max) / 2;
+  const runs = [];
+  let dark = row[0] < mid;
+  const firstDark = dark;
+  let len = 0;
+  for (let i = 0; i < row.length; i++) {
+    const isDark = row[i] < mid;
+    if (isDark === dark) { len++; continue; }
+    runs.push(len);
+    dark = isDark;
+    len = 1;
+  }
+  runs.push(len);
+  return { runs, firstDark };
+}
+
+// A guard is a run of single modules -- three of them at each end, five in the
+// middle. We only know what "one module" is from the guard itself, so the test
+// is that they are all within half of their own average; nothing here trusts a
+// pixel size handed in from outside.
+// `unit` is the module width the start guard measured, and the later guards are
+// checked against it as well as against themselves. Without it the test is
+// scale-free, and five modules of double width -- which is what a printing
+// fault or a badly stitched frame looks like -- passes while every digit around
+// it still decodes. The tolerance is wide because a packet held at an angle
+// really is narrower on one side than the other.
+function looksLikeGuard(runs, start, count, unit) {
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    const run = runs[start + i];
+    if (!(run > 0)) return false;
+    sum += run;
+  }
+  const avg = sum / count;
+  if (avg < 0.75) return false;
+  for (let i = 0; i < count; i++) {
+    if (Math.abs(runs[start + i] - avg) > avg * 0.5) return false;
+  }
+  if (unit && (avg > unit * 1.5 || avg < unit * 0.6)) return false;
+  return true;
+}
+
+// Decodes from a run list whose run at `start` is the first bar of the start
+// guard. 59 runs: 3 guard, 24 left, 5 centre guard, 24 right, 3 end guard.
+function decodeEanRuns(runs, start) {
+  if (start + 59 > runs.length) return null;
+  // 3 guard + 24 left + 5 centre guard + 24 right + 3 guard = 59 runs.
+  if (!looksLikeGuard(runs, start, 3)) return null;
+  const unit = (runs[start] + runs[start + 1] + runs[start + 2]) / 3;
+  if (!looksLikeGuard(runs, start + 27, 5, unit)) return null;
+  if (!looksLikeGuard(runs, start + 56, 3, unit)) return null;
+
+  let parity = '';
+  let digits = '';
+  for (let d = 0; d < 6; d++) {
+    const at = start + 3 + d * 4;
+    const hit = matchEanDigit(runs.slice(at, at + 4), true);
+    if (!hit) return null;
+    parity += hit.set;
+    digits += String(hit.digit);
+  }
+  const first = EAN_PARITY.indexOf(parity);
+  if (first < 0) return null;
+  for (let d = 0; d < 6; d++) {
+    const at = start + 32 + d * 4;
+    const hit = matchEanDigit(runs.slice(at, at + 4), false);
+    if (!hit) return null;
+    digits += String(hit.digit);
+  }
+  const code = String(first) + digits;
+  return ean13ChecksumOk(code) ? code : null;
+}
+
+// The one call the camera makes. `row` is luminance for a single horizontal
+// line across the frame; the answer is a thirteen-digit string or null. A
+// packet held upside down puts the guard on the right and the digits backwards,
+// which is one reversed pass rather than a second decoder.
+function decodeEan13Row(row) {
+  if (!row || row.length < 60) return null;
+  const forward = Array.from(row);
+  for (const line of [forward, forward.slice().reverse()]) {
+    const { runs, firstDark } = runsFromRow(line);
+    // The guard is a bar, so it can only start on an odd index when the row
+    // opens on a bar of its own -- the quiet zone before the code.
+    for (let i = firstDark ? 0 : 1; i + 59 <= runs.length; i += 2) {
+      const code = decodeEanRuns(runs, i);
+      if (code) return code;
+    }
+  }
+  return null;
+}
+
+// How many rows of a frame to try. A barcode held at a slight angle crosses
+// some rows and misses others, and a thumb over the middle of the packet kills
+// exactly the row a single-line scanner would have read -- so this walks a band
+// down the middle of the frame rather than reading the centre line and giving
+// up. Eleven rows over about a third of the frame costs well under a
+// millisecond per frame in this decoder and is what makes it work handheld.
+const SCAN_ROWS = 11;
+const SCAN_BAND = 0.34;
+
+// A frame off the camera -> a barcode or null. `data` is RGBA, straight out of
+// getImageData. Luminance is the plain Rec. 601 weighting; a barcode is black
+// on white, so nothing here needs colour.
+function decodeEan13Frame(data, width, height, rowCount) {
+  if (!data || !(width > 0) || !(height > 0)) return null;
+  if (data.length < width * height * 4) return null;
+  const rows = rowCount || SCAN_ROWS;
+  const band = Math.max(1, Math.round(height * SCAN_BAND));
+  const top = Math.round((height - band) / 2);
+  const row = new Array(width);
+  for (let n = 0; n < rows; n++) {
+    const y = rows === 1 ? top + (band >> 1) : top + Math.round((band - 1) * (n / (rows - 1)));
+    if (y < 0 || y >= height) continue;
+    let at = y * width * 4;
+    for (let x = 0; x < width; x++, at += 4) {
+      row[x] = 0.299 * data[at] + 0.587 * data[at + 1] + 0.114 * data[at + 2];
+    }
+    const code = decodeEan13Row(row);
+    if (code) return code;
+  }
+  return null;
+}
+
 // --- A phrase, looked up by name --------------------------------------------
 // Idea #205. The sentence parser below hands back the phrases it could not
 // place, and until now the only thing to do with one was type the food in by

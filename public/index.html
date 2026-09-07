@@ -101,6 +101,23 @@
   </div>
 </div>
 
+<div id="scanSheet" class="scan-sheet" hidden>
+  <div class="scan-sheet__scrim"></div>
+  <div class="scan-sheet__panel" role="dialog" aria-modal="true" aria-label="Scan a barcode">
+    <div class="scan-sheet__header">
+      <h2 class="scan-sheet__title">Point it at the barcode</h2>
+      <button id="scanClose" class="icon-btn" aria-label="Close the scanner">
+        <span class="material-icons-round">close</span>
+      </button>
+    </div>
+    <div class="scan-sheet__stage">
+      <video id="scanVideo" class="scan-sheet__video" playsinline muted autoplay></video>
+      <div class="scan-sheet__reticle"></div>
+    </div>
+    <p class="scan-sheet__hint" id="scanHint">Hold the packet steady, about a hand's width away.</p>
+  </div>
+</div>
+
 <div id="updateBanner" class="update-banner" role="status" aria-live="polite" hidden>
   <span>A new version of Marcus is ready.</span>
   <button type="button" id="updateReload" class="update-banner__btn">Reload</button>
