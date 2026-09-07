@@ -175,6 +175,40 @@ describe("applyBadge", () => {
   });
 });
 
+describe("refreshBadge", () => {
+  // `store` is a top-level const, which lives in the context's global lexical
+  // scope rather than on the context object, so it is reachable from a second
+  // script run in the same context and not as a property of it.
+  function withStore(plan: unknown, sessions: unknown[]) {
+    const app = loadApp();
+    vm.runInContext(`store.set('plan', ${JSON.stringify(plan)});`
+                  + `store.set('sessions', ${JSON.stringify(sessions)});`, app);
+    const calls: number[] = [];
+    app.navigator.setAppBadge = (n: number) => { calls.push(n); };
+    app.navigator.clearAppBadge = () => { calls.push(0); };
+    return { app, calls };
+  }
+
+  it("passes the real count through, not just whether there is one", () => {
+    const { app, calls } = withStore(plan(), []);
+    // Monday, Tuesday and Thursday planned, nothing logged: today plus the week.
+    expect(app.refreshBadge(THURSDAY)).toBe(true);
+    expect(calls).toEqual([2]);
+  });
+
+  it("clears the icon when the week is up to date", () => {
+    const { app, calls } = withStore(plan(), [session(MONDAY), session("2026-09-08"), session(THURSDAY)]);
+    expect(app.refreshBadge(THURSDAY)).toBe(true);
+    expect(calls).toEqual([0]);
+  });
+
+  it("reads the stored plan and sessions rather than being handed them", () => {
+    const { app, calls } = withStore(plan(), [session(MONDAY), session("2026-09-08")]);
+    app.refreshBadge(THURSDAY);
+    expect(calls).toEqual([1]);
+  });
+});
+
 describe("the badge is wired to every render", () => {
   it("switchTab refreshes it, so a saved session updates the icon", () => {
     const src = APP_SOURCE;

@@ -1679,9 +1679,11 @@ function applyBadge(nav, count) {
   return true;
 }
 
-function refreshBadge() {
+// todayISO is a seam for the tests only -- switchTab calls this with nothing
+// and the date is resolved in the body, not bound as a default argument.
+function refreshBadge(todayISO) {
   return applyBadge(typeof navigator === 'undefined' ? null : navigator,
-                    openNudges(store.get('plan'), store.get('sessions', []), todayStr()).length);
+                    openNudges(store.get('plan'), store.get('sessions', []), todayISO || todayStr()).length);
 }
 
 function trainingLoadCard(load) {
