@@ -88,6 +88,19 @@
   </div>
 </div>
 
+<div id="termSheet" class="term-sheet" hidden>
+  <div class="term-sheet__scrim"></div>
+  <div class="term-sheet__panel" role="dialog" aria-modal="true" aria-labelledby="termTitle">
+    <div class="term-sheet__header">
+      <h2 class="term-sheet__title" id="termTitle"></h2>
+      <button id="termClose" class="icon-btn" aria-label="Close explainer">
+        <span class="material-icons-round">close</span>
+      </button>
+    </div>
+    <p class="term-sheet__body" id="termBody"></p>
+  </div>
+</div>
+
 <div id="updateBanner" class="update-banner" role="status" aria-live="polite" hidden>
   <span>A new version of Marcus is ready.</span>
   <button type="button" id="updateReload" class="update-banner__btn">Reload</button>
@@ -103,6 +116,7 @@
       <input class="ex-reps" type="number" min="1" placeholder="Reps" value="10">
       <input class="ex-weight" type="number" min="0" step="0.5" placeholder="kg">
       <input class="ex-rpe" type="number" min="1" max="10" step="1" placeholder="RPE">
+      <button type="button" class="term term--icon" data-term="RPE" aria-label="What RPE means">?</button>
       <button type="button" class="icon-btn ex-remove" aria-label="Remove exercise"><span class="material-icons-round">close</span></button>
     </div>
     <div class="ex-warmup" hidden></div>
