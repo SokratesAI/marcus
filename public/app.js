@@ -134,7 +134,7 @@ function renderPlan() {
           </div>`).join('')}
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="acceptProposal('${p.id}')">Change the plan</button>
       </div>`).join('') : `<div class="empty">${esc(review.note)}</div>`}
-    <div class="card__note" style="padding:0 4px 4px">Every number above is read off your own log. Where endurance research points the same way, the paper is quoted under the suggestion with how far it actually goes; suggestions about which days you keep carry none, because that is adherence rather than physiology.</div>
+    <div class="card__note" style="padding:0 4px 4px">Every number above is read off your own log. Where endurance research points the same way, the paper is quoted under the suggestion with how far it actually goes; suggestions about which days and which lifts you keep carry none, because that is adherence rather than physiology.</div>
 
     <div class="section-title">Let Marcus draft the week</div>
     <div class="card">
