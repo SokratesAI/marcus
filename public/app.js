@@ -1487,7 +1487,10 @@ function deloadProposal(plan, load, injuries) {
 function dropProposals(plan, sessions, todayISO, windowDays, weeks) {
   const today = dayKey(todayISO || todayStr());
   const first = shiftDay(today, -((windowDays || REVIEW_WINDOW_DAYS) - 1));
-  const done = {};
+  // Bare objects, not `{}`: the keys are exercise names the user typed, so a lift
+  // called `constructor` or `toString` would otherwise read as already-logged off
+  // Object.prototype and could never be proposed. Same reason `linkGlossary` does it.
+  const done = Object.create(null);
   const loggedOn = {};
   DAY_NAMES.forEach(name => { loggedOn[name] = 0; });
   (sessions || []).forEach(s => {
@@ -1661,7 +1664,7 @@ function applyProposal(plan, proposal) {
   } else if (proposal.kind === 'drop') {
     const day = next.days.find(d => d.day === proposal.day);
     if (day) {
-      const gone = {};
+      const gone = Object.create(null);
       (proposal.names || []).forEach(n => { gone[exerciseKey(n)] = true; });
       day.exercises = (day.exercises || []).filter(e => !gone[exerciseKey(e.name)]);
     }

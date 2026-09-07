@@ -167,6 +167,18 @@ describe("dropping a lift the plan names and you never do", () => {
     expect(drops(app, sessions, p).length).toBe(0);
   });
 
+  it("proposes a lift whose name collides with an Object.prototype member", () => {
+    const app = loadApp();
+    const p = plan([{ day: "Monday", focus: "Push", exercises: [
+      { name: "Bench", sets: 4, reps: 8 }, { name: "constructor", sets: 3, reps: 10 },
+    ] }]);
+    const found = drops(app, kept(), p);
+    expect(found.length).toBe(1);
+    expect(found[0].names).toEqual(["constructor"]);
+    const next = app.applyProposal(p, found[0]);
+    expect(next.days.filter((d: any) => d.day === "Monday")[0].exercises.map((e: any) => e.name)).toEqual(["Bench"]);
+  });
+
   it("holds its opinion until there are enough weeks of history, like the rest of the review", () => {
     const app = loadApp();
     const oneWeek = [sess("2026-08-31", ["Bench"])];
