@@ -268,6 +268,54 @@ function plateLoadLabel(name, rawTotal) {
   return head + ' = ' + load.loaded + ' kg, the closest you can load';
 }
 
+// How long to rest between sets (idea #187). The warm-up ramp and the plate
+// load both speak to the set you are about to do; nothing in Marcus has ever
+// said anything about the gap between them, which is the part of a session you
+// actually spend the most time in.
+//
+// Rest is read off the rep count and nothing else. That is the one input the
+// row already carries that maps onto a rest length in the training literature:
+// a heavy triple and a set of fifteen are different systems recovering, and the
+// weight on the bar does not separate them -- 100 kg for 3 and 100 kg for 12
+// are the same number and opposite sessions. RPE is deliberately not read here.
+// It would be a second opinion on the same question, it is optional on the row,
+// and I have no measurement that says what a point of RPE is worth in seconds.
+const REST_BANDS = [
+  { maxReps: 5, seconds: 180 },
+  { maxReps: 12, seconds: 90 }
+];
+const REST_LONG_SET_SECONDS = 60;
+
+function restSeconds(rawReps) {
+  const reps = Number(rawReps);
+  // An empty box, a word, or a rep count below one is not a set, so there is
+  // nothing to rest between. Zero is the one spelling of "say nothing", the
+  // same as the empty string is for every label on this row.
+  if (!Number.isFinite(reps) || reps < 1) return 0;
+  for (let i = 0; i < REST_BANDS.length; i++) {
+    if (reps <= REST_BANDS[i].maxReps) return REST_BANDS[i].seconds;
+  }
+  return REST_LONG_SET_SECONDS;
+}
+
+// The sentence is separate from the number, same as `warmupLabel` and
+// `plateLoadLabel`, so the Log row can hide on the empty string and a caller
+// that wants seconds is not parsing prose to get them.
+function restSecondsLabel(seconds) {
+  if (!seconds) return '';
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (!minutes) return String(rest) + ' s';
+  if (!rest) return String(minutes) + ' min';
+  return String(minutes) + ' min ' + String(rest) + ' s';
+}
+
+function restLabel(rawReps) {
+  const seconds = restSeconds(rawReps);
+  if (!seconds) return '';
+  return 'Rest ' + restSecondsLabel(seconds) + ' between sets';
+}
+
 // The plan is a template: it carries an exercise, its sets and its reps, and it
 // never carries a weight. The weight only ever exists in what was actually
 // lifted, so a Log row for an exercise done a hundred times still opens with an
