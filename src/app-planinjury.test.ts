@@ -37,7 +37,8 @@ function loadApp(): any {
     APP_SOURCE +
       "\n;globalThis.REVIEW_MIN_WEEKS = REVIEW_MIN_WEEKS;" +
       "\n;globalThis.INJURY_WINDOW_DAYS = INJURY_WINDOW_DAYS;" +
-      "\n;globalThis.DELOAD_SET_FLOOR = DELOAD_SET_FLOOR;",
+      "\n;globalThis.DELOAD_SET_FLOOR = DELOAD_SET_FLOOR;" +
+      "\n;globalThis.niceDate = niceDate;",
     ctx,
   );
   return ctx;
@@ -140,7 +141,7 @@ describe("plan review — an injury eases the week off", () => {
     const r = ctx.planReview(plan(), sessions, TODAY);
     const deload = r.proposals.find((p: any) => p.kind === "deload");
     expect(deload).toBeTruthy();
-    expect(deload.reason).toContain("You flagged an injury on " + sessions[0].date);
+    expect(deload.reason).toContain("You flagged an injury on " + ctx.niceDate(sessions[0].date));
     expect(deload.reason).toContain("knee is sore");
   });
 
@@ -165,7 +166,9 @@ describe("plan review — an injury eases the week off", () => {
     const ctx = loadApp();
     const sessions = [sess(ago(1), 1000, { injury: true })];
     const deload = ctx.planReview(plan(), sessions, TODAY).proposals[0];
-    expect(deload.reason).toContain("You flagged an injury on " + ago(1) + ".");
+    expect(deload.reason).toContain("You flagged an injury on " + ctx.niceDate(ago(1)) + ".");
+    // The date is the one every other card on this tab shows, not the raw ISO string.
+    expect(deload.reason).not.toContain(ago(1));
     expect(deload.reason).not.toContain("“");
   });
 

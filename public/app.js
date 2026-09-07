@@ -1353,7 +1353,7 @@ function deloadProposal(plan, load, injuries) {
     const latest = hurt[0];
     // His own words, quoted, because Marcus read a boolean out of them and he is
     // the one who can tell whether that reading was right.
-    reasons.push('You flagged an injury on ' + latest.date
+    reasons.push('You flagged an injury on ' + niceDate(latest.date)
       + (latest.note ? ': \u201c' + latest.note + '\u201d' : '') + '.');
     if (hurt.length > 1) {
       reasons.push(hurt.length + ' of your sessions in the last ' + INJURY_WINDOW_DAYS + ' days mention one.');
