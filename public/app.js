@@ -879,6 +879,7 @@ function renderNutrition() {
       <div class="field"><label>Search foods</label><input id="foodSearch" type="text" autocomplete="off" placeholder="e.g. chicken, oats, banana"></div>
       <div id="foodResults"></div>
       <div class="field"><label>Or the barcode on the packet</label><input id="foodBarcode" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 7038010009457"></div>
+      <button class="btn btn--tonal btn--block" id="scanBarcode"><span class="material-icons-round">photo_camera</span> Scan it with the camera</button>
       <button class="btn btn--tonal btn--block" id="lookUpBarcode"><span class="material-icons-round">qr_code_scanner</span> Look it up</button>
       <div id="foodPicked"></div>
       <details class="manual-meal">
@@ -928,6 +929,13 @@ function renderNutrition() {
 
   const barcode = document.getElementById('foodBarcode');
   const lookUp = document.getElementById('lookUpBarcode');
+  // The scan fills the same field the typing fills and then presses the same
+  // button, rather than having a lookup path of its own -- so everything the
+  // typed path already handles (an unknown code, a dead database, a row with no
+  // calories on it) is handled here for free and cannot drift from it.
+  document.getElementById('scanBarcode').addEventListener('click', () => {
+    openBarcodeScanner(code => { barcode.value = code; lookUp.click(); });
+  });
   lookUp.addEventListener('click', async () => {
     // Disabled while it is in flight: the upstream call is the slow part, and a
     // second tap would queue a second request against someone else's API.
@@ -3146,4 +3154,111 @@ if ('serviceWorker' in navigator) {
       .then((reg) => { if (reg) recheckOnVisible(document, reg); })
       .catch(() => {});
   });
+}
+
+// --- The camera half of the barcode field (idea #204) ------------------------
+// app-core.js holds the decoder, which is pure and tested. Everything here is
+// the part that cannot be: opening the camera, drawing a frame, and closing it
+// again. Keeping the split at exactly that line is deliberate -- there is no
+// decision in this file, so there is nothing here for a test to be missing.
+
+// How often to read a frame. The decoder is well under a millisecond, so this
+// is paced by the camera and by not heating the phone, not by the maths.
+const SCAN_INTERVAL_MS = 120;
+// A scan that has found nothing for this long is not going to. Saying so and
+// closing beats a camera left running against a barcode it cannot read.
+const SCAN_GIVE_UP_MS = 25000;
+
+let scanTeardown = null;
+
+// One frame: video -> canvas -> the decoder. Split out so it can be handed a
+// fake video and a fake canvas; the browser is the only thing it needs from the
+// page, and it takes both of them as arguments.
+function readBarcodeFrame(video, canvas) {
+  const w = video.videoWidth | 0;
+  const h = video.videoHeight | 0;
+  if (!w || !h) return null;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx || typeof ctx.drawImage !== 'function') return null;
+  ctx.drawImage(video, 0, 0, w, h);
+  let frame;
+  try {
+    frame = ctx.getImageData(0, 0, w, h);
+  } catch (err) {
+    // A cross-origin frame taints the canvas. It cannot happen with our own
+    // camera stream, and if it ever does, this stops rather than throwing on
+    // every tick for twenty-five seconds.
+    return null;
+  }
+  return decodeEan13Frame(frame.data, w, h);
+}
+
+function closeBarcodeScanner() {
+  if (scanTeardown) { const stop = scanTeardown; scanTeardown = null; stop(); }
+}
+
+async function openBarcodeScanner(onFound) {
+  const sheet = document.getElementById('scanSheet');
+  const video = document.getElementById('scanVideo');
+  const hint = document.getElementById('scanHint');
+  if (!sheet || !video) return;
+  const media = navigator.mediaDevices;
+  if (!media || typeof media.getUserMedia !== 'function') {
+    toast('This browser will not open the camera \u2014 type the barcode in instead.');
+    return;
+  }
+  let stream;
+  try {
+    // `ideal` rather than `exact`: a laptop with only a front camera should
+    // still open one, and it is the phone that has a rear camera to prefer.
+    stream = await media.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } } });
+  } catch (err) {
+    // Permission is the one failure worth naming on its own: it is a thing he
+    // can change, and every other failure here is not.
+    toast(err && err.name === 'NotAllowedError'
+      ? 'Marcus needs permission to use the camera \u2014 type the barcode in instead.'
+      : 'Could not open the camera \u2014 type the barcode in instead.');
+    return;
+  }
+
+  const canvas = document.createElement('canvas');
+  const close = document.getElementById('scanClose');
+  const scrim = sheet.querySelector('.scan-sheet__scrim');
+  let timer = null;
+  let giveUp = null;
+
+  const teardown = () => {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (giveUp) { clearTimeout(giveUp); giveUp = null; }
+    // Stopping every track is what turns the camera light off. Hiding the sheet
+    // does not, and a page holding a live camera it is not showing is the worst
+    // outcome this file can produce.
+    stream.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+    sheet.hidden = true;
+    if (close) close.onclick = null;
+    if (scrim) scrim.onclick = null;
+  };
+  scanTeardown = teardown;
+
+  video.srcObject = stream;
+  sheet.hidden = false;
+  if (hint) hint.textContent = "Hold the packet steady, about a hand's width away.";
+  if (close) close.onclick = closeBarcodeScanner;
+  if (scrim) scrim.onclick = closeBarcodeScanner;
+  if (typeof video.play === 'function') { try { video.play(); } catch (err) { /* autoplay attribute covers it */ } }
+
+  timer = setInterval(() => {
+    const code = readBarcodeFrame(video, canvas);
+    if (!code) return;
+    closeBarcodeScanner();
+    onFound(code);
+  }, SCAN_INTERVAL_MS);
+
+  giveUp = setTimeout(() => {
+    closeBarcodeScanner();
+    toast('Could not read that barcode \u2014 type the digits in instead.');
+  }, SCAN_GIVE_UP_MS);
 }
