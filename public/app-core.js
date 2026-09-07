@@ -240,6 +240,71 @@ function lastPerformanceLabel(last) {
   return parts.join(', ') + ' \u00b7 ' + niceDate(last.date);
 }
 
+// The heaviest set you have ever logged for a lift, one row per lift. `Last
+// time` above answers "what do I load the bar with today"; this answers "what
+// is the most I have ever done", which is the number that makes a session feel
+// like it counted and the one nothing in this app ever said out loud.
+//
+// One rule, no special cases: heaviest weight wins, and among sets at the same
+// weight the one with the most reps wins. That rule is what makes a bodyweight
+// lift work without a second metric bolted on -- every Pull-Up set is 0 kg, so
+// the tiebreak is doing all the deciding and the best is the set with the most
+// reps, which is the right answer for that lift and falls out of the same
+// comparison rather than out of an `if`. A third tie goes to the earliest date,
+// because the day you first did it is the day you set it, not the day you
+// matched it.
+function bestSetIsBetter(candidate, best) {
+  if (!best) return true;
+  if (candidate.weight !== best.weight) return candidate.weight > best.weight;
+  if (candidate.reps !== best.reps) return candidate.reps > best.reps;
+  return candidate.date < best.date;
+}
+
+function personalBests(sessions) {
+  // Keyed on a typed exercise name, so a lift called `constructor` or
+  // `__proto__` would otherwise read as an already-seen entry off
+  // Object.prototype and take its comparison against a function.
+  const bests = Object.create(null);
+  let latestSessionDate = '';
+  (sessions || []).forEach(function (session) {
+    if (!session || sessionKind(session) !== 'strength' || !session.date) return;
+    let counted = false;
+    (session.exercises || []).forEach(function (ex) {
+      if (!ex) return;
+      const key = exerciseKey(ex.name);
+      if (!key) return;
+      (ex.sets || []).forEach(function (s) {
+        // A set with no weight and no reps is not a set that happened. 0 kg is
+        // a real weight and means bodyweight, so only a missing number is
+        // skipped -- the same call `lastPerformance` makes one function up.
+        if (!s || typeof s.weight !== 'number' || !Number.isFinite(s.weight)) return;
+        if (typeof s.reps !== 'number' || !Number.isFinite(s.reps) || s.reps <= 0) return;
+        counted = true;
+        const candidate = { name: ex.name, weight: s.weight, reps: s.reps, date: session.date };
+        if (bestSetIsBetter(candidate, bests[key])) bests[key] = candidate;
+      });
+    });
+    if (counted && session.date > latestSessionDate) latestSessionDate = session.date;
+  });
+  const rows = Object.keys(bests).map(function (k) { return bests[k]; });
+  // A best set on the newest day you trained is one you have just done, which
+  // is the only reason this list is worth opening the same evening.
+  rows.forEach(function (r) { r.isNew = latestSessionDate !== '' && r.date === latestSessionDate; });
+  // Newest first so a best set tonight is at the top, then alphabetical so the
+  // long tail below it does not reshuffle every time anything is logged.
+  rows.sort(function (a, b) {
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+  return rows;
+}
+
+function personalBestLabel(best) {
+  if (!best) return '';
+  const load = best.weight === 0 ? 'bodyweight' : String(best.weight) + ' kg';
+  return load + ' × ' + best.reps;
+}
+
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
 // walk are all real sessions with no kilometres attached, and demanding one
 // would push the user to invent a number. Duration is what every cardio
