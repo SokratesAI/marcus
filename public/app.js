@@ -134,7 +134,7 @@ function renderPlan() {
           </div>`).join('')}
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="acceptProposal('${p.id}')">Change the plan</button>
       </div>`).join('') : `<div class="empty">${esc(review.note)}</div>`}
-    <div class="card__note" style="padding:0 4px 4px">Every number above is read off your own log. Where endurance research points the same way, the paper is quoted under the suggestion with how far it actually goes; suggestions about which days you keep carry none, because that is adherence rather than physiology.</div>
+    <div class="card__note" style="padding:0 4px 4px">Every number above is read off your own log. Where endurance research points the same way, the paper is quoted under the suggestion with how far it actually goes; suggestions about which days and which lifts you keep carry none, because that is adherence rather than physiology.</div>
 
     <div class="section-title">Let Marcus draft the week</div>
     <div class="card">
@@ -1355,7 +1355,7 @@ function adherenceByWeekday(plan, sessions, todayISO, windowDays) {
 
 // The chip has to read on its own -- a one-word kind like 'rest' tells a
 // reader nothing unless they already know the four kinds.
-const PROPOSAL_CHIPS = { deload: 'ease off', build: 'add volume', move: 'move a day', rest: 'drop a day', phase: 'match the phase' };
+const PROPOSAL_CHIPS = { deload: 'ease off', build: 'add volume', move: 'move a day', rest: 'drop a day', drop: 'drop a lift', phase: 'match the phase' };
 function proposalChip(kind) { return PROPOSAL_CHIPS[kind] || kind; }
 
 function totalSets(day) {
@@ -1463,6 +1463,73 @@ function deloadProposal(plan, load, injuries) {
   };
 }
 
+// `move` and `rest` ask whether you keep the day. This asks the same question one
+// level down, about a single lift on a day you do keep, and it is the level the
+// written week actually rots at: a day survives because you train on it, while
+// two of the six exercises on it have not been touched in a month.
+//
+// Three decisions, and each one is what stops this being noise.
+//
+// A lift counts as done if it appears in ANY session in the window, not only in
+// a session that landed on that weekday. Squatting on Thursday instead of Monday
+// means the lift is in your training and the day is wrong -- which is what `move`
+// is for -- so proposing to delete it would be the wrong edit read off the right
+// number.
+//
+// It is one proposal per day naming every unlogged lift on it, not one per lift.
+// The edit is the same edit either way, and six cards saying "drop one thing off
+// Monday" is a review nobody finishes reading.
+//
+// And it never proposes emptying a day. If nothing the plan writes for Monday has
+// ever been logged while you keep training on Monday, the whole day is wrong
+// rather than the lifts on it, and an empty day with a focus still on it is a
+// worse plan than the one it replaced. That case is deliberately silent here.
+function dropProposals(plan, sessions, todayISO, windowDays, weeks) {
+  const today = dayKey(todayISO || todayStr());
+  const first = shiftDay(today, -((windowDays || REVIEW_WINDOW_DAYS) - 1));
+  // Bare objects, not `{}`: the keys are exercise names the user typed, so a lift
+  // called `constructor` or `toString` would otherwise read as already-logged off
+  // Object.prototype and could never be proposed. Same reason `linkGlossary` does it.
+  const done = Object.create(null);
+  const loggedOn = {};
+  DAY_NAMES.forEach(name => { loggedOn[name] = 0; });
+  (sessions || []).forEach(s => {
+    if (!s || !s.date || s.date < first || s.date > today) return;
+    loggedOn[weekdayOf(s.date)] += 1;
+    (s.exercises || []).forEach(e => { if (e && e.name) done[exerciseKey(e.name)] = true; });
+  });
+  const out = [];
+  planTrainingDays(plan).forEach(d => {
+    if (!loggedOn[d.day]) return;
+    const all = (d.exercises || []).filter(e => e && e.name);
+    if (!all.length) return;
+    const unlogged = all.filter(e => !done[exerciseKey(e.name)]);
+    if (!unlogged.length || unlogged.length === all.length) return;
+    const names = unlogged.map(e => e.name);
+    out.push({
+      id: 'drop-' + d.day,
+      kind: 'drop',
+      day: d.day,
+      names: names,
+      title: 'Take ' + listNames(names) + ' off ' + d.day,
+      reason: 'Over the last ' + weeks + ' weeks you trained on ' + d.day + ' ' + loggedOn[d.day]
+            + ' time' + (loggedOn[d.day] === 1 ? '' : 's') + ' and never logged '
+            + listNames(names) + ' on any day. The plan is describing '
+            + (names.length === 1 ? 'a lift' : 'lifts') + ' you are not doing. '
+            + (all.length - names.length) + ' of the ' + all.length + ' on that day stay.',
+    });
+  });
+  return out;
+}
+
+// "Dip", "Dip and Row", "Dip, Row and Curl" -- the title reads as a sentence
+// rather than as an array, and the same helper writes it into the reason so the
+// two can never drift apart.
+function listNames(names) {
+  if (names.length <= 1) return names[0] || '';
+  return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+}
+
 // Proposals, most urgent first. Each one carries the number that produced it,
 // because a change with no measurement behind it is just an opinion.
 //
@@ -1514,6 +1581,8 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
       });
     }
   });
+
+  dropProposals(plan, sessions, todayISO, windowSize, weeks).forEach(p => proposals.push(p));
 
   // 'add volume' is the fallback when nothing else needed saying. A phase
   // resize already changed the week's volume this render, so it does not count
@@ -1592,6 +1661,13 @@ function applyProposal(plan, proposal) {
   } else if (proposal.kind === 'rest') {
     const day = next.days.find(d => d.day === proposal.day);
     if (day) { day.focus = 'Rest'; day.exercises = []; delete day.cardio; }
+  } else if (proposal.kind === 'drop') {
+    const day = next.days.find(d => d.day === proposal.day);
+    if (day) {
+      const gone = Object.create(null);
+      (proposal.names || []).forEach(n => { gone[exerciseKey(n)] = true; });
+      day.exercises = (day.exercises || []).filter(e => !gone[exerciseKey(e.name)]);
+    }
   } else if (proposal.kind === 'phase') {
     // Sets come off the exercise carrying the most and go onto the one carrying
     // the least, one at a time, so a week loses breadth last: cutting six sets
