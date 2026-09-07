@@ -711,10 +711,22 @@ function renderLog() {
     // nothing left to warm up for.
     const warmupNode = node.querySelector('.ex-warmup');
     const weightInput = node.querySelector('.ex-weight');
+    const nameInput = node.querySelector('.ex-name');
+    // How to load the bar for the weight in the box. It depends on the name as
+    // well as the weight -- only a barbell lift gets a bar under it -- so both
+    // inputs call it, and it is defined here because `showWarmup` needs it and
+    // runs first.
+    const platesNode = node.querySelector('.ex-plates');
+    const showPlates = () => {
+      const label = plateLoadLabel(nameInput.value, weightInput.value);
+      platesNode.textContent = label;
+      platesNode.hidden = !label;
+    };
     const showWarmup = () => {
       const label = warmupLabel(weightInput.value);
       warmupNode.textContent = label;
       warmupNode.hidden = !label;
+      showPlates();
     };
     weightInput.addEventListener('input', showWarmup);
     showWarmup();
@@ -722,7 +734,6 @@ function renderLog() {
     // key, so it is re-read as you type -- renaming a row to an exercise you
     // have done before has to find it.
     const lastNode = node.querySelector('.ex-last');
-    const nameInput = node.querySelector('.ex-name');
     const dateInput = document.getElementById('logDate');
     // How to do the lift (idea #193). The handle is hidden unless the name in
     // the box actually has a guide, so an empty row and an exercise Marcus has
@@ -739,6 +750,7 @@ function renderLog() {
       lastNode.textContent = lastPerformanceLabel(last);
       lastNode.hidden = !last;
       showForm();
+      showPlates();
       return last;
     };
     nameInput.addEventListener('input', showLast);
