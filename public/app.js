@@ -1961,6 +1961,38 @@ function personalBestsCard(rows) {
     </div>`;
 }
 
+// Sits under Personal bests, because the two are the same reading taken from
+// opposite ends: that card is every lift at its best, this one is every lift
+// that has not reached a new best in a while. Plain CSS and no chart, for the
+// same reason the cards above it are -- Chart.js arrives async and the thing
+// that says "change something" must not be the thing that disappears.
+function stalledLiftsCard(report) {
+  if (!report.watched) {
+    return `
+    <div class="card">
+      <h2>Stuck lifts</h2>
+      <div class="empty">Log a lift with a weight and a rep count and this says when it stops getting better.</div>
+    </div>`;
+  }
+  if (!report.stalled.length) {
+    return `
+    <div class="card">
+      <div class="card__title-row"><h2>Stuck lifts</h2><span class="chip chip--primary">none</span></div>
+      <div class="empty">Nothing is stuck. None of your ${report.watched} ${report.watched === 1 ? 'lift has' : 'lifts have'} gone ${report.threshold} sessions without getting heavier or adding a rep.</div>
+    </div>`;
+  }
+  return `
+    <div class="card">
+      <div class="card__title-row"><h2>Stuck lifts</h2><span class="chip chip--alert">${report.stalled.length} of ${report.watched}</span></div>
+      ${report.stalled.map(r => `
+      <div class="exercise-line">
+        <span>${esc(r.name)}</span>
+        <span>${r.sessions} sessions · ${esc(personalBestLabel(r.best))} · ${niceDate(r.best.date)}</span>
+      </div>`).join('')}
+      <p class="card__note">Sessions logged since the lift last got heavier or added a rep, and the set it has been stuck on. ${report.threshold} in a row is where holding the weight has stopped being a plan — back the weight off and build it again, or change the rep target. One or two held sessions is the progression working, not a problem.</p>
+    </div>`;
+}
+
 // Goals go at the top of Progress because the graphs below are supposed to
 // serve them. Drawn in plain CSS, not Chart.js: the library is loaded async so
 // a stalled CDN can leave it absent, and the one thing on this tab that
@@ -2064,6 +2096,7 @@ function renderProgress() {
     <div class="section-title">Where you stand</div>
     ${trainingLoadCard(trainingLoad(store.get('sessions', [])))}
     ${personalBestsCard(personalBests(store.get('sessions', [])))}
+    ${stalledLiftsCard(stalledLifts(store.get('sessions', [])))}
     ${muscleBalanceCard(weeklyMuscleSets(store.get('sessions', [])))}
     <div class="card">
       <h2>Bodyweight</h2>

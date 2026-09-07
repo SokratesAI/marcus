@@ -501,6 +501,83 @@ function personalBestLabel(best) {
   return load + ' × ' + best.reps;
 }
 
+// Which lifts have stopped moving. `personalBests` above answers "what is the
+// most I have ever done"; this answers the question that actually decides
+// whether the programme is working -- "which of these has not got better in a
+// while" -- and nothing in this app said it. The Log row's `nextTarget` already
+// tells you to hold the weight until you hit the rep target, so one held
+// session is the system working and two is ordinary. Three sessions in a row
+// with no improvement at all is the point where holding has stopped being a
+// plan, and that is a judgement about this app's own progression rule rather
+// than a citation -- there is no study that puts the number at three.
+const STALL_SESSIONS = 3;
+
+// Improvement is `bestSetIsBetter`, unchanged and not re-spelled here. That is
+// the whole reason a bodyweight lift works: every Pull-Up set is 0 kg, so the
+// weight comparison ties forever and a set of 9 where the best was 8 counts as
+// getting better, which is the right answer and needs no second rule. A
+// separate "did the weight go up" test would report every calisthenic lift as
+// permanently stuck.
+function stalledLifts(sessions) {
+  // Keyed on a typed exercise name -- a lift called `constructor` must not read
+  // as an already-seen entry off Object.prototype, the same guard personalBests
+  // and the plan proposals carry.
+  const seen = Object.create(null);
+  // A store is a merged document from two phones and is not ordered; "sessions
+  // since you last improved" is meaningless read out of order, so this sorts
+  // rather than trusting the array. Sort is stable, so two sessions on one date
+  // keep the order they were logged in.
+  const ordered = (sessions || [])
+    .filter(function (s) { return s && sessionKind(s) === 'strength' && s.date; })
+    .slice()
+    .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+  ordered.forEach(function (session) {
+    (session.exercises || []).forEach(function (ex) {
+      if (!ex) return;
+      const key = exerciseKey(ex.name);
+      if (!key) return;
+      let sessionBest = null;
+      (ex.sets || []).forEach(function (s) {
+        // Same admission rule as personalBests: 0 kg is a real weight and means
+        // bodyweight, so only a missing number is skipped.
+        if (!s || typeof s.weight !== 'number' || !Number.isFinite(s.weight)) return;
+        if (typeof s.reps !== 'number' || !Number.isFinite(s.reps) || s.reps <= 0) return;
+        const candidate = { name: ex.name, weight: s.weight, reps: s.reps, date: session.date };
+        if (bestSetIsBetter(candidate, sessionBest)) sessionBest = candidate;
+      });
+      // An exercise row with no usable set is not a session for that lift. It is
+      // a row someone typed a name into and left, and counting it would report a
+      // stall that never happened.
+      if (!sessionBest) return;
+      const entry = seen[key] || (seen[key] = { name: ex.name, best: null, since: 0, total: 0 });
+      entry.total += 1;
+      // The name shown is the most recent spelling, since exerciseKey folds case
+      // and spacing and the user is looking at what they last typed.
+      entry.name = ex.name;
+      if (bestSetIsBetter(sessionBest, entry.best)) {
+        entry.best = sessionBest;
+        entry.since = 0;
+      } else {
+        entry.since += 1;
+      }
+    });
+  });
+  const keys = Object.keys(seen);
+  const stalled = keys
+    .map(function (k) { return seen[k]; })
+    .filter(function (e) { return e.since >= STALL_SESSIONS; })
+    .map(function (e) {
+      return { name: e.name, sessions: e.since, best: e.best, sessionsLogged: e.total };
+    });
+  // Longest stuck first, because that is the one to change something about;
+  // alphabetical under it so the tail does not reshuffle on every log.
+  stalled.sort(function (a, b) {
+    if (a.sessions !== b.sessions) return b.sessions - a.sessions;
+    return a.name.localeCompare(b.name);
+  });
+  return { stalled: stalled, watched: keys.length, threshold: STALL_SESSIONS };
+}
+
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
 // walk are all real sessions with no kilometres attached, and demanding one
 // would push the user to invent a number. Duration is what every cardio
