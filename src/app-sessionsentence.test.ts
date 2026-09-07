@@ -526,6 +526,10 @@ describe("the kilos reach the form, not just the summary", () => {
   it("puts a weight read out of the sentence into the row's kg input", () => {
     const { ctx, byId } = loadApp();
     ctx.store.set("plan", PLAN);
+    // No history, so the only thing that can put a number in a kg box here is
+    // the sentence. The Log tab also prefills an empty box from the last time
+    // you did the lift, which is a different question and is tested below.
+    ctx.store.set("sessions", []);
     const rows = recordingTemplate(byId);
     const heard = ctx.parseSessionSentence("3x10 squats at 80kg and 3x12 lunges", PLAN, TUE);
     ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
@@ -544,6 +548,7 @@ describe("the kilos reach the form, not just the summary", () => {
   it("leaves every weight blank when the sentence carried none", () => {
     const { ctx, byId } = loadApp();
     ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", []);
     const rows = recordingTemplate(byId);
     const heard = ctx.parseSessionSentence("followed the plan today", PLAN, TUE);
     ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
@@ -551,5 +556,85 @@ describe("the kilos reach the form, not just the summary", () => {
     ctx.renderLog();
     expect(rows.length).toBe(1);
     expect(rows[0][".ex-weight"].value).toBe("");
+  });
+
+  it("fills an empty kg box with what you lifted last time", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", [
+      { id: "s1", date: "2026-01-05", kind: "strength", day: "Tuesday",
+        exercises: [{ name: "Deadlift", sets: [{ reps: 5, weight: 82.5 }] }] },
+    ]);
+    const rows = recordingTemplate(byId);
+    const heard = ctx.parseSessionSentence("followed the plan today", PLAN, TUE);
+    ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    expect(rows.length).toBe(1);
+    // The precondition: the sentence carried no weight, so 82.5 can only have
+    // come out of the session above -- the test right before this one is the
+    // control, same sentence and an empty history, and it reads "".
+    expect(rows[0][".ex-name"].value).toBe("Deadlift");
+    expect(rows[0][".ex-weight"].value).toBe("82.5");
+  });
+
+  it("re-reads history when the exercise name is retyped", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", [
+      { id: "s1", date: "2026-01-05", kind: "strength", day: "Thursday",
+        exercises: [{ name: "Back Squat", sets: [{ reps: 6, weight: 95 }] }] },
+    ]);
+    // A template stub that keeps the listeners as well as the values, so the
+    // typing can actually be replayed. The plain recordingTemplate above drops
+    // them, which is why removing the listener survived every other test here.
+    const rows: Array<Record<string, any>> = [];
+    byId["tpl-log-exercise-row"] = {
+      content: {
+        cloneNode: () => {
+          const fields: Record<string, any> = {};
+          const make = () => {
+            const node: any = {
+              value: "", textContent: "", hidden: false, listeners: {} as Record<string, any[]>,
+              addEventListener(evt: string, fn: any) { (node.listeners[evt] ??= []).push(fn); },
+              closest: () => ({ remove() {} }),
+            };
+            return node;
+          };
+          for (const sel of [".ex-name", ".ex-sets", ".ex-reps", ".ex-weight", ".ex-rpe", ".ex-remove", ".ex-warmup", ".ex-last"]) {
+            fields[sel] = make();
+          }
+          rows.push(fields);
+          return { querySelector: (sel: string) => (fields[sel] ??= make()) };
+        },
+      },
+    };
+    ctx.logSentence = null;
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    const row = rows[0];
+    // The precondition: the row the plan opened with is NOT the lift in the
+    // history, so the line starts empty and the retype is what finds it.
+    expect(row[".ex-name"].value).not.toBe("Back Squat");
+    expect(row[".ex-last"].hidden).toBe(true);
+    row[".ex-name"].value = "back  SQUAT";
+    for (const fn of row[".ex-name"].listeners["input"]) fn();
+    expect(row[".ex-last"].hidden).toBe(false);
+    expect(row[".ex-last"].textContent).toContain("Last time 95 kg × 6");
+  });
+
+  it("does not let history overwrite a weight the sentence gave", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("plan", PLAN);
+    ctx.store.set("sessions", [
+      { id: "s1", date: "2026-01-05", kind: "strength", day: "Tuesday",
+        exercises: [{ name: "Squats", sets: [{ reps: 10, weight: 82.5 }] }] },
+    ]);
+    const rows = recordingTemplate(byId);
+    const heard = ctx.parseSessionSentence("3x10 squats at 80kg", PLAN, TUE);
+    ctx.logSentence = { ...heard, summary: ctx.sessionSentenceSummary(heard) };
+    ctx.logKind = "strength";
+    ctx.renderLog();
+    expect(rows[0][".ex-weight"].value).toBe(80);
   });
 });

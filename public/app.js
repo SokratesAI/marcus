@@ -718,6 +718,27 @@ function renderLog() {
     };
     weightInput.addEventListener('input', showWarmup);
     showWarmup();
+    // What you lifted last time, read off your own log. The name box is the
+    // key, so it is re-read as you type -- renaming a row to an exercise you
+    // have done before has to find it.
+    const lastNode = node.querySelector('.ex-last');
+    const nameInput = node.querySelector('.ex-name');
+    const dateInput = document.getElementById('logDate');
+    const showLast = () => {
+      const last = lastPerformance(store.get('sessions', []), nameInput.value, dateInput ? dateInput.value : todayStr());
+      lastNode.textContent = lastPerformanceLabel(last);
+      lastNode.hidden = !last;
+      return last;
+    };
+    nameInput.addEventListener('input', showLast);
+    const last = showLast();
+    // Only ever fill a box that is empty. A weight the plan carried, or one you
+    // typed into the sentence box, is yours -- overwriting it with history would
+    // be the app arguing with what you just said.
+    if (last && !weightInput.value) {
+      weightInput.value = String(last.weight);
+      showWarmup();
+    }
     rows.appendChild(node);
   }
   const heardRows = heard && heard.kind === 'strength' && heard.exercises && heard.exercises.length ? heard.exercises : null;

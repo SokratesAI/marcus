@@ -179,6 +179,67 @@ function warmupLabel(rawWeight) {
   }).join(', ');
 }
 
+// The plan is a template: it carries an exercise, its sets and its reps, and it
+// never carries a weight. The weight only ever exists in what was actually
+// lifted, so a Log row for an exercise done a hundred times still opens with an
+// empty kg box -- the one number progressive overload is entirely about. These
+// three read it back out of the session history.
+//
+// Names are matched case- and space-insensitively and nothing cleverer: "Back
+// Squat" and "back squat" are the same lift, "Front Squat" is not, and a
+// fuzzier matcher would silently show the wrong number on a row that looks
+// right.
+function exerciseKey(name) {
+  return String(name == null ? '' : name).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// asOfISO is inclusive on purpose. Logging a second session on a day you have
+// already trained should see the first one, and backfilling last Tuesday should
+// not be told about a heavier Thursday that had not happened yet.
+function lastPerformance(sessions, name, asOfISO) {
+  const key = exerciseKey(name);
+  if (!key) return null;
+  let best = null;
+  (sessions || []).forEach(function (session, index) {
+    if (!session || sessionKind(session) !== 'strength' || !session.date) return;
+    if (asOfISO && session.date > asOfISO) return;
+    (session.exercises || []).forEach(function (ex) {
+      if (!ex || exerciseKey(ex.name) !== key) return;
+      // A set with no weight recorded cannot answer "what do I load the bar
+      // with", so an exercise made only of those is skipped rather than shown
+      // as 0 kg -- 0 kg is a real answer here and means bodyweight.
+      const sets = (ex.sets || []).filter(function (s) { return s && typeof s.weight === 'number' && Number.isFinite(s.weight); });
+      if (!sets.length) return;
+      const top = sets.reduce(function (a, b) { return b.weight > a.weight ? b : a; });
+      const candidate = {
+        date: session.date,
+        name: ex.name,
+        weight: top.weight,
+        reps: top.reps,
+        sets: sets.length,
+        rpe: ex.rpe == null ? null : ex.rpe,
+      };
+      // Two sessions on the same date are ordered by the order they were
+      // logged, which is the order they sit in the array.
+      if (!best || candidate.date > best.date || (candidate.date === best.date && index >= best.index)) {
+        best = candidate;
+        best.index = index;
+      }
+    });
+  });
+  if (best) delete best.index;
+  return best;
+}
+
+function lastPerformanceLabel(last) {
+  if (!last) return '';
+  const load = last.weight === 0 ? 'bodyweight' : String(last.weight) + ' kg';
+  const parts = ['Last time ' + load + ' \u00d7 ' + last.reps];
+  if (last.sets > 1) parts[0] += ' \u00d7 ' + last.sets;
+  if (last.rpe != null) parts.push('RPE ' + last.rpe);
+  return parts.join(', ') + ' \u00b7 ' + niceDate(last.date);
+}
+
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
 // walk are all real sessions with no kilometres attached, and demanding one
 // would push the user to invent a number. Duration is what every cardio
