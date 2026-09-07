@@ -2432,9 +2432,18 @@ const chatSheet = document.getElementById('chatSheet');
 const chatMessages = document.getElementById('chatMessages');
 const chatStatus = document.getElementById('chatStatus');
 
+// A message stored with offline: true came from the built-in rules, not the
+// coach. The note is rendered from the stored flag rather than from whatever
+// the last request did, so scrolling back up still tells the truth about a
+// bubble written days ago.
 function renderChatMessages() {
   const msgs = store.get('chat', []);
-  chatMessages.innerHTML = msgs.map(m => `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(m.text)}</div>`).join('');
+  chatMessages.innerHTML = msgs.map(m => {
+    const note = m.role === 'marcus' && m.offline
+      ? '<span class="msg__offline">built-in reply — the coach was not reachable</span>'
+      : '';
+    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(m.text)}${note}</div>`;
+  }).join('');
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
@@ -2498,9 +2507,16 @@ function marcusReply(text) {
 // The pause is deliberate on the fallback path only: a rule-based answer that
 // arrives instantly reads as a canned answer, and it used to be the whole
 // behaviour. A real reply has already taken its own time to arrive.
+//
+// Both paths now return { text, offline } rather than a bare string, because
+// the two answers are indistinguishable once they are on the screen and they
+// are not the same thing. The rule-based reply knows today's plan and this
+// week's volume and nothing else; the coach has read the whole log. Edvard is
+// the only user and has no other way to tell which one he is talking to, so
+// the fallback says so on the bubble instead of quietly passing for a coach.
 function marcusReplyAfterAPause(text) {
   return new Promise((resolve) => {
-    setTimeout(() => resolve(marcusReply(text)), 650 + Math.random() * 500);
+    setTimeout(() => resolve({ text: marcusReply(text), offline: true }), 650 + Math.random() * 500);
   });
 }
 
@@ -2527,7 +2543,8 @@ async function askMarcus(text) {
     });
     if (!res.ok) return marcusReplyAfterAPause(text);
     const body = await res.json();
-    return typeof body.reply === 'string' && body.reply.trim() ? body.reply : marcusReplyAfterAPause(text);
+    if (typeof body.reply === 'string' && body.reply.trim()) return { text: body.reply, offline: false };
+    return marcusReplyAfterAPause(text);
   } catch {
     return marcusReplyAfterAPause(text);
   }
@@ -2557,7 +2574,12 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
     chatStatus.textContent = 'online';
     chatStatus.classList.remove('is-typing');
     const all = store.get('chat', []);
-    all.push({ role: 'marcus', text: reply, ts: Date.now() });
+    const msg = { role: 'marcus', text: reply.text, ts: Date.now() };
+    // Only set on the fallback path, so the 13 turns already in the store --
+    // every one of them written before the coach existed -- are not
+    // retroactively relabelled by a key they do not carry.
+    if (reply.offline) msg.offline = true;
+    all.push(msg);
     store.set('chat', all);
     renderChatMessages();
   });
