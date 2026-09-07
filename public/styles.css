@@ -297,3 +297,49 @@ body{
 .term-sheet__header{display:flex;align-items:center;gap:8px;}
 .term-sheet__title{flex:1;font-size:17px;font-weight:700;margin:0;}
 .term-sheet__body{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--md-on-surface-variant);}
+
+/* Progress photos (idea #202). A horizontal strip rather than a grid: the
+   comparison the photos exist for is the first against the last, and a strip
+   keeps them in date order on one line the thumb can push through. */
+.photo-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 0 6px;
+  -webkit-overflow-scrolling: touch;
+}
+.photo-strip__item {
+  position: relative;
+  margin: 0;
+  flex: 0 0 auto;
+  width: 104px;
+}
+.photo-strip__item img {
+  width: 104px;
+  height: 138px;
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
+}
+.photo-strip__item figcaption {
+  font-size: 11px;
+  text-align: center;
+  padding-top: 4px;
+  color: var(--md-on-surface-variant);
+}
+.photo-strip__del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border: 0;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  cursor: pointer;
+}
+.photo-strip__del .material-icons-round { font-size: 16px; }

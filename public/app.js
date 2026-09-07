@@ -1668,6 +1668,7 @@ function goalProgressCard(goal, todayISO) {
 // data, so it is deliberately not stored: reopening the app on the waist is the
 // right default and not worth a store key to remember otherwise.
 let measureSite = 'waist';
+let photoPoseKey = 'front';
 
 // One reading is a starting point, not a trend, and this says so rather than
 // printing a change of 0 -- which would read as "you have not moved".
@@ -1679,11 +1680,59 @@ function measurementTrendLine(trend, site) {
   return `<span>${esc(latest)} on ${esc(niceDate(trend.date))}</span><span>${esc(arrow + trend.change + ' ' + site.unit)} since ${esc(niceDate(trend.since))}</span>`;
 }
 
+// A single photo gets "first photo" rather than a span, for the same reason a
+// single measurement gets a null change: 0 days is a claim about elapsed time
+// this has no second reading to make.
+function photoSpanLine(span) {
+  if (!span) return '<span>No photos yet</span><span>the first one is the baseline</span>';
+  if (span.days === null) return `<span>First photo, ${esc(niceDate(span.first))}</span><span>1 photo</span>`;
+  return `<span>${esc(niceDate(span.first))} &rarr; ${esc(niceDate(span.last))}</span><span>${span.days} days, ${span.count} photos</span>`;
+}
+
+function photoStripHtml(shots) {
+  if (!shots.length) return '';
+  return '<div class="photo-strip">' + shots.map(p => `
+    <figure class="photo-strip__item">
+      <img src="${esc(p.dataUrl)}" alt="Progress photo from ${esc(niceDate(p.date))}" loading="lazy">
+      <figcaption>${esc(niceDate(p.date))}</figcaption>
+      <button class="photo-strip__del" data-photo-delete="${esc(String(p.id))}" aria-label="Delete the photo from ${esc(niceDate(p.date))}"><span class="material-icons-round">close</span></button>
+    </figure>`).join('') + '</div>';
+}
+
+// The browser holds the only copy of the full-size file and it is the only thing
+// here that can resize it, so this is the one part of the feature that has to
+// touch the DOM. Everything it decides -- whether the result fits, what it
+// costs, what replaces what -- is in app-core.js where a test can reach it.
+function shrinkImage(file, maxEdge, done) {
+  const reader = new FileReader();
+  reader.onerror = () => done(null);
+  reader.onload = () => {
+    const img = new Image();
+    img.onerror = () => done(null);
+    img.onload = () => {
+      const scale = Math.min(1, maxEdge / Math.max(img.width || 1, img.height || 1));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
+      canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { done(null); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      try { done(canvas.toDataURL('image/jpeg', 0.72)); } catch (err) { done(null); }
+    };
+    img.src = String(reader.result || '');
+  };
+  reader.readAsDataURL(file);
+}
+
 function renderProgress() {
   const weights = store.get('weights', []);
   const measurements = store.get('measurements', []);
   const measureSeries = measurementSeries(measurements, measureSite);
   const measureTrend = measurementTrend(measurements, measureSite);
+  const photos = store.get('photos', []);
+  const photoShots = photoSeries(photos, photoPoseKey);
+  const photoGap = photoSpan(photos, photoPoseKey);
+  const photoUsed = photoTotalBytes(photos);
   const meals = store.get('meals', []);
   const calByDay = {};
   meals.forEach(m => { calByDay[m.date] = (calByDay[m.date] || 0) + m.calories; });
@@ -1720,6 +1769,18 @@ function renderProgress() {
       </div>
       <div class="exercise-line" id="measureTrend">${measurementTrendLine(measureTrend, measurementSite(measureSite))}</div>
       <div class="chart-wrap"><canvas id="measureChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Progress photos</h2>
+      <p class="card__note">Same pose, same spot, same light. What two photos eight weeks apart show is the thing the scale and the tape both miss.</p>
+      <div class="field" style="margin-top:10px"><label>Which pose?</label>
+        <select id="photoPose">${PHOTO_POSES.map(p => `<option value="${p.key}"${p.key === photoPoseKey ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select>
+      </div>
+      <input id="photoFile" type="file" accept="image/*" hidden>
+      <button class="btn btn--filled btn--block" id="addPhoto"><span class="material-icons-round">photo_camera</span> Add today&rsquo;s ${esc(photoPose(photoPoseKey).label.toLowerCase())} photo</button>
+      <div class="exercise-line" id="photoSpanLine">${photoSpanLine(photoGap)}</div>
+      ${photoStripHtml(photoShots)}
+      <p class="card__note">${esc(photoSizeLabel(photoUsed))} of ${esc(photoSizeLabel(PHOTO_BUDGET_BYTES))} used. Photos ride along in the same synced document as your log, so they have a ceiling.</p>
     </div>
     <div class="card">
       <h2>Weekly training volume (kg lifted)</h2>
@@ -1769,6 +1830,41 @@ function renderProgress() {
     const all = upsertMeasurement(store.get('measurements', []), { date: todayStr(), site: result.site, value: result.value });
     if (!store.set('measurements', all)) return;
     renderProgress();
+  });
+
+  document.getElementById('photoPose').addEventListener('change', (e) => {
+    photoPoseKey = e.target.value;
+    renderProgress();
+  });
+
+  document.getElementById('addPhoto').addEventListener('click', () => {
+    document.getElementById('photoFile').click();
+  });
+
+  document.getElementById('photoFile').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    shrinkImage(file, PHOTO_MAX_EDGE, (dataUrl) => {
+      if (!dataUrl) { toast('Marcus could not read that image.'); return; }
+      const result = validatePhoto(photoPoseKey, dataUrl, store.get('photos', []), todayStr());
+      if (!result.ok) { toast(result.message); return; }
+      const all = upsertPhoto(store.get('photos', []), {
+        id: uid(), date: result.date, pose: result.pose, dataUrl: result.dataUrl, bytes: result.bytes
+      });
+      if (!store.set('photos', all)) return;
+      renderProgress();
+    });
+  });
+
+  view.querySelectorAll('[data-photo-delete]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-photo-delete');
+      const kept = store.get('photos', []).filter(r => String(r && r.id) !== id);
+      if (!store.set('photos', kept)) return;
+      recordDeletion('photos', id);
+      renderProgress();
+    });
   });
 
   wireBackup();
@@ -1826,14 +1922,14 @@ function renderProgress() {
 const BACKUP_VERSION = 1;
 // Every store key the app writes. `chat` is in here because the coach's memory
 // of the conversation is data the user would miss, not chrome.
-const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'meals', 'goals', 'chat', 'deletions'];
+const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'chat', 'deletions'];
 
 // The three stores the app can delete from, and the reason this list is three
 // names rather than every store: `deleteSession`, `deleteMeal` and `deleteGoal`
 // are the only delete buttons in the app, and all three key on an id this
 // browser minted. `weights` and `chat` have no delete path at all, so they
 // carry no tombstones and nothing below touches them.
-const DELETABLE_STORES = ['sessions', 'meals', 'goals'];
+const DELETABLE_STORES = ['sessions', 'meals', 'goals', 'photos'];
 
 // A deletion has to be a record of its own or it does not survive a sync. From
 // the other phone, "deleted here" and "never arrived here" are the same
@@ -2110,6 +2206,7 @@ const MERGE_KEYS = {
   goals: { by: ['id'] },
   weights: { by: ['date'] },
   measurements: { by: ['date', 'site'] },
+  photos: { by: ['date', 'pose'] },
   chat: { by: ['ts', 'role', 'text'], sort: 'ts' },
   // A tombstone is a record like any other and merges like one: the union of
   // both sides is what either phone deleted, and a deletion both sides know
