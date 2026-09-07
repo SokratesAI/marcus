@@ -376,3 +376,9 @@ body{
 .scan-sheet__video{width:100%;height:100%;object-fit:cover;display:block;}
 .scan-sheet__reticle{position:absolute;left:8%;right:8%;top:38%;height:24%;border:2px solid rgba(255,255,255,.85);border-radius:8px;}
 .scan-sheet__hint{margin:10px 0 0;font-size:14px;line-height:1.4;color:var(--md-on-surface-variant);}
+/* Weekly balance (idea #187). The bar is CSS rather than Chart.js so a stalled
+   CDN cannot take the number with it -- same call as the goal bars above. */
+.mg-row{margin:10px 0;}
+.mg-bar{height:6px;border-radius:3px;background:var(--md-surface-variant);overflow:hidden;margin-top:4px;}
+.mg-bar > span{display:block;height:100%;background:var(--md-primary);}
+.chip--muted{background:var(--md-surface-variant);color:var(--md-on-surface-variant);}

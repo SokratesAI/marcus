@@ -1908,6 +1908,39 @@ function trainingLoadCard(load) {
 // Personal bests sit under Training load rather than beside the charts,
 // because it is the one thing on this tab that reads without a graph library
 // having arrived -- the same call goalProgressCard makes above.
+// The bar is drawn in plain CSS for the same reason the goal bars are: Chart.js
+// is loaded async and a stalled CDN must not take the number with it. Its width
+// is the count against MUSCLE_SETS_MAX, capped, so a group at 30 sets fills the
+// bar rather than overflowing the card.
+function muscleBalanceCard(balance) {
+  const rows = balance.groups;
+  // An unplaceable lift is still a set that was logged, so it keeps the card
+  // out of its empty state -- otherwise a session of lifts Marcus does not know
+  // renders "log a set" at somebody who just did.
+  const any = rows.some(r => r.sets > 0) || balance.unmatched.length > 0;
+  if (!any) {
+    return `
+    <div class="card">
+      <h2>Weekly balance</h2>
+      <div class="empty">Log a set in the last ${balance.days} days and this shows how they split across the body.</div>
+    </div>`;
+  }
+  return `
+    <div class="card">
+      <h2>Weekly balance</h2>
+      ${rows.map(r => `
+      <div class="mg-row">
+        <div class="exercise-line">
+          <span>${esc(r.group)}</span>
+          <span>${r.sets} ${r.sets === 1 ? 'set' : 'sets'} · <span class="chip chip--${r.verdict === 'on target' ? 'primary' : 'muted'}">${esc(r.verdict)}</span></span>
+        </div>
+        <div class="mg-bar"><span style="width:${Math.min(100, Math.round(r.sets / MUSCLE_SETS_MAX * 100))}%"></span></div>
+      </div>`).join('')}
+      ${balance.unmatched.length ? `<p class="card__note">Not counted, because Marcus does not know which muscle they train: ${esc(balance.unmatched.join(', '))}.</p>` : ''}
+      <p class="card__note">Hard sets per muscle group over the last ${balance.days} days, counted as sets and not kilograms — one set of squats outweighs a whole session of raises, so tonnage cannot tell you a leg week from a chest week. ${MUSCLE_SETS_MIN}–${MUSCLE_SETS_MAX} sets a week is the usual range for growth; it is a rule of thumb from group averages, not a target you owe anyone.</p>
+    </div>`;
+}
+
 function personalBestsCard(rows) {
   if (!rows.length) {
     return `
@@ -2031,6 +2064,7 @@ function renderProgress() {
     <div class="section-title">Where you stand</div>
     ${trainingLoadCard(trainingLoad(store.get('sessions', [])))}
     ${personalBestsCard(personalBests(store.get('sessions', [])))}
+    ${muscleBalanceCard(weeklyMuscleSets(store.get('sessions', [])))}
     <div class="card">
       <h2>Bodyweight</h2>
       <div class="field" style="margin-top:10px"><label>Log today's weight (kg)</label>

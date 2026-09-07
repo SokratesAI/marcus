@@ -1538,75 +1538,75 @@ const GLOSSARY = [
 // explicit `aka` spellings rather than a fuzzy matcher: showing bench-press
 // cues on a row that says something else is worse than showing nothing.
 const FORM_GUIDE = [
-  { name: 'Barbell Bench Press', aka: ['Bench Press', 'Flat Bench Press'],
+  { name: 'Barbell Bench Press', aka: ['Bench Press', 'Flat Bench Press'], group: 'Chest',
     setup: 'Eyes under the bar, shoulder blades pulled back and down into the bench, feet flat and driving into the floor. Grip a little wider than shoulders.',
     execution: 'Unrack, bring the bar down under control to the lower chest, touch, then press back up and slightly towards your face. Wrists stacked over elbows the whole way.',
     mistakes: ['Flaring the elbows straight out to the sides — keep them at roughly 45 degrees to the ribs.', 'Bouncing the bar off the chest instead of touching it.', 'Losing the arch and letting the shoulders roll forward at the bottom.'] },
-  { name: 'Incline Bench Press',
+  { name: 'Incline Bench Press', group: 'Chest',
     setup: 'Bench at 30 degrees, not 45 — the steeper it gets the more it becomes an overhead press. Same shoulder blades, same foot drive.',
     execution: 'Lower to just below the collarbone, touch, press back over the upper chest.',
     mistakes: ['Setting the bench too steep and turning it into a shoulder day.', 'Letting the bar drift down to the sternum as if it were a flat bench.'] },
-  { name: 'Incline Dumbbell Press',
+  { name: 'Incline Dumbbell Press', group: 'Chest',
     setup: 'Bench at 30 degrees. Kick the dumbbells up into position with your knees rather than curling them into place.',
     execution: 'Lower until the dumbbells are level with the chest, elbows under the wrists, then press up and slightly together without clanging them at the top.',
     mistakes: ['Going so deep the shoulder takes over from the chest.', 'Pressing in an arc so far in that the dumbbells collide and the last inch does nothing.'] },
-  { name: 'Overhead Press', aka: ['Shoulder Press', 'Military Press'],
+  { name: 'Overhead Press', aka: ['Shoulder Press', 'Military Press'], group: 'Shoulders',
     setup: 'Bar on the front of the shoulders, grip just outside the shoulders, ribs down and glutes tight so the press does not become a standing back bend.',
     execution: 'Press straight up, moving your head back out of the way and then forward under the bar as it passes. Finish with the bar over the middle of your feet.',
     mistakes: ['Leaning back to clear the chin instead of moving the head.', 'Stopping short of a locked-out overhead position.'] },
-  { name: 'Deadlift', aka: ['Conventional Deadlift'],
+  { name: 'Deadlift', aka: ['Conventional Deadlift'], group: 'Back',
     setup: 'Bar over the middle of the foot, shins close, hips higher than the knees, chest up, lats pulling the bar into the legs.',
     execution: 'Push the floor away and let the bar drag up the legs. Hips and shoulders rise together; lock out by standing tall, not by leaning back.',
     mistakes: ['Letting the hips shoot up first so it becomes a stiff-legged pull.', 'Rounding the lower back — stop the set when position goes, not when the reps run out.', 'Jerking the bar off the floor instead of taking the slack out first.'] },
-  { name: 'Romanian Deadlift', aka: ['RDL'],
+  { name: 'Romanian Deadlift', aka: ['RDL'], group: 'Legs',
     setup: 'Start standing with the bar already in your hands, knees softly bent and then kept at that angle throughout.',
     execution: 'Push the hips back and let the bar slide down the thighs until you feel a strong stretch in the hamstrings — usually somewhere around the knee — then drive the hips forward.',
     mistakes: ['Turning it into a squat by bending the knees more as you descend.', 'Chasing depth past where the hamstrings stop and the lower back starts.'] },
-  { name: 'Back Squat', aka: ['Squat', 'Barbell Squat'],
+  { name: 'Back Squat', aka: ['Squat', 'Barbell Squat'], group: 'Legs',
     setup: 'Bar on the upper back, not the neck. Feet about shoulder-width, toes slightly out, whole foot planted.',
     execution: 'Break at the hips and knees together, sit down between your feet to at least parallel, then drive up with the chest staying where it was.',
     mistakes: ['Knees collapsing inward on the way up.', 'Heels lifting — that is usually ankle mobility, not effort.', 'Cutting depth as the weight climbs, so the sets stop comparing to each other.'] },
-  { name: 'Leg Press',
+  { name: 'Leg Press', group: 'Legs',
     setup: 'Feet mid-platform, shoulder-width, hips and lower back flat against the pad.',
     execution: 'Lower until the knees reach roughly 90 degrees, then press back without snapping the knees straight at the top.',
     mistakes: ['Going so deep the pelvis lifts off the pad and the lower back rounds.', 'Locking the knees out hard at the top.'] },
-  { name: 'Calf Raise',
+  { name: 'Calf Raise', group: 'Legs',
     setup: 'Balls of the feet on the edge of the step or platform, heels free to drop below.',
     execution: 'Drop the heels for a full stretch, pause, then push all the way up onto the toes and pause there too. Slow at both ends.',
     mistakes: ['Bouncing through short reps that use the tendon rather than the muscle.'] },
-  { name: 'Pull-ups', aka: ['Pull-up', 'Chin-ups', 'Chin-up'],
+  { name: 'Pull-ups', aka: ['Pull-up', 'Chin-ups', 'Chin-up'], group: 'Back',
     setup: 'Grip a little outside the shoulders, hang with the shoulders pulled down out of the ears rather than dead.',
     execution: 'Lead with the elbows down to the ribs, chest towards the bar, chin over it, then lower all the way to straight arms.',
     mistakes: ['Kipping with the legs when the reps get hard.', 'Stopping halfway down, which quietly halves the range.'] },
-  { name: 'Lat Pulldown',
+  { name: 'Lat Pulldown', group: 'Back',
     setup: 'Thighs locked under the pad, slight lean back that you then hold constant.',
     execution: 'Pull the bar to the upper chest by driving the elbows down, hold for a beat, and let it rise under control.',
     mistakes: ['Rocking the torso to move the weight.', 'Pulling behind the neck.'] },
-  { name: 'Barbell Row', aka: ['Bent-over Row', 'Bent Over Row'],
+  { name: 'Barbell Row', aka: ['Bent-over Row', 'Bent Over Row'], group: 'Back',
     setup: 'Hinge until the torso is around 45 degrees or lower, back flat, bar hanging under the shoulders.',
     execution: 'Row to the lower ribs, elbows past the torso, then lower fully without letting the chest drop.',
     mistakes: ['Standing up a little on every rep so the torso angle drifts.', 'Shrugging the weight up with the traps instead of rowing it.'] },
-  { name: 'Face Pull',
+  { name: 'Face Pull', group: 'Back',
     setup: 'Rope at roughly face height, arms straight, a step back so there is tension before the first rep.',
     execution: 'Pull the rope towards your face with the hands finishing beside your ears and the elbows high. Squeeze, then return slowly.',
     mistakes: ['Loading it heavy enough that it becomes a row.', 'Letting the elbows drop below the wrists.'] },
-  { name: 'Lateral Raise',
+  { name: 'Lateral Raise', group: 'Shoulders',
     setup: 'Dumbbells at your sides, small bend in the elbows, torso still.',
     execution: 'Raise out to the sides to roughly shoulder height, leading with the elbows, then lower slower than you lifted.',
     mistakes: ['Swinging the weight up with the hips.', 'Going far above shoulder height, where the traps take over.'] },
-  { name: 'Barbell Curl',
+  { name: 'Barbell Curl', group: 'Arms',
     setup: 'Shoulder-width grip, elbows tucked at the ribs, ribs down.',
     execution: 'Curl by bending the elbow only, squeeze at the top, then lower all the way to straight.',
     mistakes: ['Swinging the bar up with the lower back.', 'Letting the elbows travel forward so the front delts take the work.'] },
-  { name: 'Triceps Pushdown', aka: ['Tricep Pushdown', 'Cable Pushdown'],
+  { name: 'Triceps Pushdown', aka: ['Tricep Pushdown', 'Cable Pushdown'], group: 'Arms',
     setup: 'Elbows pinned at your sides, small forward lean, shoulders down.',
     execution: 'Straighten the arms against the cable, pause at lockout, then let the forearms rise back to 90 degrees only.',
     mistakes: ['Letting the elbows drift forward and away from the ribs.', 'Leaning your bodyweight onto the bar when it gets heavy.'] },
-  { name: 'Kettlebell Swing',
+  { name: 'Kettlebell Swing', group: 'Legs',
     setup: 'Bell about a foot in front of you, hinge and hike it back between the legs like a rugby pass.',
     execution: 'Snap the hips forward hard and let the bell float to chest height. It is a hinge, not a squat, and not a front raise.',
     mistakes: ['Squatting the bell up instead of hinging.', 'Lifting the bell with the arms rather than letting the hips throw it.', 'Letting the bell swing below the knees on the backswing.'] },
-  { name: 'Rowing Erg', aka: ['Row Erg', 'Rowing Machine', 'Erg'],
+  { name: 'Rowing Erg', aka: ['Row Erg', 'Rowing Machine', 'Erg'], group: null,
     setup: 'Straps over the widest part of the foot, damper somewhere around 3–5 rather than at 10.',
     execution: 'Legs, then body, then arms on the drive; arms, then body, then legs on the recovery. Roughly one second out, two seconds back.',
     mistakes: ['Opening the back before the legs have finished pushing.', 'Yanking with the arms early, which is where sore elbows come from.'] }
@@ -1629,6 +1629,95 @@ function formGuide(name) {
   if (!key) return null;
   const hit = formGuideEntries().filter(function (e) { return e.key === key; })[0];
   return hit ? hit.entry : null;
+}
+
+// ---------- weekly balance: hard sets per muscle group (idea #187) ----------
+// `weeklyVolumes` on the Progress tab already answers "how much did I lift" in
+// kilograms, and kilograms cannot answer "is my week balanced": one set of back
+// squats outweighs a whole session of lateral raises, so a chest-only week and a
+// legs-only week of the same tonnage read identically. The unit the training
+// literature actually programmes with is the HARD SET, counted per muscle group
+// per week, and that is what this counts. Sets, never kilograms, never reps.
+//
+// The group lives on the FORM_GUIDE entry rather than in a second name table.
+// This app already has two tables of lift names -- BARBELL_LIFTS and FORM_GUIDE
+// -- and a third one keyed by hand would drift from both the first time a lift
+// is renamed. Adding a field means the `aka` spellings and the exact-match rule
+// are inherited rather than re-stated.
+//
+// Two assignments are judgement calls and are written down rather than left in
+// the table to be guessed at. The conventional Deadlift counts as Back: it is
+// limited by the back and the grip, and it is programmed on pull days. The
+// Romanian Deadlift counts as Legs, because it is a hamstring exercise done at
+// a weight the back is not the limit of. Kettlebell Swing is Legs for the same
+// hip-hinge reason.
+const MUSCLE_GROUPS = ['Chest', 'Back', 'Shoulders', 'Legs', 'Arms'];
+
+// The commonly cited effective range for growth is roughly 10 to 20 hard sets
+// per muscle per week. It is a rule of thumb from group averages and not a
+// promise about one person, so the card says so and the bands are deliberately
+// coarse: below 10 is `low`, 10 to 20 is `on target`, above 20 is `high`. A
+// group with no sets at all is `none`, which is a different sentence from `low`
+// -- "you did four sets of arms" and "you did no arms" want different answers.
+const MUSCLE_SETS_MIN = 10;
+const MUSCLE_SETS_MAX = 20;
+
+function muscleGroupFor(name) {
+  const entry = formGuide(name);
+  return entry && entry.group ? entry.group : null;
+}
+
+function muscleSetVerdict(sets) {
+  if (sets === 0) return 'none';
+  if (sets < MUSCLE_SETS_MIN) return 'low';
+  if (sets > MUSCLE_SETS_MAX) return 'high';
+  return 'on target';
+}
+
+// A trailing window ending on `todayISO` inclusive, not the calendar week that
+// `weeklyVolumes` buckets by. Monday-to-Sunday is the right axis for a chart of
+// history and the wrong one for a question asked on a Wednesday evening, where
+// "the last seven days" is what decides whether tonight needs to be a pull day.
+//
+// A set counts when it has a finite rep count above zero. Weight is deliberately
+// not required: a pull-up is stored at 0 kg and a set of them is a set. A set
+// with no reps did not happen.
+//
+// Every group is returned, including the ones at zero -- the empty row is the
+// finding. A lift no group can be found for is reported by name in `unmatched`
+// rather than dropped, because "your back is untrained" computed off a table
+// that has never heard of the lift you actually do is worse than saying nothing.
+function weeklyMuscleSets(sessions, todayISO, days) {
+  const window = days || 7;
+  const today = todayISO || todayStr();
+  const first = new Date(new Date(today + 'T00:00:00Z').getTime() - (window - 1) * 86400000)
+    .toISOString().slice(0, 10);
+  const counts = Object.create(null);
+  MUSCLE_GROUPS.forEach(function (g) { counts[g] = 0; });
+  const unmatched = Object.create(null);
+  (sessions || []).forEach(function (session) {
+    if (!session || sessionKind(session) !== 'strength' || !session.date) return;
+    if (session.date < first || session.date > today) return;
+    (session.exercises || []).forEach(function (ex) {
+      if (!ex || !exerciseKey(ex.name)) return;
+      const hard = (ex.sets || []).filter(function (st) {
+        return st && typeof st.reps === 'number' && Number.isFinite(st.reps) && st.reps > 0;
+      }).length;
+      if (!hard) return;
+      const group = muscleGroupFor(ex.name);
+      if (!group) { unmatched[exerciseKey(ex.name)] = ex.name; return; }
+      counts[group] += hard;
+    });
+  });
+  return {
+    from: first,
+    to: today,
+    days: window,
+    groups: MUSCLE_GROUPS.map(function (g) {
+      return { group: g, sets: counts[g], verdict: muscleSetVerdict(counts[g]) };
+    }),
+    unmatched: Object.keys(unmatched).sort().map(function (k) { return unmatched[k]; }),
+  };
 }
 
 // The sheet renders one block of text rather than markup, because it reuses the
