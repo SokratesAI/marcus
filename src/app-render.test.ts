@@ -134,3 +134,43 @@ describe("Plan shows a lift name exactly as it was written", () => {
     app.close();
   });
 });
+
+// The Log tab was not swept when the harness was built, and it has the same
+// interpolation the Plan and Today cards had: the day picker writes the focus
+// the coach model drafted, and the day name, straight into the `<option>`.
+describe("the Log tab's day picker", () => {
+  it("shows the focus the coach drafted, whatever is in it", () => {
+    // `&` alone would prove nothing -- the parser reads a bare `&` back as `&`.
+    // The angle brackets are the question: an `<option>` cannot hold an element,
+    // so the parser drops `<heavy>` outright and the word is simply gone off the
+    // screen rather than rendered as markup.
+    const focus = "Push <heavy> & core";
+    const app = renderApp("log", { plan: planWith("Monday", focus, "Curl") }, { now: MONDAY });
+    const shown = Array.from(app.document.querySelectorAll("#logDay option")).map(
+      (n: any) => n.textContent,
+    );
+    expect(shown).toContain(`Monday — ${focus}`);
+    app.close();
+  });
+
+  it("carries the day name as the option's value, quotes and all", () => {
+    // This one is not cosmetic. The `value` is what `saveSession` reads to
+    // decide which plan day the session belongs to, so a quote in the day name
+    // closes the attribute early and the session is filed against `Tues`.
+    // The tag is in here as well as the quotes on purpose: the day name is
+    // written twice in one line, once into the attribute and once into the
+    // option's text, and each half needs a character the other half would not
+    // have noticed. A quote alone survives a text node. And `<` alone is not
+    // enough either -- an HTML parser only starts a tag when a letter follows
+    // it, so `Tues<"day">` reads back as itself and passed over a raw
+    // interpolation when I first wrote this. It takes a real `<b>`.
+    const day = 'Tues<b>"day"</b>';
+    const plan = planWith("Monday", "Push", "Curl");
+    plan.days[2] = { day, focus: "Pull", exercises: [] };
+    const app = renderApp("log", { plan }, { now: MONDAY });
+    const options = Array.from(app.document.querySelectorAll("#logDay option"));
+    expect(options.map((n: any) => n.value)).toContain(day);
+    expect(options.map((n: any) => n.textContent)).toContain(`${day} — Pull`);
+    app.close();
+  });
+});

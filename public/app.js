@@ -634,7 +634,7 @@ function renderLog() {
       ` : `
       <div class="field">
         <label>Day / focus</label>
-        <select id="logDay">${plan.days.map(d => `<option value="${d.day}"${heard && heard.day === d.day ? ' selected' : ''}>${d.day} — ${d.focus}</option>`).join('')}</select>
+        <select id="logDay">${plan.days.map(d => `<option value="${esc(d.day)}"${heard && heard.day === d.day ? ' selected' : ''}>${esc(d.day)} — ${esc(d.focus)}</option>`).join('')}</select>
       </div>
       <div id="exerciseRows"></div>
       <button type="button" class="btn btn--tonal" id="addExercise"><span class="material-icons-round">add</span> Add exercise</button>
