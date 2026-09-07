@@ -1202,6 +1202,22 @@ function loadVerdictLabel(load) {
 const REVIEW_WINDOW_DAYS = 28;
 const REVIEW_MIN_WEEKS = 2;      // one week is a holiday, not a pattern
 const DELOAD_SET_FLOOR = 2;      // a deload that leaves one set is not a session
+const INJURY_WINDOW_DAYS = 7;    // an injury from a month ago is history, not a signal
+
+// Idea #220 left one thread open: the sentence parser has flagged an injury on
+// a session since 09-01 -- "got a small injury in my leg" sets `injury: true`
+// -- and nothing in the plan review has ever read it. The flag is something
+// Edvard typed rather than something Marcus inferred, so it needs no minimum
+// weeks of history the way an adherence pattern does; it is one fact about one
+// day, and the window is short for the same reason.
+// Newest first, so the reason can name the most recent one.
+function recentInjuries(sessions, todayISO, windowDays) {
+  const today = dayKey(todayISO || todayStr());
+  const first = shiftDay(today, -((windowDays || INJURY_WINDOW_DAYS) - 1));
+  return (sessions || [])
+    .filter(s => s && s.injury && s.date && s.date >= first && s.date <= today)
+    .sort((a, b) => (a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)));
+}
 
 function weekdayOf(iso) { return DAY_NAMES[new Date(iso + 'T00:00:00Z').getUTCDay()]; }
 
@@ -1314,6 +1330,47 @@ function phaseProposal(plan, goal, todayISO) {
   };
 }
 
+// Both of the reasons to ease off produce the same edit -- one set off every
+// exercise -- so they are one proposal with one id rather than two that would
+// stack and cut the same week twice. The reason names whichever fired, and both
+// when both did.
+//
+// `load` is null on the early-return path in planReview, where there is not yet
+// enough history to compute a ratio. An injury still counts there.
+function deloadProposal(plan, load, injuries) {
+  const hurt = (injuries || []).slice();
+  const overloaded = !!load && (load.verdict === 'load spike' || load.verdict === 'overreaching');
+  if (!hurt.length && !overloaded) return null;
+  // The only lever the plan has is sets, so a week with nothing cuttable gets no
+  // proposal -- the same guard the load-driven deload always had. An injury with
+  // no set to take off is still shown on the session card; it is not silently
+  // dropped from the app, only from a proposal that would do nothing.
+  const cuttable = planTrainingDays(plan).filter(d => (d.exercises || []).some(e => (e.sets || 0) > DELOAD_SET_FLOOR));
+  if (!cuttable.length) return null;
+
+  const reasons = [];
+  if (hurt.length) {
+    const latest = hurt[0];
+    // His own words, quoted, because Marcus read a boolean out of them and he is
+    // the one who can tell whether that reading was right.
+    reasons.push('You flagged an injury on ' + niceDate(latest.date)
+      + (latest.note ? ': \u201c' + latest.note + '\u201d' : '') + '.');
+    if (hurt.length > 1) {
+      reasons.push(hurt.length + ' of your sessions in the last ' + INJURY_WINDOW_DAYS + ' days mention one.');
+    }
+  }
+  if (overloaded) {
+    reasons.push('Your fatigue is ' + load.ratio.toFixed(2) + ' times your fitness over the last ' + load.days + ' days. Above 1.5 is the range injuries cluster in.');
+  }
+  reasons.push('This drops one set from each exercise on ' + cuttable.length + ' day(s), never below ' + DELOAD_SET_FLOOR + '.');
+  return {
+    id: 'deload',
+    kind: 'deload',
+    title: 'Take a set off every exercise this week',
+    reason: reasons.join(' '),
+  };
+}
+
 // Proposals, most urgent first. Each one carries the number that produced it,
 // because a change with no measurement behind it is just an opinion.
 //
@@ -1325,8 +1382,12 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
   const windowSize = windowDays || REVIEW_WINDOW_DAYS;
   const weeks = reviewWeeks(sessions, todayISO, windowSize);
   const phaseFirst = phaseProposal(plan, goal, todayISO);
+  const injuries = recentInjuries(sessions, todayISO, INJURY_WINDOW_DAYS);
   if (weeks < REVIEW_MIN_WEEKS) {
-    return { weeks, proposals: phaseFirst ? [phaseFirst] : [],
+    const early = phaseFirst ? [phaseFirst] : [];
+    const hurtEarly = deloadProposal(plan, null, injuries);
+    if (hurtEarly) early.push(hurtEarly);
+    return { weeks, proposals: early,
       note: 'Marcus reviews the rest of the plan once you have ' + REVIEW_MIN_WEEKS + ' weeks of sessions logged. ' + weeks + ' so far.' };
   }
 
@@ -1335,17 +1396,8 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
   const training = planTrainingDays(plan);
   const proposals = phaseFirst ? [phaseFirst] : [];
 
-  if (load.verdict === 'load spike' || load.verdict === 'overreaching') {
-    const cuttable = training.filter(d => (d.exercises || []).some(e => (e.sets || 0) > DELOAD_SET_FLOOR));
-    if (cuttable.length) {
-      proposals.push({
-        id: 'deload',
-        kind: 'deload',
-        title: 'Take a set off every exercise this week',
-        reason: 'Your fatigue is ' + load.ratio.toFixed(2) + ' times your fitness over the last ' + load.days + ' days. Above 1.5 is the range injuries cluster in. This drops one set from each exercise on ' + cuttable.length + ' day(s), never below ' + DELOAD_SET_FLOOR + '.',
-      });
-    }
-  }
+  const easeOff = deloadProposal(plan, load, injuries);
+  if (easeOff) proposals.push(easeOff);
 
   const skipped = rows.filter(r => r.planned && r.logged === 0);
   const usedRest = rows.filter(r => !r.planned && r.logged > 0).sort((a, b) => b.logged - a.logged);
