@@ -9,7 +9,13 @@ function loadApp(): any {
   const ctx: any = {
     console, setTimeout, clearTimeout, Math, JSON, Number, String, Array, Object, Date, RegExp,
     document: undefined, navigator: {},
-    localStorage: { getItem: () => null, setItem: () => {} },
+    // A real in-memory store rather than a stub that swallows writes: the
+    // seeded plan is one of the strings this file checks a term against, and
+    // seed() only produces it if store.set() actually keeps something.
+    localStorage: (() => {
+      const mem: Record<string, string> = {};
+      return { getItem: (k: string) => (k in mem ? mem[k] : null), setItem: (k: string, v: string) => { mem[k] = v; } };
+    })(),
   };
   ctx.window = ctx;
   ctx.globalThis = ctx;
@@ -17,6 +23,9 @@ function loadApp(): any {
   vm.runInContext(
     appFile("app-core.js") +
       "\n;globalThis.GLOSSARY = GLOSSARY;" +
+      "\n;globalThis.TRAINING_REFERENCES = TRAINING_REFERENCES;" +
+      "\n;globalThis.PROPOSAL_REFERENCES = PROPOSAL_REFERENCES;" +
+      "\n;globalThis.seedBlockName = store.get('plan').blockName;" +
       "\n;globalThis.glossaryTerm = glossaryTerm;" +
       "\n;globalThis.linkGlossary = linkGlossary;",
     ctx,
@@ -38,13 +47,28 @@ describe("the glossary table", () => {
   });
 
   // The contract that makes this a glossary rather than an encyclopaedia: a
-  // term earns its entry by being a word Marcus already puts on the screen. An
-  // entry for a word the app never says has nowhere to be read from.
-  it("only defines words the app itself uses", () => {
+  // term earns its entry by being a word Marcus already puts on the screen, so
+  // there is a sentence to read it from.
+  //
+  // This is asserted against strings the app actually renders, not against a
+  // grep of the source, and the difference is not academic -- it is the bug this
+  // test was rewritten to catch. `deload` and `acute:chronic` both had entries
+  // and both would have passed a source grep: the first appears as
+  // `kind === 'deload'`, the second only in a comment. Neither word is ever on
+  // the screen -- the chip says "ease off" -- so both entries were unreachable
+  // and are gone.
+  it("only defines words that appear in text the app renders", () => {
+    const rendered: string[] = [
+      ...app.TRAINING_REFERENCES.map((r: any) => r.finding),
+      ...Object.keys(app.PROPOSAL_REFERENCES).flatMap((k) =>
+        app.PROPOSAL_REFERENCES[k].map((pin: any) => pin.stretch)),
+      app.seedBlockName,
+      "RPE",
+    ];
     for (const e of app.GLOSSARY) {
-      const said = APP_SOURCE.toLowerCase().includes(e.term.toLowerCase())
-        || appFile("index.html").toLowerCase().includes(e.term.toLowerCase());
-      expect(said, `${e.term} is defined but never appears in the app`).toBe(true);
+      const surfaced = rendered.some((text) =>
+        app.linkGlossary(text).includes(`data-term="${e.term}"`));
+      expect(surfaced, `${e.term} is defined but nothing on screen says it`).toBe(true);
     }
   });
 
@@ -70,12 +94,12 @@ describe("glossaryTerm", () => {
   it("finds an entry however the app happened to capitalise it", () => {
     expect(app.glossaryTerm("RPE").term).toBe("RPE");
     expect(app.glossaryTerm("rpe").term).toBe("RPE");
-    expect(app.glossaryTerm("Deload").term).toBe("deload");
+    expect(app.glossaryTerm("Taper").term).toBe("taper");
   });
 
   it("finds an entry by an alternative spelling", () => {
     expect(app.glossaryTerm("rate of perceived exertion").term).toBe("RPE");
-    expect(app.glossaryTerm("acute-to-chronic").term).toBe("acute:chronic");
+    expect(app.glossaryTerm("tapering").term).toBe("taper");
   });
 
   it("returns null for a word it does not define", () => {
@@ -87,19 +111,19 @@ describe("glossaryTerm", () => {
 
 describe("linkGlossary", () => {
   it("wraps a term it knows in a button carrying that term", () => {
-    const html = app.linkGlossary("Take a deload week.");
-    expect(html).toContain('data-term="deload"');
-    expect(html).toContain(">deload</button>");
+    const html = app.linkGlossary("Take a taper week.");
+    expect(html).toContain('data-term="taper"');
+    expect(html).toContain(">taper</button>");
     expect(html).toContain("Take a ");
     expect(html).toContain(" week.");
   });
 
   it("keeps the word exactly as it was written", () => {
-    expect(app.linkGlossary("Deload now")).toContain(">Deload</button>");
+    expect(app.linkGlossary("Taper now")).toContain(">Taper</button>");
   });
 
   it("escapes the text around a term", () => {
-    const html = app.linkGlossary('<img src=x onerror=alert(1)> deload');
+    const html = app.linkGlossary('<img src=x onerror=alert(1)> taper');
     expect(html).toContain("&lt;img");
     expect(html).not.toContain("<img");
   });
@@ -116,19 +140,19 @@ describe("linkGlossary", () => {
   });
 
   it("links the first mention of a term and not the rest", () => {
-    const html = app.linkGlossary("A deload is a deload is a deload.");
+    const html = app.linkGlossary("A taper is a taper is a taper.");
     expect(html.split("data-term").length - 1).toBe(1);
   });
 
-  // `acute-to-chronic` after `acute:chronic` is the same idea a second time.
+  // `rate of perceived exertion` after `RPE` is the same idea a second time.
   it("links a term once even when a second spelling of it follows", () => {
-    const html = app.linkGlossary("The acute:chronic ratio, or acute-to-chronic ratio.");
+    const html = app.linkGlossary("Log the RPE, the rate of perceived exertion.");
     expect(html.split("data-term").length - 1).toBe(1);
   });
 
   it("links two different terms in one sentence", () => {
-    const html = app.linkGlossary("A deload before the taper.");
-    expect(html).toContain('data-term="deload"');
+    const html = app.linkGlossary("A hypertrophy block before the taper.");
+    expect(html).toContain('data-term="hypertrophy"');
     expect(html).toContain('data-term="taper"');
   });
 
@@ -152,6 +176,10 @@ describe("where the explainers surface", () => {
   it("links the terms in the research quoted under a proposal", () => {
     expect(appJs).toContain("linkGlossary(c.ref.finding)");
     expect(appJs).toContain("linkGlossary(c.stretch)");
+  });
+
+  it("links the term in the plan's block name", () => {
+    expect(appJs).toContain("${linkGlossary(plan.blockName)}");
   });
 
   it("gives the RPE box on the log form its own handle", () => {

@@ -637,7 +637,12 @@ describe("the Plan tab with goals on it", () => {
     expect(html).toContain("Taper");
     expect(html).toContain("check_box_outline_blank"); // m1 open
     expect(html).toContain(">check_box<"); // m2 ticked
-    expect(html).toContain(ctx.store.get("plan").blockName); // the week is still there
+      // The block name renders through linkGlossary now (idea #197), so
+      // "Hypertrophy" is a button inside the heading and the name is no longer
+      // one contiguous string. Both halves still have to be on the page.
+      const blockName = ctx.store.get("plan").blockName;
+      expect(html).toContain('data-term="hypertrophy"');
+      expect(html).toContain(blockName.replace(/^Hypertrophy/, ""));
   });
 
   it("says so plainly when there is no goal yet", () => {

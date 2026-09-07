@@ -728,25 +728,28 @@ function referencesFor(kind) {
 // being a term Marcus already puts on the screen, and it is read where that word
 // appears rather than on a page you have to go and find.
 //
-// Two boundaries, both deliberate and both tested. A term the app already
+// Three boundaries, all deliberate and all tested. A term the app already
 // explains in the sentence it uses it in gets no entry -- the Fitness/Fatigue
 // card spells itself out, and the four goal phases each carry their own note --
 // because a tappable word that repeats the line above it is noise. And nothing
 // here is a training recommendation: each entry says what the word means and
 // where in Marcus the number behind it comes from, which is a fact about this
 // app, not advice about a body.
+//
+// The third boundary is the one I got wrong first, and it is why its test is
+// written against live strings rather than against the source. `deload` and
+// `acute:chronic` had entries here and both looked obviously right: the app is
+// full of both words. It is full of them in `kind === 'deload'` and in a comment
+// about the acute:chronic literature -- the chip a reader actually sees says
+// "ease off", and the ratio is never named on screen at all. A grep over the
+// source passes for a word only my own comments say, so the test instead asks
+// linkGlossary to produce a button out of text the app really renders.
 const GLOSSARY = [
   {
     term: 'RPE',
     aka: ['rate of perceived exertion'],
     title: 'RPE — rate of perceived exertion',
     body: 'How hard a set felt, on a scale of 1 to 10, where 10 is a set you could not have added a rep to. It is the one training signal that needs no watch and no maths: you type the number you felt. Marcus stores it beside the reps and the weight, and leaves it off entirely if you skip the box, because a blank is not a zero.'
-  },
-  {
-    term: 'deload',
-    aka: ['deloads'],
-    title: 'Deload',
-    body: 'A deliberately easier week — the volume comes down while the movements stay the same — so the fatigue you have built up drains off and the fitness underneath it shows. Marcus proposes one when the load you are carrying runs far ahead of the load you are used to, which is the band injuries cluster in.'
   },
   {
     term: 'hypertrophy',
@@ -763,18 +766,11 @@ const GLOSSARY = [
     term: 'ventilatory threshold',
     title: 'Ventilatory threshold',
     body: 'The effort at which your breathing steps up out of proportion to the pace — roughly the top of easy. It is how endurance research draws the line between the easy work that fills most of a week and the hard work that fills the rest, and it is why "easy" in a plan means slower than it feels like it should.'
-  },
-  {
-    term: 'acute:chronic',
-    aka: ['acute-to-chronic', 'acute to chronic'],
-    title: 'Acute:chronic ratio',
-    body: 'The training load of your recent days divided by the load you have been carrying for weeks. Around 1 means this week looks like your normal; well under it means you are backing off; well over it means you are asking for more than you are used to. Marcus reads both numbers off your own log and nothing else.'
   }
 ];
 
-// Longest first, so `acute:chronic` cannot be half-matched by a shorter entry
-// that happens to start inside it, and every spelling of an entry lands on the
-// same entry.
+// Longest first, so a shorter entry that happens to start inside a longer one
+// cannot half-match it, and every spelling of an entry lands on the same entry.
 function glossaryEntries() {
   const out = [];
   GLOSSARY.forEach(function (e) {
@@ -799,9 +795,9 @@ function glossaryTerm(word) {
 // input on purpose: this replaces an `esc()` call at every site that uses it, so
 // the safe thing has to be the thing you get by default.
 //
-// First mention only, and one per entry -- a paragraph that says "deload" three
-// times should not become three buttons, and `acute-to-chronic` after
-// `acute:chronic` is the same idea a second time.
+// First mention only, and one per entry -- a paragraph that says "taper" three
+// times should not become three buttons, and `rate of perceived exertion` after
+// `RPE` is the same idea a second time.
 function linkGlossary(text) {
   const raw = String(text == null ? '' : text);
   const used = Object.create(null);
@@ -827,8 +823,8 @@ function linkGlossary(text) {
 }
 
 // A term only matches as a whole word, so `taper` never fires inside `tapered`
-// and `RPE` never fires inside a longer token. `:` and `-` are part of a term
-// here, which is why this is a scan rather than one regex over a joined list.
+// and `RPE` never fires inside a longer token. A term may hold a space or a
+// hyphen, which is why this is a scan rather than one regex over a joined list.
 function findTerm(text, word) {
   const lower = text.toLowerCase();
   const needle = word.toLowerCase();

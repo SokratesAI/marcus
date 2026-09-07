@@ -166,7 +166,7 @@ function renderPlan() {
 
     <div class="section-title">This week</div>
     <div class="card">
-      <h2>${plan.blockName}</h2>
+      <h2>${linkGlossary(plan.blockName)}</h2>
       <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Sized for the ${esc(plan.phase || PLAN_DEFAULT_PHASE)} phase &middot; ${planTotalSets(plan)} sets across ${planTrainingDays(plan).length} training day(s)</div>
     </div>
     <div class="card">
