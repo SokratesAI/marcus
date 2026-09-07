@@ -108,6 +108,53 @@ function validateSession(rows) {
   return { ok: true, exercises };
 }
 
+// A warm-up ramp is percentages of the working weight, and it is convention
+// rather than a finding: no paper in TRAINING_REFERENCES measures a ramp, so
+// this carries no citation -- the same rule `deload`, `move` and `rest` are
+// held to further down.
+const WARMUP_STEPS = [
+  { share: 0.4, reps: 5 },
+  { share: 0.6, reps: 3 },
+  { share: 0.8, reps: 2 },
+];
+// Plates come in 2.5 kg pairs, so a step that asks for 43.2 kg is a number
+// nobody can load.
+const WARMUP_INCREMENT = 2.5;
+
+function roundToIncrement(value, increment) {
+  return Math.round(value / increment) * increment;
+}
+
+// One working weight in, the sets to do before it out. Two kinds of step are
+// dropped rather than shown: one that rounds to nothing, and one that rounds up
+// to a weight an earlier step already covers. Both happen on light working
+// weights, and printing them would put the same set on the screen twice.
+function warmupRamp(rawWeight) {
+  const weight = Number(rawWeight);
+  if (!Number.isFinite(weight) || weight <= 0) return [];
+  const out = [];
+  WARMUP_STEPS.forEach(function (step) {
+    const load = roundToIncrement(weight * step.share, WARMUP_INCREMENT);
+    if (load <= 0) return;
+    if (load >= weight) return;
+    if (out.length && load <= out[out.length - 1].weight) return;
+    out.push({ weight: load, reps: step.reps });
+  });
+  return out;
+}
+
+// The sentence is separate from the numbers so a caller can have one without
+// the other, and so "nothing to show" has exactly one spelling -- the empty
+// string, which the Log tab hides on. A ramp with no steps is a legal state
+// and it is what every bodyweight row produces.
+function warmupLabel(rawWeight) {
+  const ramp = warmupRamp(rawWeight);
+  if (!ramp.length) return '';
+  return 'Warm-up: ' + ramp.map(function (s) {
+    return String(s.weight) + ' kg \u00d7 ' + s.reps;
+  }).join(', ');
+}
+
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
 // walk are all real sessions with no kilometres attached, and demanding one
 // would push the user to invent a number. Duration is what every cardio
