@@ -1,11 +1,7 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { APP_SOURCE } from "./app-source.js";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const APP_SOURCE = readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
 
 // Same small harness as app-servercopy.test.ts: everything under test is a
 // `function` declaration, so it lands on the context's global object on its

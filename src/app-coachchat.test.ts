@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { APP_SOURCE } from "./app-source.js";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
@@ -9,8 +8,7 @@ import { describe, it, expect } from "vitest";
 // `fetch` is injected here because askMarcus is the one function in app.js that
 // reaches the network, and the point of these tests is what it does when that
 // call does not come back.
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const APP_SOURCE = readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+
 
 // Same shape as app-validation.test.ts: app.js is a classic script, so its
 // top-level declarations land on the vm context and the tests call them by hand.

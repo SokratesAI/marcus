@@ -1,3 +1,4 @@
+import { APP_SOURCE } from "./app-source.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -5,7 +6,7 @@ import vm from "node:vm";
 import { describe, it, expect } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const APP_SOURCE = readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+
 const INDEX_SOURCE = readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
 const CSS_SOURCE = readFileSync(path.join(__dirname, "..", "public", "styles.css"), "utf8");
 

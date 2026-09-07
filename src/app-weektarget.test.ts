@@ -1,11 +1,7 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { APP_SOURCE } from "./app-source.js";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const APP_SOURCE = readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
 
 // Same vm shape as app-planreview.test.ts. weekTarget takes a goal, a plan and
 // a list of sessions and returns an object -- no DOM node is touched.
