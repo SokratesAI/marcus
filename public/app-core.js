@@ -381,6 +381,61 @@ function lastPerformanceLabel(last) {
   return parts.join(', ') + ' \u00b7 ' + niceDate(last.date);
 }
 
+// The smallest load change this app will ever propose. It is not a preference:
+// PLATES bottoms out at 1.25 kg and a barbell takes one of those on each side,
+// so 2.5 kg is the smallest jump the equipment in `plateLoad` can actually
+// make. Dumbbell pairs and machine stacks step about the same, so there is one
+// number here rather than a per-lift table I would have had to invent.
+const PROGRESSION_STEP_KG = 2.5;
+
+// Double progression: hold the weight until you hit the rep target at that
+// weight, then add the smallest jump the bar can make. `lastPerformance` above
+// says what you did; this is the only thing in the app that proposes a number
+// you have not lifted yet.
+//
+// `targetReps` is the reps box on the row in front of you, not last session's
+// reps. The plan is what says how many you are supposed to get, so the same
+// history gives a different answer on a row asking for 5 and a row asking for
+// 12 -- which is the point, because that box is where a phase change shows up.
+//
+// Three answers, and two of them are not "add 2.5 kg":
+//
+//   - Short of the target reps: stay at the weight. That is the whole of double
+//     progression and it is the common case, not an edge.
+//   - RPE 10 last time: stay, even if the reps were there. RPE 10 is defined as
+//     nothing left in reserve, so adding load on top of it is not a suggestion
+//     any coach makes. That single value is the only thing read off the RPE box
+//     here -- reading 7 against 8 would be a graded opinion I have no
+//     measurement for, the same reason the rest line ignores RPE entirely.
+//   - A bodyweight lift logs 0 kg and has no bar to add to, so it progresses in
+//     reps instead. That falls out of the same weight comparison rather than
+//     out of a lift-type list.
+//
+// Returns null rather than a guess when there is no history, no rep target, or
+// a rep count that was never recorded -- an empty row proposes nothing.
+function nextTarget(last, targetReps) {
+  if (!last) return null;
+  const weight = last.weight;
+  const did = last.reps;
+  const target = Number(targetReps);
+  if (typeof weight !== 'number' || !Number.isFinite(weight)) return null;
+  if (typeof did !== 'number' || !Number.isFinite(did)) return null;
+  if (!Number.isFinite(target) || target <= 0) return null;
+  if (did < target) return { kind: 'hold', weight: weight, reps: target, reason: 'short' };
+  if (last.rpe === 10) return { kind: 'hold', weight: weight, reps: target, reason: 'rpe' };
+  if (weight === 0) return { kind: 'reps', weight: 0, reps: did + 1, reason: 'bodyweight' };
+  return { kind: 'add', weight: weight + PROGRESSION_STEP_KG, reps: target, reason: 'earned' };
+}
+
+function nextTargetLabel(next) {
+  if (!next) return '';
+  const load = next.weight === 0 ? 'bodyweight' : String(next.weight) + ' kg';
+  if (next.kind === 'add') return 'Next: ' + load + ' \u00d7 ' + next.reps;
+  if (next.kind === 'reps') return 'Next: bodyweight \u00d7 ' + next.reps;
+  if (next.reason === 'rpe') return 'Next: stay at ' + load + ' \u00d7 ' + next.reps + ', RPE 10 last time';
+  return 'Next: stay at ' + load + ', aim for ' + next.reps;
+}
+
 // The heaviest set you have ever logged for a lift, one row per lift. `Last
 // time` above answers "what do I load the bar with today"; this answers "what
 // is the most I have ever done", which is the number that makes a session feel
