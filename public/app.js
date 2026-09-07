@@ -1664,8 +1664,26 @@ function goalProgressCard(goal, todayISO) {
     </div>`;
 }
 
+// Which measurement series the Progress tab is showing. It is a view choice, not
+// data, so it is deliberately not stored: reopening the app on the waist is the
+// right default and not worth a store key to remember otherwise.
+let measureSite = 'waist';
+
+// One reading is a starting point, not a trend, and this says so rather than
+// printing a change of 0 -- which would read as "you have not moved".
+function measurementTrendLine(trend, site) {
+  if (!trend) return '<span>Nothing logged yet</span><span></span>';
+  const latest = `${trend.latest} ${site.unit}`;
+  if (trend.change === null) return `<span>${esc(latest)} on ${esc(niceDate(trend.date))}</span><span>first reading</span>`;
+  const arrow = trend.change > 0 ? '+' : '';
+  return `<span>${esc(latest)} on ${esc(niceDate(trend.date))}</span><span>${esc(arrow + trend.change + ' ' + site.unit)} since ${esc(niceDate(trend.since))}</span>`;
+}
+
 function renderProgress() {
   const weights = store.get('weights', []);
+  const measurements = store.get('measurements', []);
+  const measureSeries = measurementSeries(measurements, measureSite);
+  const measureTrend = measurementTrend(measurements, measureSite);
   const meals = store.get('meals', []);
   const calByDay = {};
   meals.forEach(m => { calByDay[m.date] = (calByDay[m.date] || 0) + m.calories; });
@@ -1687,6 +1705,21 @@ function renderProgress() {
         </div>
       </div>
       <div class="chart-wrap"><canvas id="weightChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Body measurements</h2>
+      <p class="card__note">The tape says things the scale cannot. Measure the same spot at the same time of day and the trend is the useful part, not any one reading.</p>
+      <div class="field" style="margin-top:10px"><label>What did you measure?</label>
+        <select id="measureSite">${MEASUREMENT_SITES.map(m => `<option value="${m.key}"${m.key === measureSite ? ' selected' : ''}>${esc(m.label)} (${esc(m.unit)})</option>`).join('')}</select>
+      </div>
+      <div class="field"><label>Today's reading (${esc(measurementSite(measureSite).unit)})</label>
+        <div style="display:flex;gap:8px">
+          <input id="measureInput" type="number" step="0.1" placeholder="${measureSite === 'bodyfat' ? 'e.g. 18.5' : 'e.g. 86.5'}">
+          <button class="btn btn--filled" id="addMeasure">Save</button>
+        </div>
+      </div>
+      <div class="exercise-line" id="measureTrend">${measurementTrendLine(measureTrend, measurementSite(measureSite))}</div>
+      <div class="chart-wrap"><canvas id="measureChart"></canvas></div>
     </div>
     <div class="card">
       <h2>Weekly training volume (kg lifted)</h2>
@@ -1725,6 +1758,19 @@ function renderProgress() {
     renderProgress();
   });
 
+  document.getElementById('measureSite').addEventListener('change', (e) => {
+    measureSite = e.target.value;
+    renderProgress();
+  });
+
+  document.getElementById('addMeasure').addEventListener('click', () => {
+    const result = validateMeasurement(measureSite, document.getElementById('measureInput').value);
+    if (!result.ok) { toast(result.message); return; }
+    const all = upsertMeasurement(store.get('measurements', []), { date: todayStr(), site: result.site, value: result.value });
+    if (!store.set('measurements', all)) return;
+    renderProgress();
+  });
+
   wireBackup();
   wireReminders();
 
@@ -1753,6 +1799,11 @@ function renderProgress() {
     data: { labels: weights.map(w => niceDate(w.date)), datasets: [{ data: weights.map(w => w.kg), borderColor: '#2E7D32', backgroundColor: 'rgba(46,125,50,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
+  charts.measure = new Chart(document.getElementById('measureChart'), {
+    type: 'line',
+    data: { labels: measureSeries.map(m => niceDate(m.date)), datasets: [{ data: measureSeries.map(m => m.value), borderColor: '#8E24AA', backgroundColor: 'rgba(142,36,170,.15)', tension: .3, fill: true, pointRadius: 2 }] },
+    options: common
+  });
   charts.volume = new Chart(document.getElementById('volumeChart'), {
     type: 'bar',
     data: { labels: vols.map(([k]) => niceDate(k)), datasets: [{ data: vols.map(([,v]) => Math.round(v)), backgroundColor: '#FB8C00', borderRadius: 6 }] },
@@ -1775,7 +1826,7 @@ function renderProgress() {
 const BACKUP_VERSION = 1;
 // Every store key the app writes. `chat` is in here because the coach's memory
 // of the conversation is data the user would miss, not chrome.
-const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'meals', 'goals', 'chat', 'deletions'];
+const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'meals', 'goals', 'chat', 'deletions'];
 
 // The three stores the app can delete from, and the reason this list is three
 // names rather than every store: `deleteSession`, `deleteMeal` and `deleteGoal`
@@ -2058,6 +2109,7 @@ const MERGE_KEYS = {
   meals: { by: ['id'] },
   goals: { by: ['id'] },
   weights: { by: ['date'] },
+  measurements: { by: ['date', 'site'] },
   chat: { by: ['ts', 'role', 'text'], sort: 'ts' },
   // A tombstone is a record like any other and merges like one: the union of
   // both sides is what either phone deleted, and a deletion both sides know
