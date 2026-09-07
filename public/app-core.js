@@ -496,6 +496,86 @@ const GOAL_PHASES = [
   { label: 'Taper', share: 0.08, note: 'Cut volume, keep intensity, arrive fresh.' }
 ];
 
+// ---------- training-science references (idea #214) ----------
+// Edvard asked for recent Norwegian endurance-science research behind the plan
+// proposals. Marcus has no model behind it, so these are written down rather
+// than generated -- a citation an app invents is worse than no citation at all.
+//
+// Each entry says what the paper actually measured, and nothing more. The
+// proposals on the Plan tab compute their numbers from Edvard's own log, and a
+// paper is attached to one only where its finding speaks to the same quantity;
+// where none does, the proposal carries no reference and the card says so.
+// That boundary is the point of this table. Every identifier here was checked
+// against the publisher rather than recalled.
+const TRAINING_REFERENCES = [
+  {
+    id: 'seiler2006',
+    title: 'Quantifying training intensity distribution in elite endurance athletes: is there evidence for an "optimal" distribution?',
+    authors: 'Seiler & Kjerland',
+    year: 2006,
+    venue: 'Scandinavian Journal of Medicine & Science in Sports 16(1):49-56',
+    url: 'https://doi.org/10.1111/j.1600-0838.2004.00418.x',
+    finding: 'Measured what well-trained Norwegian junior cross-country skiers actually did over a season: about three quarters of their sessions sat below the first ventilatory threshold, with the rest hard and very little in between. It describes a distribution rather than prescribing one.',
+  },
+  {
+    id: 'norwegian2024',
+    title: 'Training session models in endurance sports: a Norwegian perspective on best practice recommendations',
+    authors: 'Sandbakk and colleagues',
+    year: 2024,
+    venue: 'Sports Medicine (PMC11560996)',
+    url: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC11560996/',
+    finding: 'Asked successful Norwegian endurance coaches how they build a session at each intensity, and compared the models across Olympic endurance sports. It is about the shape of a session and where it sits in a season.',
+  },
+  {
+    id: 'zones2025',
+    title: 'Contextualizing the Norwegian standardized intensity zone framework in an international sample of endurance practitioners',
+    authors: 'Seiler, Viken & Mentzoni',
+    year: 2025,
+    venue: 'Scientific Reports (doi:10.1038/s41598-025-17023-z)',
+    url: 'https://doi.org/10.1038/s41598-025-17023-z',
+    finding: 'Set the Norwegian five-zone intensity framework against how endurance practitioners elsewhere actually label and use intensity zones.',
+  },
+];
+
+// Which reference belongs to which proposal, and -- just as important -- how
+// far it goes. `stretch` is the sentence that stops the citation being read as
+// "the paper says do this": Marcus's arithmetic is Marcus's, and the paper is
+// context for the direction, not the source of the number.
+const PROPOSAL_REFERENCES = {
+  phase: [{
+    id: 'norwegian2024',
+    stretch: 'The Base/Build/Peak/Taper multipliers Marcus resizes your week by are its own arithmetic, not this paper\u2019s numbers. What the paper supports is the idea that the shape of a week should change with where you are in a season.',
+  }],
+  build: [{
+    id: 'seiler2006',
+    stretch: 'The 0.8 fatigue-to-fitness line is Marcus\u2019s own reading of your log. What this paper supports is the direction: when the load is light, the pattern that produced these athletes was more volume rather than more intensity.',
+  }],
+};
+
+// Proposals with no honest reference: `deload`, `move` and `rest`. The 1.5
+// acute-to-chronic line the deload fires on comes from injury-risk workload
+// research, not from any of the endurance papers above, and `move`/`rest` are
+// about whether you keep the week you wrote -- adherence, not physiology.
+// Attaching a Norwegian endurance paper to any of the three would be the exact
+// invented citation this table exists to avoid.
+function referenceById(id) {
+  return TRAINING_REFERENCES.filter(function (r) { return r.id === id; })[0] || null;
+}
+
+// One proposal in, the references behind it out, each already joined to its
+// paper so a caller never has to look one up. Unknown or uncited kinds return
+// an empty list rather than throwing -- an absent citation is a legal state
+// here and is the common one.
+function referencesFor(kind) {
+  const pins = (PROPOSAL_REFERENCES[kind] || []);
+  const out = [];
+  pins.forEach(function (pin) {
+    const ref = referenceById(pin.id);
+    if (ref) out.push({ ref: ref, stretch: pin.stretch });
+  });
+  return out;
+}
+
 // Phase ends are cumulative shares of the whole window rather than per-phase
 // lengths added up, so the last one lands exactly on the target date instead of
 // four roundings away from it.

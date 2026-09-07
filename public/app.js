@@ -127,9 +127,21 @@ function renderPlan() {
       <div class="card" style="display:block">
         <div class="card__title-row"><h2>${esc(p.title)}</h2><span class="chip ${p.kind === 'deload' ? 'chip--alert' : 'chip--primary'}">${esc(proposalChip(p.kind))}</span></div>
         <p class="card__note">${esc(p.reason)}</p>
+        ${referencesFor(p.kind).map(c => `
+          <div class="card__note" style="margin-top:8px;padding-left:8px;border-left:2px solid var(--md-outline, #ccc)">
+            <a href="${esc(c.ref.url)}" target="_blank" rel="noopener noreferrer">${esc(c.ref.authors)} (${c.ref.year})</a> &middot; ${esc(c.ref.venue)}<br>${esc(c.ref.finding)}<br><em>${esc(c.stretch)}</em>
+          </div>`).join('')}
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="acceptProposal('${p.id}')">Change the plan</button>
       </div>`).join('') : `<div class="empty">${esc(review.note)}</div>`}
-    <div class="card__note" style="padding:0 4px 4px">Reasons come from your own numbers only. Marcus does not cite research here yet.</div>
+    <div class="card__note" style="padding:0 4px 4px">Every number above is read off your own log. Where endurance research points the same way, the paper is quoted under the suggestion with how far it actually goes; suggestions about which days you keep carry none, because that is adherence rather than physiology.</div>
+
+    <div class="section-title">The research behind this</div>
+    ${TRAINING_REFERENCES.map(r => `
+      <div class="card" style="display:block">
+        <div class="card__title-row"><h2><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)}</a></h2></div>
+        <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">${esc(r.authors)} (${r.year}) &middot; ${esc(r.venue)}</div>
+        <p class="card__note">${esc(r.finding)}</p>
+      </div>`).join('')}
 
     <div class="section-title">This week</div>
     <div class="card">
@@ -1100,10 +1112,15 @@ function loadVerdictLabel(load) {
 // After a week of logging, Marcus proposes changes to the written plan and
 // says why in the same sentence. Every reason here is arithmetic on data the
 // app already holds -- the acute:chronic ratio from the card above, and which
-// weekdays sessions actually landed on. There is deliberately NO training
-// science cited and no coaching prose: Edvard asked for recent Norwegian
-// endurance research to back a proposal, and a citation this app invents
-// without a model behind it is worse than no citation. That half is idea #206.
+// weekdays sessions actually landed on.
+//
+// Idea #214 added the citation half without a model: TRAINING_REFERENCES in
+// app-core.js is a checked-in table of the endurance papers, and referencesFor()
+// attaches one to a proposal only where the paper's finding speaks to the same
+// quantity the arithmetic computed. Two of the five kinds have one. `deload`,
+// `move` and `rest` deliberately have none -- see the comment beside
+// PROPOSAL_REFERENCES for why -- and the card says so rather than reaching for
+// a paper that does not say it.
 const REVIEW_WINDOW_DAYS = 28;
 const REVIEW_MIN_WEEKS = 2;      // one week is a holiday, not a pattern
 const DELOAD_SET_FLOOR = 2;      // a deload that leaves one set is not a session
