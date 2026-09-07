@@ -127,7 +127,10 @@ describe("askMarcus", () => {
       },
     });
     seed(ctx);
-    expect(await ctx.askMarcus("what should I do today?")).toBe("Squats. Go.");
+    expect(await ctx.askMarcus("what should I do today?")).toEqual({
+      text: "Squats. Go.",
+      offline: false,
+    });
     expect(sent.message).toBe("what should I do today?");
     expect(sent.context.sessions).toEqual([{ date: "2026-09-04", kind: "strength" }]);
     expect(sent.history).toEqual([
@@ -142,7 +145,8 @@ describe("askMarcus", () => {
     });
     seed(ctx);
     const reply = await ctx.askMarcus("what is my plan today?");
-    expect(reply).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.text).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.offline).toBe(true);
   });
 
   it("falls back when the network throws, which is the phone being offline", async () => {
@@ -153,7 +157,8 @@ describe("askMarcus", () => {
     });
     seed(ctx);
     const reply = await ctx.askMarcus("what is my plan today?");
-    expect(reply).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.text).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.offline).toBe(true);
   });
 
   it("falls back on a 200 carrying an empty reply rather than showing a blank bubble", async () => {
@@ -162,13 +167,54 @@ describe("askMarcus", () => {
     });
     seed(ctx);
     const reply = await ctx.askMarcus("what is my plan today?");
-    expect(reply).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.text).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.offline).toBe(true);
   });
 
   it("reaches nothing at all when fetch is absent, and still answers", async () => {
     const { ctx } = loadApp();
     seed(ctx);
     const reply = await ctx.askMarcus("what is my plan today?");
-    expect(reply).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.text).toBe(ctx.marcusReply("what is my plan today?"));
+    expect(reply.offline).toBe(true);
+  });
+});
+
+// The flag only earns its place if it reaches the screen, and the screen is
+// where Edvard reads it. renderChatMessages builds the whole thread from the
+// store, so these drive it with messages that carry the flag and messages that
+// do not, rather than asserting on askMarcus twice.
+describe("renderChatMessages marks a built-in reply", () => {
+  it("puts the note on a marcus bubble stored with offline: true", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("chat", [{ role: "marcus", text: "Stay consistent.", offline: true }]);
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).toContain("Stay consistent.");
+    expect(byId.chatMessages.innerHTML).toContain("the coach was not reachable");
+  });
+
+  it("leaves a real coach reply unmarked", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("chat", [{ role: "marcus", text: "Squats. Go.", offline: false }]);
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).toContain("Squats. Go.");
+    expect(byId.chatMessages.innerHTML).not.toContain("the coach was not reachable");
+  });
+
+  // The 13 turns already in his store were all written before the coach
+  // existed and carry no flag at all. An absent key must read as "unknown",
+  // not as "built-in", or every one of them gets a label I cannot defend.
+  it("leaves a bubble written before the flag existed unmarked", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("chat", [{ role: "marcus", text: "Hey! Ready to work?" }]);
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).not.toContain("the coach was not reachable");
+  });
+
+  it("never marks something Edvard typed, whatever the flag says", () => {
+    const { ctx, byId } = loadApp();
+    ctx.store.set("chat", [{ role: "user", text: "hei", offline: true }]);
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).not.toContain("the coach was not reachable");
   });
 });
