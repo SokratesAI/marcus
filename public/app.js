@@ -1920,7 +1920,7 @@ function exerciseLibraryCard(library) {
       ${library.map(g => `
       <div class="lib-group">
         <div class="lib-group__name">${esc(g.group)}</div>
-        ${g.lifts.map(l => `<button class="btn btn--tonal btn--block lib-lift" data-form="${esc(l.name)}"><span class="material-icons-round">fitness_center</span> ${esc(l.name)}</button>`).join('')}
+        ${g.lifts.map(l => `<button class="btn btn--tonal btn--block lib-lift" data-form="${esc(l.name)}"><span class="material-icons-round">fitness_center</span> <span>${esc(l.name)}${l.aka.length ? `<span class="lib-lift__aka">also ${esc(l.aka.join(', '))}</span>` : ''}</span></button>`).join('')}
       </div>`).join('')}
       <p class="card__note">Set-up, execution and the mistakes that actually happen, for every lift Marcus has cues for. The same sheet opens from the dumbbell handle on a Log row once the name in the box matches one of these.</p>
     </div>`;

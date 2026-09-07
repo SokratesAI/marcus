@@ -133,6 +133,61 @@ describe("formGuideLibrary", () => {
   });
 });
 
+// The card itself, executed rather than string-matched. `exerciseLibraryCard`
+// lives in app.js, which cannot be evaluated without a DOM, so the one function
+// is lifted out of the source and run against the real core. A test that only
+// greps app.js for its own literals would pass against a body rewritten to emit
+// broken markup, which is the whole thing worth checking here.
+function loadCard(): any {
+  const app = loadCore();
+  const src = appFile("app.js");
+  const fn = /function exerciseLibraryCard\(library\) \{[\s\S]*?\n\}\n/.exec(src);
+  expect(fn).not.toBeNull();
+  vm.runInContext(
+    "globalThis.esc = esc;" + fn![0] + ";globalThis.exerciseLibraryCard = exerciseLibraryCard;",
+    app,
+  );
+  return app;
+}
+
+describe("exerciseLibraryCard", () => {
+  const app = loadCard();
+
+  it("renders one button per guide, each carrying the name the sheet opens on", () => {
+    const html = app.exerciseLibraryCard(app.formGuideLibrary());
+    const names = [...html.matchAll(/data-form="([^"]*)"/g)].map((m: any) => m[1]);
+    expect(names.length).toBe(app.FORM_GUIDE.length);
+    for (const name of names) expect(app.formGuide(name)).not.toBeNull();
+  });
+
+  it("prints the alternate spellings, so a lift you know by another name is findable", () => {
+    const html = app.exerciseLibraryCard(app.formGuideLibrary());
+    expect(html).toContain("also Bench Press, Flat Bench Press");
+    expect(html).toContain("also RDL");
+    // A guide with no alternate spelling gets no empty line.
+    expect(html).not.toContain("also </span>");
+  });
+
+  it("escapes a hostile name in both the attribute and the text", () => {
+    app.FORM_GUIDE.push({
+      name: 'Evil " onclick=x', aka: ['<b>bold</b>'], group: "Chest",
+      setup: "a", execution: "b", mistakes: ["c"],
+    });
+    try {
+      const html = app.exerciseLibraryCard(app.formGuideLibrary());
+      expect(html).not.toContain('" onclick=x');
+      expect(html).not.toContain("<b>bold</b>");
+      expect(html).toContain("&quot; onclick=x");
+    } finally {
+      app.FORM_GUIDE.pop();
+    }
+  });
+
+  it("renders nothing at all for an empty library", () => {
+    expect(app.exerciseLibraryCard([])).toBe("");
+  });
+});
+
 describe("the exercise library on the Plan tab", () => {
   it("renders from app.js, off the core function", () => {
     const app = appFile("app.js");
