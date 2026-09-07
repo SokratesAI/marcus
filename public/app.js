@@ -1867,6 +1867,29 @@ function trainingLoadCard(load) {
     </div>`;
 }
 
+// Personal bests sit under Training load rather than beside the charts,
+// because it is the one thing on this tab that reads without a graph library
+// having arrived -- the same call goalProgressCard makes above.
+function personalBestsCard(rows) {
+  if (!rows.length) {
+    return `
+    <div class="card">
+      <h2>Personal bests</h2>
+      <div class="empty">Log a set with a weight and a rep count and your best ever shows up here.</div>
+    </div>`;
+  }
+  return `
+    <div class="card">
+      <h2>Personal bests</h2>
+      ${rows.map(r => `
+      <div class="exercise-line">
+        <span>${esc(r.name)}${r.isNew ? ` <span class="chip chip--primary">new</span>` : ``}</span>
+        <span>${esc(personalBestLabel(r))} · ${niceDate(r.date)}</span>
+      </div>`).join('')}
+      <p class="card__note">The heaviest set you have logged for each lift. Same weight, more reps wins — which is why a bodyweight lift is ranked on reps without needing a second scoreboard.</p>
+    </div>`;
+}
+
 // Goals go at the top of Progress because the graphs below are supposed to
 // serve them. Drawn in plain CSS, not Chart.js: the library is loaded async so
 // a stalled CDN can leave it absent, and the one thing on this tab that
@@ -1969,6 +1992,7 @@ function renderProgress() {
     ${goals.length ? `<div class="section-title">Goal progress</div>` + goals.map(g => goalProgressCard(g)).join('') : ''}
     <div class="section-title">Where you stand</div>
     ${trainingLoadCard(trainingLoad(store.get('sessions', [])))}
+    ${personalBestsCard(personalBests(store.get('sessions', [])))}
     <div class="card">
       <h2>Bodyweight</h2>
       <div class="field" style="margin-top:10px"><label>Log today's weight (kg)</label>
