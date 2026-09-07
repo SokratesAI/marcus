@@ -704,6 +704,18 @@ function renderLog() {
       if (prefill.weight != null) node.querySelector('.ex-weight').value = prefill.weight;
     }
     node.querySelector('.ex-remove').addEventListener('click', (e) => e.target.closest('.exercise-row').remove());
+    // The ramp is read off the weight box as it is typed rather than on save,
+    // because it is only useful before the working set -- after it there is
+    // nothing left to warm up for.
+    const warmupNode = node.querySelector('.ex-warmup');
+    const weightInput = node.querySelector('.ex-weight');
+    const showWarmup = () => {
+      const label = warmupLabel(weightInput.value);
+      warmupNode.textContent = label;
+      warmupNode.hidden = !label;
+    };
+    weightInput.addEventListener('input', showWarmup);
+    showWarmup();
     rows.appendChild(node);
   }
   const heardRows = heard && heard.kind === 'strength' && heard.exercises && heard.exercises.length ? heard.exercises : null;
