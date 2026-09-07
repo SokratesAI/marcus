@@ -638,3 +638,113 @@ describe("the kilos reach the form, not just the summary", () => {
     expect(rows[0][".ex-weight"].value).toBe(80);
   });
 });
+
+// ---------- what was done comes from the past clauses too ----------
+// `pastClauses` was built for `feel` and only `feel`. Everything that reads what
+// was actually *done* -- the activity, the sets and reps, the duration, the
+// distance, the weight, the date -- kept running on the whole sentence, so a
+// clause about tomorrow was read as a session. The injury flag is deliberately
+// still whole-sentence and has its own test above; the two are different
+// questions and this file holds both answers.
+describe("a forward-looking clause is not a session", () => {
+  it("does not open a cardio session for a run he has not been on yet", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("Did the plan, tomorrow I will run 5 km", PLAN, TUE);
+    expect(r.ok).toBe(true);
+    expect(r.kind).toBe("strength");
+    expect(r.source).toBe("plan");
+    expect(r.day).toBe("Tuesday");
+  });
+
+  it("does not save a lift named after the intention that mentioned it", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("Did the plan. Next week I want to do 3x10 squats at 80kg", PLAN, TUE);
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("plan");
+    // The name the old reading produced, spelled out because it is the thing
+    // that would have gone into his history and been read back by the exercise
+    // library and the stalled-lift report.
+    expect(JSON.stringify(r.exercises)).not.toContain("Next week");
+    expect(r.exercises.map((e: any) => e.name)).toEqual(["Deadlift"]);
+  });
+
+  it("refuses a sentence that is all intention rather than guessing at one", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("Tomorrow I will run 5 km", PLAN, TUE);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("could not tell");
+  });
+
+  // Three ways a sentence says "the plan", and each is a separate branch of one
+  // boolean, so each needs a forward-looking sentence of its own. "I should have
+  // done the plan" is the first: it is a sentence about not having trained, and
+  // the old reading opened Tuesday's plan session from it.
+  it("refuses an intention to follow the plan, not only a named activity", () => {
+    const { ctx } = loadApp();
+    for (const text of ["I should have done the plan", "Tomorrow I will train as planned", "Tomorrow is a planned session"]) {
+      const r = ctx.parseSessionSentence(text, PLAN, TUE);
+      expect(r.ok, text).toBe(false);
+      expect(r.reason, text).toContain("could not tell");
+    }
+  });
+
+  // The duration and the distance readers both return their FIRST match, so a
+  // test whose only number is in the past clause passes on the broken code too.
+  // The future clause goes first here on purpose.
+  it("does not take the duration off a clause about the next session", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("Tomorrow I will do 90 minutes. Ran 5 km in 25 minutes", PLAN, TUE);
+    expect(r.cardio.minutes).toBe(25);
+  });
+
+  it("does not take the distance off a clause about the next session", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("Tomorrow I will run 10 km. Ran 5 km in 25 minutes", PLAN, TUE);
+    expect(r.cardio.distance).toBe(5);
+  });
+
+  it("does not take a weight off a clause about next week", () => {
+    const { ctx } = loadApp();
+    const r = ctx.parseSessionSentence("did the plan, next week deadlift at 140kg", PLAN, TUE);
+    expect(r.source).toBe("plan");
+    expect(r.exercises).toEqual([{ name: "Deadlift", sets: 3, reps: 5 }]);
+    expect(r.missing).toContain("weight");
+  });
+
+  it("dates the session from the day he trained, not the day he plans to", () => {
+    const { ctx } = loadApp();
+    // TUE is 2026-09-01; Monday before it is 2026-08-31, Thursday after is not
+    // reachable backwards, so a stray "Thursday" in a future clause would have
+    // dated this session six days early.
+    const r = ctx.parseSessionSentence("did the plan on Monday, Thursday I will do legs", PLAN, TUE);
+    expect(r.date).toBe("2026-08-31");
+  });
+
+  it("still keeps his own words in the note, uncut", () => {
+    const { ctx } = loadApp();
+    const raw = "Did the plan, tomorrow I will run 5 km";
+    expect(ctx.parseSessionSentence(raw, PLAN, TUE).note).toBe(raw);
+  });
+});
+
+// The clause splitter now feeds every number in the sentence, so it may not cut
+// one in half. These three cases pass through `pastClauses` and out the other
+// side into the duration, the distance and the weight.
+describe("a decimal is one number, not two clauses", () => {
+  it("keeps a decimal hour whole", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("biked 1.5 hours", PLAN, TUE).cardio.minutes).toBe(90);
+  });
+
+  it("keeps a comma decimal weight whole", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("3x10 squats at 82,5 kg", PLAN, TUE).exercises).toEqual([
+      { name: "Squats", sets: 3, reps: 10, weight: 82.5 },
+    ]);
+  });
+
+  it("keeps a decimal distance whole", () => {
+    const { ctx } = loadApp();
+    expect(ctx.parseSessionSentence("ran 7.5 km in 40 minutes", PLAN, TUE).cardio.distance).toBe(7.5);
+  });
+});
