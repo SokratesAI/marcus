@@ -53,6 +53,8 @@ const BOUNDS = {
   weight: { min: 0, max: 1000, label: 'Weight', unit: 'kg' },
   calories: { min: 1, max: 10000, label: 'Calories', unit: 'kcal' },
   bodyweight: { min: 20, max: 400, label: 'Weight', unit: 'kg' },
+  circumference: { min: 10, max: 300, label: 'Measurement', unit: 'cm' },
+  bodyfat: { min: 1, max: 70, label: 'Body fat', unit: '%' },
   grams: { min: 1, max: 5000, label: 'Amount', unit: 'g' },
   servings: { min: 0.25, max: 50, label: 'How many', unit: '' },
   minutes: { min: 1, max: 1440, label: 'Duration', unit: 'min' },
@@ -542,6 +544,81 @@ function macroTotals(meals) {
 function validateBodyweight(rawKg) {
   const r = checkNumber(rawKg, 'bodyweight');
   return r.ok ? { ok: true, kg: r.value } : r;
+}
+
+// ---------- body measurements ----------
+// The scale is one number and it moves for reasons that have nothing to do with
+// training -- water, a big meal, the time of day. A waist that came down while
+// the scale did not is the thing the scale cannot say, which is why idea #195
+// asks for these separately rather than as a second weight series.
+//
+// Each site names its own unit, because body fat is a percentage and everything
+// else is a circumference, and one shared bound would have to be wide enough for
+// both and would therefore catch neither typo.
+const MEASUREMENT_SITES = [
+  { key: 'waist', label: 'Waist', unit: 'cm', bound: 'circumference' },
+  { key: 'chest', label: 'Chest', unit: 'cm', bound: 'circumference' },
+  { key: 'hips', label: 'Hips', unit: 'cm', bound: 'circumference' },
+  { key: 'thigh', label: 'Thigh', unit: 'cm', bound: 'circumference' },
+  { key: 'arm', label: 'Upper arm', unit: 'cm', bound: 'circumference' },
+  { key: 'neck', label: 'Neck', unit: 'cm', bound: 'circumference' },
+  { key: 'bodyfat', label: 'Body fat', unit: '%', bound: 'bodyfat' }
+];
+
+function measurementSite(key) {
+  return MEASUREMENT_SITES.find(s => s.key === key) || null;
+}
+
+// A measurement is a site, a date and a number. The site has to be one this app
+// knows, because a free-text site would make two spellings of "waist" two
+// different series and neither would show a trend.
+function validateMeasurement(rawSite, rawValue) {
+  const site = measurementSite(String(rawSite == null ? '' : rawSite).trim());
+  if (!site) return { ok: false, message: 'Pick what you measured.' };
+  const r = checkNumber(rawValue, site.bound);
+  if (!r.ok) return r;
+  // A tape measure reads to the millimetre and a caliper chart to a tenth of a
+  // percent; anything finer than that is noise being stored as signal.
+  return { ok: true, site: site.key, value: Math.round(r.value * 10) / 10 };
+}
+
+// One record per site per day, and a second reading on the same day replaces the
+// first rather than being appended. That is not tidiness: `MERGE_KEYS` identifies
+// a measurement by (date, site), so two records sharing both would collide when
+// two phones merge and one of them would disappear with nothing saying so.
+function upsertMeasurement(records, entry) {
+  const out = (Array.isArray(records) ? records : []).filter(
+    r => !(r && r.date === entry.date && r.site === entry.site)
+  );
+  out.push(entry);
+  return out;
+}
+
+// Oldest first, so a chart reads left to right and `measurementTrend` can take
+// the ends of the array rather than sorting again.
+function measurementSeries(records, siteKey) {
+  return (Array.isArray(records) ? records : [])
+    .filter(r => r && r.site === siteKey && typeof r.value === 'number' && r.date)
+    .slice()
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+// What a single reading cannot tell you is whether it is going the right way, so
+// the change since the first one is reported beside the latest. One reading is a
+// starting point and gets a null change rather than a zero -- a zero would read
+// as "no movement", which is a claim this has no data for.
+function measurementTrend(records, siteKey) {
+  const series = measurementSeries(records, siteKey);
+  if (!series.length) return null;
+  const first = series[0];
+  const last = series[series.length - 1];
+  return {
+    latest: last.value,
+    date: last.date,
+    count: series.length,
+    change: series.length > 1 ? Math.round((last.value - first.value) * 10) / 10 : null,
+    since: series.length > 1 ? first.date : null
+  };
 }
 
 // ---------- goals ----------
