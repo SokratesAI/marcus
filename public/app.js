@@ -2263,6 +2263,13 @@ function renderProgress() {
       <h2>Daily calories</h2>
       <div class="chart-wrap"><canvas id="calChart"></canvas></div>
     </div>
+    <div class="section-title">Reminders</div>
+    <div class="card">
+      <h2>Evening reminder</h2>
+      <p class="card__note">Marcus can buzz this phone once in the evening. On iPhone that only works when Marcus has been added to the Home Screen and opened from there &mdash; not from a Safari tab.</p>
+      <div id="reminderStatus" class="card__note" style="margin-bottom:10px"></div>
+      <button class="btn btn--filled btn--block" id="toggleReminders"><span class="material-icons-round">notifications_active</span> Turn on reminders</button>
+    </div>
     <div class="section-title">Your data</div>
     <div class="card">
       <h2>Backup</h2>
@@ -2286,6 +2293,7 @@ function renderProgress() {
   });
 
   wireBackup();
+  wireReminders();
 
   // Chart.js is loaded async so a stalled CDN can never hold the app, which
   // means it may genuinely not be here yet. Everything above this line works
@@ -3056,6 +3064,235 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
     renderChatMessages();
   });
 });
+
+// ---------- reminders (idea #217, the browser half) ----------
+// The server could already mint a VAPID key, remember a device and encrypt a
+// send before any of this existed -- and the list of devices it fanned out to
+// was empty and could not become non-empty, because nothing here ever asked
+// for permission. This is that ask.
+//
+// Three things about iOS drive the shape, and none of them are visible from a
+// desktop browser: Web Push only exists in a Home Screen web app (never a
+// Safari tab), the permission prompt is only allowed while the tap that asked
+// for it is still the current user activation, and a permission the user has
+// denied can never be re-requested from script. So: feature-detect before
+// drawing a button that cannot work, ask for permission BEFORE the first
+// network call, and say plainly when the answer is no rather than retrying.
+
+// Whether this browser can subscribe at all. Three separate capabilities --
+// a Safari tab on iOS has the service worker and not the other two.
+function pushSupported(nav, win) {
+  return !!(nav && nav.serviceWorker && win && win.PushManager && win.Notification);
+}
+
+// One line the user can read. Same rule as `describeServerCopy`: name the state
+// it is actually in, because "off" and "your phone has blocked this" need
+// different things from the reader.
+function describeReminders(status) {
+  if (!status || status.state === 'unknown') return 'Reminders: checking...';
+  if (status.state === 'unsupported') return 'Reminders: this browser cannot receive them. On iPhone, add Marcus to your Home Screen and open it from there.';
+  if (status.state === 'blocked') return 'Reminders: your phone has blocked notifications for Marcus, so it cannot ask again from here. Turn them back on in Settings.';
+  if (status.state === 'on') return 'Reminders: on for this device.';
+  return 'Reminders: off. Marcus will not send anything until you turn them on.';
+}
+
+// The VAPID public key arrives base64url and `pushManager.subscribe` wants the
+// raw bytes. Checked rather than converted blindly: an uncompressed P-256 point
+// is 65 bytes starting 0x04, and a browser handed anything else fails inside
+// subscribe() with a message that says nothing about where the key came from.
+function applicationServerKey(key) {
+  if (typeof key !== 'string' || key.length === 0) throw new Error('the push key is missing');
+  const b64 = key.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+  let raw;
+  try {
+    raw = atob(padded);
+  } catch {
+    throw new Error('the push key is not base64');
+  }
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  if (bytes.length !== 65 || bytes[0] !== 4) throw new Error('the push key is not a P-256 public key');
+  return bytes;
+}
+
+// What the server's `validateSubscription` will accept, built from the
+// subscription's own `toJSON` rather than read off its properties -- `endpoint`
+// is a property and the two keys are only reachable through `getKey`, so
+// `toJSON` is the one call that produces the whole record.
+function subscriptionBody(sub) {
+  const json = sub && typeof sub.toJSON === 'function' ? sub.toJSON() : null;
+  if (!json || typeof json.endpoint !== 'string' || json.endpoint.length === 0) return null;
+  const keys = json.keys;
+  if (!keys || typeof keys.p256dh !== 'string' || typeof keys.auth !== 'string') return null;
+  return { endpoint: json.endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth } };
+}
+
+// Where this device stands, without asking for anything. `permission` is the
+// phone's answer and `getSubscription` is whether this browser is actually
+// registered -- both are needed, because a granted permission with no
+// subscription is exactly what a cleared site data leaves behind.
+async function readReminderState(deps) {
+  const notification = deps && deps.notification;
+  const registration = deps && deps.registration;
+  if (!notification || !registration) return { state: 'unsupported' };
+  if (notification.permission === 'denied') return { state: 'blocked' };
+  let sub = null;
+  try {
+    sub = await registration.pushManager.getSubscription();
+  } catch {
+    return { state: 'off' };
+  }
+  return { state: sub ? 'on' : 'off' };
+}
+
+async function enableReminders(deps) {
+  const { notification, registration, fetchFn } = deps;
+  // First, and before any `await` on the network. Safari only allows the prompt
+  // while the tap that opened it is still the current user activation, and an
+  // awaited fetch spends that -- so fetching the key first would make the
+  // prompt never appear, on the one platform this feature exists for.
+  let permission;
+  try {
+    permission = await notification.requestPermission();
+  } catch {
+    return { ok: false, state: 'off', message: 'This browser would not ask for notification permission.' };
+  }
+  if (permission === 'denied') return { ok: false, state: 'blocked', message: 'Notifications are blocked for Marcus. Turn them back on in your phone settings.' };
+  if (permission !== 'granted') return { ok: false, state: 'off', message: 'Reminders stay off until you allow notifications.' };
+
+  let key;
+  try {
+    const res = await fetchFn('/api/push/key');
+    if (!res || !res.ok) throw new Error('the server would not hand over its push key');
+    const body = await res.json();
+    key = applicationServerKey(body && body.key);
+  } catch {
+    return { ok: false, state: 'off', message: 'Marcus could not read its push key. Nothing has changed.' };
+  }
+
+  let sub;
+  try {
+    sub = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  } catch {
+    return { ok: false, state: 'off', message: 'This browser refused the subscription. Nothing has changed.' };
+  }
+
+  const body = subscriptionBody(sub);
+  // Every failure below unsubscribes again on the way out. A browser that is
+  // subscribed to a push service Marcus has no record of is the worst of the
+  // three states: the button reads "on", the server will never send to it, and
+  // nothing on either side says so.
+  if (!body) {
+    await unsubscribeQuietly(sub);
+    return { ok: false, state: 'off', message: 'This browser handed back a subscription Marcus cannot use.' };
+  }
+  let res;
+  try {
+    res = await fetchFn('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    await unsubscribeQuietly(sub);
+    return { ok: false, state: 'off', message: 'Marcus could not be reached. Reminders are still off.' };
+  }
+  if (!res || !res.ok) {
+    await unsubscribeQuietly(sub);
+    const full = res && res.status === 507;
+    return { ok: false, state: 'off', message: full ? 'Marcus is already remembering as many devices as it can hold.' : 'Marcus would not save this device. Reminders are still off.' };
+  }
+  return { ok: true, state: 'on', message: 'Reminders are on for this device.' };
+}
+
+async function disableReminders(deps) {
+  const { registration, fetchFn } = deps;
+  let sub = null;
+  try {
+    sub = await registration.pushManager.getSubscription();
+  } catch {
+    sub = null;
+  }
+  if (!sub) return { ok: true, state: 'off', message: 'Reminders are off for this device.' };
+  const body = subscriptionBody(sub);
+  // The server is told first, on purpose. Unsubscribing first and then failing
+  // to reach the server leaves a dead endpoint on its list that nothing can
+  // ever name again -- this browser has just thrown away the only copy of it.
+  if (body) {
+    try {
+      await fetchFn('/api/push/subscribe', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: body.endpoint }),
+      });
+    } catch {
+      // A push service that keeps sending to an endpoint the user has turned
+      // off is worse than a stale row on the server, so the unsubscribe below
+      // happens either way.
+    }
+  }
+  await unsubscribeQuietly(sub);
+  return { ok: true, state: 'off', message: 'Reminders are off for this device.' };
+}
+
+async function unsubscribeQuietly(sub) {
+  try {
+    if (sub && typeof sub.unsubscribe === 'function') await sub.unsubscribe();
+  } catch {
+    /* nothing useful to tell the user about a failed rollback */
+  }
+}
+
+// What the card last drew. Read by the click handler to decide which way the
+// toggle goes, so the button can never act on a state it is not showing.
+let reminderState = { state: 'unknown' };
+
+// The card only ever draws from a state, never from what the last click tried
+// to do, so a failed enable cannot leave the button reading "on".
+function renderReminders(status) {
+  reminderState = status;
+  const line = document.getElementById('reminderStatus');
+  if (line) line.textContent = describeReminders(status);
+  const btn = document.getElementById('toggleReminders');
+  if (!btn) return;
+  const state = (status && status.state) || 'unknown';
+  const off = state !== 'on';
+  btn.disabled = state === 'unsupported' || state === 'blocked';
+  btn.innerHTML = off
+    ? '<span class="material-icons-round">notifications_active</span> Turn on reminders'
+    : '<span class="material-icons-round">notifications_off</span> Turn off reminders';
+}
+
+async function reminderDeps() {
+  if (!pushSupported(navigator, window)) return null;
+  let registration = null;
+  try {
+    registration = await navigator.serviceWorker.ready;
+  } catch {
+    return null;
+  }
+  if (!registration || !registration.pushManager) return null;
+  return { notification: Notification, registration, fetchFn: (...args) => fetch(...args) };
+}
+
+function wireReminders() {
+  renderReminders({ state: 'unknown' });
+  const btn = document.getElementById('toggleReminders');
+  btn?.addEventListener('click', async () => {
+    const deps = await reminderDeps();
+    if (!deps) { renderReminders({ state: 'unsupported' }); return; }
+    const wasOn = reminderState && reminderState.state === 'on';
+    btn.disabled = true;
+    const result = wasOn ? await disableReminders(deps) : await enableReminders(deps);
+    renderReminders({ state: result.state });
+    toast(result.message);
+  });
+  reminderDeps()
+    .then((deps) => (deps ? readReminderState(deps) : { state: 'unsupported' }))
+    .then(renderReminders)
+    .catch(() => renderReminders({ state: 'unsupported' }));
+}
 
 // ---------- updates ----------
 // A deploy is invisible to an already-open app: the new service worker installs
