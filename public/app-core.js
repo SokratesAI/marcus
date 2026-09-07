@@ -498,7 +498,7 @@ function personalBests(sessions) {
 function personalBestLabel(best) {
   if (!best) return '';
   const load = best.weight === 0 ? 'bodyweight' : String(best.weight) + ' kg';
-  return load + ' \u00d7 ' + best.reps;
+  return load + ' × ' + best.reps;
 }
 
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
