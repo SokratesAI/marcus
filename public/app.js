@@ -137,21 +137,7 @@ function renderPlan() {
       <p class="card__note">He reads your goal and your log and writes a full week. Nothing changes until you accept it.</p>
       <button class="btn btn--tonal btn--block" id="draftWeek"${planDraftBusy ? ' disabled' : ''}><span class="material-icons-round">auto_awesome</span> ${planDraftBusy ? 'Marcus is writing…' : 'Draft my week'}</button>
     </div>
-    ${planDraft ? `
-      <div class="card" style="display:block">
-        <div class="card__title-row"><h2>Marcus's week</h2><span class="chip chip--primary">Not applied</span></div>
-        ${planDraft.note ? `<p class="card__note">${esc(planDraft.note)}</p>` : ``}
-        ${planDraft.days.map(d => `
-          <div class="plan-day" style="margin-top:8px">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span class="plan-day__name">${esc(d.day)}</span>
-              <span class="plan-day__focus">${esc(d.focus)}</span>
-            </div>
-            ${d.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}\u00d7${e.reps}</span></div>`).join('')}
-          </div>`).join('')}
-        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> Use this week</button>
-        <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="discardDraft()">Discard</button>
-      </div>` : ``}
+    ${draftCard(plan, planDraft)}
 
     <div class="section-title">The research behind this</div>
     ${TRAINING_REFERENCES.map(r => `
@@ -1668,6 +1654,47 @@ function applyDraft(plan, days) {
     });
   });
   return next;
+}
+
+// Pure: the week that pressing Use this week actually produces, one row per day
+// of the plan. It is built by running applyDraft rather than by re-deriving the
+// same rules, so the preview cannot disagree with the write it is previewing.
+// The `change` field is the part the old preview had no way to show: a day the
+// coach did not name is cleared, and a card that lists only the days he did
+// name hides that from the one person who has to agree to it.
+function draftPreview(plan, days) {
+  const before = (plan && plan.days) || [];
+  const after = applyDraft(plan, days).days || [];
+  return after.map((d, i) => {
+    const named = (days || []).some(x => x && x.day === d.day);
+    const had = ((before[i] && before[i].exercises) || []).length > 0;
+    return Object.assign({}, d, { change: named ? 'drafted' : (had ? 'cleared' : 'rest') });
+  });
+}
+
+// The preview card, as a string. It is a function rather than a block inside
+// renderPlan so a test can read the markup Edvard is shown -- there is no DOM
+// harness in this suite, and a preview nobody can assert on is how the old one
+// came to show four days of a seven-day change.
+function draftCard(plan, draft) {
+  if (!draft) return '';
+  return `
+      <div class="card" style="display:block">
+        <div class="card__title-row"><h2>Marcus's week</h2><span class="chip chip--primary">Not applied</span></div>
+        ${draft.note ? `<p class="card__note">${esc(draft.note)}</p>` : ``}
+        ${draftPreview(plan, draft.days).map(d => `
+          <div class="plan-day" style="margin-top:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span class="plan-day__name">${esc(d.day)}</span>
+              <span class="plan-day__focus">${esc(d.focus)}${d.change === 'cleared' ? ' &middot; cleared' : ''}</span>
+            </div>
+            ${d.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}\u00d7${e.reps}</span></div>`).join('')}
+            ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min &middot; kept</span></div>` : ``}
+            ${d.change === 'cleared' ? `<div class="exercise-line exercise-line--cleared"><span>Marcus left this day out, so what is on it now goes</span></div>` : ``}
+          </div>`).join('')}
+        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> Use this week</button>
+        <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="discardDraft()">Discard</button>
+      </div>`;
 }
 
 // Pure: takes a plan, returns a new one. Nothing here writes to storage, so a
