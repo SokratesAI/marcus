@@ -378,3 +378,92 @@ describe("the reminders card", () => {
     expect(APP_SOURCE).toMatch(/wireReminders\(\);/);
   });
 });
+
+// Issue #154: the button that proves the chain, rather than waiting for 20:00.
+describe("sendTestReminder", () => {
+  const deps = (sub: any, fetchFn: any) => ({ registration: fakeRegistration(null, { existing: sub }), fetchFn });
+
+  it("asks the server to buzz this device, naming its own endpoint", async () => {
+    const app = loadApp();
+    const seen: any[] = [];
+    const fetchFn = async (url: string, init: any) => { seen.push({ url, init }); return res(200, { sent: true }); };
+    const out = await app.sendTestReminder(deps(fakeSubscription(), fetchFn));
+    expect(out.ok).toBe(true);
+    expect(out.state).toBe("on");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe("/api/push/test");
+    expect(JSON.parse(seen[0].init.body)).toEqual({ endpoint: "https://web.push.apple.com/abc" });
+  });
+
+  it("says so and asks nothing when this device is not subscribed", async () => {
+    const app = loadApp();
+    let asked = 0;
+    const fetchFn = async () => { asked += 1; return res(200, {}); };
+    const out = await app.sendTestReminder(deps(null, fetchFn));
+    expect(out.ok).toBe(false);
+    expect(out.state).toBe("off");
+    expect(out.message).toMatch(/not subscribed/);
+    expect(asked).toBe(0);
+  });
+
+  it("turns the card off when the push service has retired this subscription", async () => {
+    // 410 is the one failure that changes what this device is. The card has to
+    // stop reading "on", or the next tap tries the same dead endpoint forever.
+    const app = loadApp();
+    const out = await app.sendTestReminder(deps(fakeSubscription(), async () => res(410, {})));
+    expect(out.ok).toBe(false);
+    expect(out.state).toBe("off");
+    expect(out.message).toMatch(/expired/);
+  });
+
+  it("turns the card off when Marcus has no record of this device", async () => {
+    const app = loadApp();
+    const out = await app.sendTestReminder(deps(fakeSubscription(), async () => res(404, {})));
+    expect(out.state).toBe("off");
+  });
+
+  it("leaves the card on when only the send failed", async () => {
+    // A push service having a bad minute, or a second tap while the first is
+    // still going. Reminders are still on and the card must not claim
+    // otherwise.
+    const app = loadApp();
+    for (const status of [409, 502, 500]) {
+      const out = await app.sendTestReminder(deps(fakeSubscription(), async () => res(status, {})));
+      expect(out.ok).toBe(false);
+      expect(out.state).toBe("on");
+    }
+  });
+
+  it("leaves the card on when the server could not be reached at all", async () => {
+    const app = loadApp();
+    const out = await app.sendTestReminder(deps(fakeSubscription(), async () => { throw new Error("offline"); }));
+    expect(out.ok).toBe(false);
+    expect(out.state).toBe("on");
+  });
+
+  it("never unsubscribes this device, whatever the answer was", async () => {
+    // enableReminders rolls back by unsubscribing; this must not, or a failed
+    // test would turn off the reminders it was sent to check.
+    const app = loadApp();
+    for (const status of [200, 404, 410, 502]) {
+      const sub = fakeSubscription();
+      await app.sendTestReminder(deps(sub, async () => res(status, {})));
+      expect(sub.calls.unsubscribed).toBe(0);
+    }
+  });
+});
+
+describe("renderReminders and the test button", () => {
+  it("offers the test only when reminders are actually on", () => {
+    const app = loadApp();
+    const btn: any = { hidden: false, disabled: false, innerHTML: "" };
+    const toggle: any = { hidden: false, disabled: false, innerHTML: "" };
+    app.document.getElementById = (id: string) => (id === "testReminder" ? btn : toggle);
+    app.renderReminders({ state: "on" });
+    expect(btn.hidden).toBe(false);
+    for (const state of ["off", "blocked", "unsupported", "unknown"]) {
+      app.renderReminders({ state });
+      expect(btn.hidden).toBe(true);
+    }
+  });
+});

@@ -2163,6 +2163,7 @@ function renderProgress() {
       <p class="card__note">Marcus can buzz this phone once in the evening. On iPhone that only works when Marcus has been added to the Home Screen and opened from there &mdash; not from a Safari tab.</p>
       <div id="reminderStatus" class="card__note" style="margin-bottom:10px"></div>
       <button class="btn btn--filled btn--block" id="toggleReminders"><span class="material-icons-round">notifications_active</span> Turn on reminders</button>
+      <button class="btn btn--tonal btn--block" id="testReminder" style="margin-top:10px" hidden><span class="material-icons-round">send</span> Send a test notification</button>
     </div>
     <div class="section-title">Your data</div>
     <div class="card">
@@ -3274,6 +3275,45 @@ async function disableReminders(deps) {
   return { ok: true, state: 'off', message: 'Reminders are off for this device.' };
 }
 
+// Issue #154. Turning reminders on produces silence until 20:00 the next day,
+// and silence is also what a broken chain produces -- so the button above could
+// never tell Edvard whether it had worked. This sends one notification through
+// the real path: the same VAPID key, the same encryption, the same service
+// worker, the same push service. Nothing about it is a simulation, which is the
+// only version of this worth having.
+async function sendTestReminder(deps) {
+  const { registration, fetchFn } = deps;
+  let sub = null;
+  try {
+    sub = await registration.pushManager.getSubscription();
+  } catch {
+    sub = null;
+  }
+  // The endpoint IS the credential here, so a browser that cannot produce one
+  // has nothing to ask with -- and it is also the honest answer to the user:
+  // this device is not subscribed.
+  const body = sub ? subscriptionBody(sub) : null;
+  if (!body) return { ok: false, state: 'off', message: 'This device is not subscribed, so there is nothing to test yet.' };
+  let res;
+  try {
+    res = await fetchFn('/api/push/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: body.endpoint }),
+    });
+  } catch {
+    return { ok: false, state: 'on', message: 'Marcus could not be reached. Reminders are still on.' };
+  }
+  if (res && res.ok) return { ok: true, state: 'on', message: 'Sent. It should appear within a few seconds.' };
+  // 410 is the one answer that changes what this device is, rather than just
+  // failing: the push service has retired this subscription, the server has
+  // already dropped it, and the card must stop saying reminders are on.
+  if (res && res.status === 410) return { ok: false, state: 'off', message: 'This phone\'s subscription has expired. Turn reminders on again.' };
+  if (res && res.status === 404) return { ok: false, state: 'off', message: 'Marcus has no record of this device. Turn reminders on again.' };
+  if (res && res.status === 409) return { ok: false, state: 'on', message: 'A notification is already on its way.' };
+  return { ok: false, state: 'on', message: 'The push service would not take it. Nothing about your reminders has changed.' };
+}
+
 async function unsubscribeQuietly(sub) {
   try {
     if (sub && typeof sub.unsubscribe === 'function') await sub.unsubscribe();
@@ -3300,6 +3340,10 @@ function renderReminders(status) {
   btn.innerHTML = off
     ? '<span class="material-icons-round">notifications_active</span> Turn on reminders'
     : '<span class="material-icons-round">notifications_off</span> Turn off reminders';
+  // Only offered when there is something to test. Drawn from the same status
+  // the toggle is drawn from, so the two can never disagree.
+  const test = document.getElementById('testReminder');
+  if (test) test.hidden = state !== 'on';
 }
 
 async function reminderDeps() {
@@ -3323,6 +3367,16 @@ function wireReminders() {
     const wasOn = reminderState && reminderState.state === 'on';
     btn.disabled = true;
     const result = wasOn ? await disableReminders(deps) : await enableReminders(deps);
+    renderReminders({ state: result.state });
+    toast(result.message);
+  });
+  const test = document.getElementById('testReminder');
+  test?.addEventListener('click', async () => {
+    const deps = await reminderDeps();
+    if (!deps) { renderReminders({ state: 'unsupported' }); return; }
+    test.disabled = true;
+    const result = await sendTestReminder(deps);
+    test.disabled = false;
     renderReminders({ state: result.state });
     toast(result.message);
   });
