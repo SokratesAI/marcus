@@ -722,6 +722,18 @@ function renderLog() {
       platesNode.textContent = label;
       platesNode.hidden = !label;
     };
+    // How long to rest between sets. It reads the reps box, so it is wired to
+    // that input rather than to the weight or the name -- the other three
+    // labels on this row all move when the weight does and this one does not.
+    const restNode = node.querySelector('.ex-rest');
+    const repsInput = node.querySelector('.ex-reps');
+    const showRest = () => {
+      const label = restLabel(repsInput.value);
+      restNode.textContent = label;
+      restNode.hidden = !label;
+    };
+    repsInput.addEventListener('input', showRest);
+    showRest();
     const showWarmup = () => {
       const label = warmupLabel(weightInput.value);
       warmupNode.textContent = label;
