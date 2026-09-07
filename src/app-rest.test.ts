@@ -1,4 +1,7 @@
-import { APP_SOURCE } from "./app-source.js";
+import { APP_SOURCE, appFile } from "./app-source.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
 
@@ -140,5 +143,42 @@ describe("restLabel", () => {
   it("names one minute on a long set", () => {
     const app = loadApp();
     expect(app.restLabel(15)).toBe("Rest 1 min between sets");
+  });
+});
+
+// Same reason app-warmup.test.ts carries one: every test above this point calls
+// restLabel directly, so a rename of the class in the template or in the query
+// would leave them all green and put nothing on the screen.
+describe("the Log tab wiring", () => {
+  const html = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public", "index.html"),
+    "utf8",
+  );
+  const template = html.slice(
+    html.indexOf('<template id="tpl-log-exercise-row">'),
+    html.indexOf("</template>", html.indexOf('<template id="tpl-log-exercise-row">')),
+  );
+
+  it("has a rest line in the exercise row template", () => {
+    expect(template).toContain('class="ex-rest"');
+    expect(template).toContain('class="ex-reps"');
+    // Hidden to start with, the same as every other label on this row, so a
+    // row with an empty reps box shows no empty grey line.
+    expect(template).toMatch(/class="ex-rest"[^>]*hidden/);
+  });
+
+  it("fills that line from restLabel as the reps are typed", () => {
+    const app = appFile("app.js");
+    expect(app).toContain("restLabel(repsInput.value)");
+    expect(app).toContain("querySelector('.ex-rest')");
+    expect(app).toContain("querySelector('.ex-reps')");
+    expect(app).toContain("repsInput.addEventListener('input', showRest)");
+  });
+
+  it("defines restLabel in app-core.js, which loads before app.js", () => {
+    // Two ordered classic scripts, one global scope: the definition has to be
+    // in the half that loads first.
+    expect(appFile("app-core.js")).toContain("function restLabel(");
+    expect(appFile("app.js")).not.toContain("function restLabel(");
   });
 });
