@@ -318,9 +318,15 @@ const FUTURE_PHRASES = [/\bwant\s+to\b/, /\bgoing\s+to\b/, /\bplan\s+to\b/, /\bn
 
 // A clause is forward-looking if it names a future time or announces an
 // intention. Only the clauses that are left describe the session just done.
+//
+// The separator refuses to split on punctuation followed by a digit, because
+// "1.5 hours" and "82,5 kg" are one number and not two clauses. That did not
+// matter while this fed `feel` only -- half of a number carries no feel word --
+// and it matters now that the duration, the distance and the weight are read
+// from these clauses too.
 function pastClauses(text) {
   return String(text == null ? '' : text)
-    .split(/[.;,!?]+|\bso\b|\bbut\b/i)
+    .split(/[.;,!?]+(?![0-9])|\bso\b|\bbut\b/i)
     .map((c) => c.trim())
     .filter((c) => c.length > 0)
     .filter((c) => {
@@ -450,26 +456,48 @@ function parseSessionSentence(text, plan, todayISO) {
   const raw = String(text == null ? '' : text).trim();
   if (!raw) return { ok: false, reason: 'Describe the session first.' };
 
-  const words = sessionSentenceWords(raw);
+  // What was done is read from `past`, not from `raw`. `pastClauses` was added
+  // for `feel` alone -- "I want to take it easy next run" was writing an easy
+  // session -- and every reading of the *activity* kept running on the whole
+  // sentence. So "Did the plan, tomorrow I will run 5 km" opened a cardio form
+  // for a run not yet done, and "Did the plan. Next week I want to do 3x10
+  // squats at 80kg" saved a lift called "Next week I want to do squats" into his
+  // history, where the exercise library and the stalled-lift report then read it
+  // back. One clause filter in one place, or the next reading added here
+  // inherits the same bug.
+  //
+  // A sentence whose every clause is forward-looking now falls through to the
+  // refusal at the bottom instead of guessing. That is a real behaviour change
+  // and it is the honest direction: a refusal is on the screen and he can retype,
+  // a wrong session is saved in silence.
+  const past = pastClauses(raw).join('. ');
+  const words = sessionSentenceWords(past);
   const date = sessionSentenceDate(words, todayISO || todayStr());
 
   let feel = null;
-  for (const w of sessionSentenceWords(pastClauses(raw).join(' '))) {
+  for (const w of words) {
     if (Object.prototype.hasOwnProperty.call(FEEL_WORDS, w)) { feel = FEEL_WORDS[w]; break; }
   }
-  const injury = words.some((w) => INJURY_WORDS.indexOf(w) !== -1);
+  // Deliberately the whole sentence and not `past`: a sore knee named in a
+  // clause about tomorrow is still a sore knee today, which is a different
+  // question from what was done in the session. That call was already made and
+  // "still reads an injury named in a forward-looking clause" in
+  // app-sessionsentence.test.ts is the test that holds it.
+  const injury = sessionSentenceWords(raw).some((w) => INJURY_WORDS.indexOf(w) !== -1);
+  // The note keeps the raw sentence: he typed it, and the clause filter is my
+  // reading of it rather than a correction to it.
   const common = { date, feel, injury, note: raw };
 
-  const followedPlan = /\b(follow(?:ed)?|did|done|completed)\b[^.]{0,20}\bplan\b/i.test(raw)
-    || /\bas\s+planned\b/i.test(raw)
-    || /\bplanned\s+session\b/i.test(raw);
+  const followedPlan = /\b(follow(?:ed)?|did|done|completed)\b[^.]{0,20}\bplan\b/i.test(past)
+    || /\bas\s+planned\b/i.test(past)
+    || /\bplanned\s+session\b/i.test(past);
 
   let activity = null;
   for (const w of words) {
     if (Object.prototype.hasOwnProperty.call(CARDIO_VERBS, w)) { activity = CARDIO_VERBS[w]; break; }
   }
 
-  const spoken = sessionSentenceExercises(raw);
+  const spoken = sessionSentenceExercises(past);
 
   // Both in one sentence is two sessions, and the form can only open one. I
   // refuse rather than pick, because either pick drops something you told me.
@@ -480,8 +508,8 @@ function parseSessionSentence(text, plan, todayISO) {
   // A named activity wins over a plan reference: "I ran the plan's easy run"
   // is a run, and the plan's strength rows would be the wrong form to open.
   if (activity) {
-    const minutes = sessionSentenceMinutes(raw);
-    const distance = sessionSentenceDistance(raw);
+    const minutes = sessionSentenceMinutes(past);
+    const distance = sessionSentenceDistance(past);
     return {
       ok: true,
       kind: 'cardio',
@@ -518,7 +546,7 @@ function parseSessionSentence(text, plan, todayISO) {
     // "amount stays blank and asks you" rule from the meal parser: the form
     // opens filled in, and you type whatever kilos you did not say.
     const exercises = day.exercises.map((e) => {
-      const weight = sentenceWeightFor(raw, e.name);
+      const weight = sentenceWeightFor(past, e.name);
       return weight == null
         ? { name: e.name, sets: e.sets, reps: e.reps }
         : { name: e.name, sets: e.sets, reps: e.reps, weight };
