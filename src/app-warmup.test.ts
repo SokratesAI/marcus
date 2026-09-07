@@ -1,4 +1,7 @@
-import { APP_SOURCE } from "./app-source.js";
+import { APP_SOURCE, appFile } from "./app-source.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
 
@@ -133,5 +136,51 @@ describe("warmupLabel", () => {
     expect(app.warmupLabel(0)).toBe("");
     expect(app.warmupLabel("")).toBe("");
     expect(app.warmupLabel(2.5)).toBe("");
+  });
+});
+
+// The ramp is only visible if three files agree on two class names, and nothing
+// above this point reads any of them: warmupRamp is pure, so a rename in the
+// template or in the query would leave every test above green and put nothing
+// on the screen.
+describe("the Log tab wiring", () => {
+  const html = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public", "index.html"),
+    "utf8",
+  );
+  const template = html.slice(
+    html.indexOf('<template id="tpl-log-exercise-row">'),
+    html.indexOf("</template>", html.indexOf('<template id="tpl-log-exercise-row">')),
+  );
+
+  it("has a warm-up line in the exercise row template", () => {
+    expect(template).toContain('class="ex-warmup"');
+    expect(template).toContain('class="ex-weight"');
+    // Hidden to start with, because an empty row has no working weight to ramp
+    // towards and an empty grey line under every row is noise.
+    expect(template).toMatch(/class="ex-warmup"[^>]*hidden/);
+  });
+
+  it("keeps the remove button inside the row it removes", () => {
+    // `.ex-remove`'s handler walks up to `.exercise-row`, so the button moving
+    // out of that element would make the close icon do nothing.
+    expect(template.indexOf('class="exercise-row"')).toBeLessThan(template.indexOf("ex-remove"));
+  });
+
+  it("fills that line from warmupLabel as the weight is typed", () => {
+    const app = appFile("app.js");
+    expect(app).toContain("warmupLabel(weightInput.value)");
+    expect(app).toContain("querySelector('.ex-warmup')");
+    expect(app).toContain("querySelector('.ex-weight')");
+    expect(app).toContain("weightInput.addEventListener('input', showWarmup)");
+  });
+
+  it("defines warmupLabel before app.js calls it", () => {
+    // Two ordered classic scripts, one global scope: the definition has to be
+    // in the half that loads first.
+    expect(appFile("app-core.js")).toContain("function warmupLabel(");
+    expect(APP_SOURCE.indexOf("function warmupLabel(")).toBeLessThan(
+      APP_SOURCE.indexOf("warmupLabel(weightInput.value)"),
+    );
   });
 });
