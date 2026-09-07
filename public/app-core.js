@@ -578,6 +578,42 @@ function stalledLifts(sessions) {
   return { stalled: stalled, watched: keys.length, threshold: STALL_SESSIONS };
 }
 
+// The number the Home card calls "day streak": consecutive days, ending today
+// or yesterday, on which anything at all was logged. It lives here rather than
+// in app.js because it was wrong in two ways nothing could see, and neither of
+// them is visible without a test.
+//
+// It counted *sessions*, not days. A lift and a run on the same evening are two
+// entries with one date, and the app supports exactly that (`kind: 'cardio'`
+// beside `kind: 'strength'`), so one day of training read as a two-day streak.
+//
+// And it measured the newest session against the current instant rather than
+// against today's date. `now - yesterdayT00:00` is 1.8 days at 19:00 and 0.4 at
+// 09:00, so with a session logged yesterday and none yet today the same data
+// showed a streak in the morning and zero in the evening. Both ends are dates
+// now, so the answer does not depend on when the app is opened.
+//
+// The run is allowed to start yesterday, which is deliberate and is what the
+// old `diff <= 1` was reaching for: not having trained yet today is not a
+// broken streak, it is a day that has not finished.
+function trainingStreak(sessions, todayISO) {
+  const today = todayISO || todayStr();
+  // A date later than today comes from a phone whose clock ran ahead -- the
+  // store is merged from two of them -- and must neither extend the run nor
+  // end it, so it is dropped before the run is walked.
+  const days = Array.from(new Set(
+    (sessions || []).map(s => s && s.date).filter(d => d && d <= today)
+  )).sort().reverse();
+  let count = 0;
+  let cursor = today;
+  for (const d of days) {
+    if (daysBetween(d, cursor) > 1) break;
+    count++;
+    cursor = d;
+  }
+  return count;
+}
+
 // Distance is optional on purpose: a pool swim, a spin class and a treadmill
 // walk are all real sessions with no kilometres attached, and demanding one
 // would push the user to invent a number. Duration is what every cardio

@@ -29,13 +29,7 @@ function weekSessions() {
 }
 
 function streak() {
-  const sessions = store.get('sessions', []).map(s => s.date).sort().reverse();
-  let count = 0; let cursor = new Date();
-  for (const d of sessions) {
-    const diff = Math.round((cursor - new Date(d + 'T00:00')) / 86400000);
-    if (diff <= 1) { count++; cursor = new Date(d + 'T00:00'); } else break;
-  }
-  return count;
+  return trainingStreak(store.get('sessions', []), todayStr());
 }
 
 function renderHome() {
