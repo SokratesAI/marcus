@@ -51,8 +51,8 @@ function renderHome() {
 
   view.innerHTML = `
     <div class="card">
-      <div class="card__title-row"><h2>Today · ${todayName}</h2><span class="chip ${todayPlan.focus==='Rest'?'':'chip--primary'}">${todayPlan.focus}</span></div>
-      ${todayPlan.exercises.length ? todayPlan.exercises.map(e => `<div class="exercise-line"><span>${e.name}</span><span>${e.sets}×${e.reps}</span></div>`).join('') : ``}
+      <div class="card__title-row"><h2>Today · ${todayName}</h2><span class="chip ${todayPlan.focus==='Rest'?'':'chip--primary'}">${esc(todayPlan.focus)}</span></div>
+      ${todayPlan.exercises.length ? todayPlan.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}×${e.reps}</span></div>`).join('') : ``}
       ${todayPlan.cardio ? `<div class="exercise-line"><span>${esc(todayPlan.cardio.activity)}</span><span>${todayPlan.cardio.minutes} min</span></div>` : ``}
       ${!todayPlan.exercises.length && !todayPlan.cardio ? `<div class="empty">Rest day — recovery is training too.</div>` : ``}
       ${doneToday ? `<div class="exercise-line exercise-line--done"><span><span class="material-icons-round">check_circle</span> Logged today</span><span>${esc(doneToday.label)}</span></div>` : ``}
@@ -162,10 +162,10 @@ function renderPlan() {
     ${plan.days.map(d => `
       <div class="card plan-day ${d.day===todayName?'is-today':''}" style="display:block">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <span class="plan-day__name">${d.day}</span>
-          <span class="plan-day__focus">${d.focus}</span>
+          <span class="plan-day__name">${esc(d.day)}</span>
+          <span class="plan-day__focus">${esc(d.focus)}</span>
         </div>
-        ${d.exercises.map(e => `<div class="exercise-line"><span>${e.name}</span><span>${e.sets}×${e.reps}</span></div>`).join('')}
+        ${d.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}×${e.reps}</span></div>`).join('')}
         ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min <button class="icon-btn" onclick="clearPlanCardio('${esc(d.day)}')"><span class="material-icons-round">close</span></button></span></div>` : ``}
       </div>
     `).join('')}
