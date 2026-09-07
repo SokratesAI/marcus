@@ -78,6 +78,20 @@ function checkNumber(raw, kind) {
   return { ok: true, value };
 }
 
+// RPE -- rate of perceived exertion, 1 to 10 -- is the one box on the row that
+// is optional, because a set is a complete record of what was lifted without
+// it. Blank means "not recorded" and is left off the exercise entirely rather
+// than stored as 0: a 0 would read as "no effort at all" to anything that
+// averages these, and there is no way to tell it back from a real answer.
+function checkRpe(raw) {
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text) return { ok: true };
+  const value = Number(text);
+  if (!Number.isFinite(value)) return { ok: false, message: 'RPE must be a number.' };
+  if (value < 1 || value > 10) return { ok: false, message: 'RPE must be between 1 and 10.' };
+  return { ok: true, value: Math.round(value) };
+}
+
 // The name is what says "I did this one". The Log tab prefills a row per planned
 // exercise, so clearing the name is how you skip one, and a nameless row is
 // skipped rather than rejected -- it cannot produce a bad number either way.
@@ -92,9 +106,13 @@ function validateExerciseRow(row) {
     if (!r.ok) return { ok: false, message: `${name}: ${r.message}` };
     parsed[kind] = r.value;
   }
+  const rpe = checkRpe(row.rpe);
+  if (!rpe.ok) return { ok: false, message: `${name}: ${rpe.message}` };
   const setCount = Math.round(parsed.sets);
   const reps = Math.round(parsed.reps);
-  return { ok: true, exercise: { name, sets: Array.from({ length: setCount }, () => ({ reps, weight: parsed.weight })) } };
+  const exercise = { name, sets: Array.from({ length: setCount }, () => ({ reps, weight: parsed.weight })) };
+  if (rpe.value != null) exercise.rpe = rpe.value;
+  return { ok: true, exercise };
 }
 
 function validateSession(rows) {

@@ -702,6 +702,7 @@ function renderLog() {
       node.querySelector('.ex-sets').value = prefill.sets;
       node.querySelector('.ex-reps').value = prefill.reps;
       if (prefill.weight != null) node.querySelector('.ex-weight').value = prefill.weight;
+      if (prefill.rpe != null) node.querySelector('.ex-rpe').value = prefill.rpe;
     }
     node.querySelector('.ex-remove').addEventListener('click', (e) => e.target.closest('.exercise-row').remove());
     // The ramp is read off the weight box as it is typed rather than on save,
@@ -735,7 +736,8 @@ function renderLog() {
       name: r.querySelector('.ex-name').value,
       sets: r.querySelector('.ex-sets').value,
       reps: r.querySelector('.ex-reps').value,
-      weight: r.querySelector('.ex-weight').value
+      weight: r.querySelector('.ex-weight').value,
+      rpe: r.querySelector('.ex-rpe').value
     })));
     if (!result.ok) { toast(result.message); return; }
     const sessions = store.get('sessions', []);
@@ -770,7 +772,7 @@ function sessionCard(s) {
   const volume = exercises.reduce((sum, e) => sum + e.sets.reduce((ss, st) => ss + st.reps * st.weight, 0), 0);
   return `<div class="card">
     <div class="card__title-row"><h2>${niceDate(s.date)} · ${esc(s.day || 'Session')}</h2>${del}</div>
-    ${exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets</span></div>`).join('')}
+    ${exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets${e.rpe != null ? ` \u00b7 RPE ${e.rpe}` : ''}</span></div>`).join('')}
     <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">Volume: ${Math.round(volume).toLocaleString()} kg</div>
     ${sessionNoteLine(s)}
   </div>`;
