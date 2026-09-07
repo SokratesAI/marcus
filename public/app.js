@@ -763,8 +763,22 @@ function renderLog() {
       lastNode.hidden = !last;
       showForm();
       showPlates();
+      lastSeen = last;
+      showNext();
       return last;
     };
+    // What to do about it. It depends on the history *and* on the reps box --
+    // the plan is what says how many reps you are supposed to get today -- so
+    // both inputs call it, and `showLast` hands it the row it just found rather
+    // than re-reading the log.
+    const nextNode = node.querySelector('.ex-next');
+    let lastSeen = null;
+    const showNext = () => {
+      const label = nextTargetLabel(nextTarget(lastSeen, repsInput.value));
+      nextNode.textContent = label;
+      nextNode.hidden = !label;
+    };
+    repsInput.addEventListener('input', showNext);
     nameInput.addEventListener('input', showLast);
     const last = showLast();
     // Only ever fill a box that is empty. A weight the plan carried, or one you
