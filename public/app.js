@@ -16,6 +16,7 @@ function switchTab(tab) {
   view.innerHTML = '';
   renderers[tab]();
   view.scrollTop = 0;
+  refreshBadge();
 }
 document.querySelectorAll('.bottomnav__item').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
@@ -1625,6 +1626,62 @@ function weekTargetLabel(week) {
   return week.phase + ' phase through ' + niceDate(week.phaseEnds) + ' — your last '
     + week.baselineWeeks + ' weeks averaged ' + week.baseline + ' kg, so this week aims '
     + direction + ' that.';
+}
+
+// ---------- home-screen badge ----------
+// The nudges that do not deserve a notification (idea #212): they sit on the
+// app icon as a count and cost nothing until Edvard looks at his home screen.
+// Two of them at most, and they are deliberately disjoint -- today is excluded
+// from the week nudge, so a skipped session is never counted twice, and the
+// week is one nudge however many days it covers so the badge cannot read as a
+// backlog nobody can clear.
+function openNudges(plan, sessions, todayISO) {
+  const today = dayKey(todayISO || todayStr());
+  const start = weekStartOf(today);
+  const byWeekday = {};
+  ((plan && plan.days) || []).forEach(d => { if (d && d.day) byWeekday[d.day] = d; });
+  const logged = {};
+  (sessions || []).forEach(s => { if (s && s.date) logged[dayKey(s.date)] = true; });
+  // A cardio-only day is a training day (isTrainingDay), and any session dated
+  // that day clears it -- a swim logged on a lifting day still counts as logged.
+  const missed = (iso) => isTrainingDay(byWeekday[weekdayOf(iso)]) && !logged[iso];
+
+  const nudges = [];
+  if (missed(today)) {
+    const focus = (byWeekday[weekdayOf(today)] || {}).focus;
+    nudges.push({ kind: 'today', text: focus ? 'Today is ' + focus + ' \u2014 nothing logged yet.'
+                                             : 'Today is a training day \u2014 nothing logged yet.' });
+  }
+  let earlier = 0;
+  for (let iso = start; iso < today; iso = shiftDay(iso, 1)) if (missed(iso)) earlier++;
+  if (earlier) {
+    nudges.push({ kind: 'week', text: earlier === 1
+      ? 'One session earlier this week is still unlogged.'
+      : earlier + ' sessions earlier this week are still unlogged.' });
+  }
+  return nudges;
+}
+
+// Feature-detected rather than assumed: the Badging API answers only in an
+// installed PWA on iOS and not at all in Firefox. And setAppBadge *rejects*
+// rather than throwing when Safari has the page open as an ordinary tab, so
+// the promise needs a catch or every tab switch logs an unhandled rejection.
+// Zero calls clearAppBadge instead of setAppBadge(0), because a browser that
+// implements only the clear half still clears.
+function applyBadge(nav, count) {
+  if (!nav) return false;
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (typeof (n > 0 ? nav.setAppBadge : nav.clearAppBadge) !== 'function') return false;
+  try {
+    const result = n > 0 ? nav.setAppBadge(n) : nav.clearAppBadge();
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  } catch (err) { return false; }
+  return true;
+}
+
+function refreshBadge() {
+  return applyBadge(typeof navigator === 'undefined' ? null : navigator,
+                    openNudges(store.get('plan'), store.get('sessions', []), todayStr()).length);
 }
 
 function trainingLoadCard(load) {
