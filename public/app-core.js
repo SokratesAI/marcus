@@ -684,7 +684,7 @@ function photoSizeLabel(bytes) {
 // the record it is about to overwrite must not count against the budget --
 // otherwise a retake near the ceiling is refused while the room it needs is
 // sitting in the record being replaced.
-function validatePhoto(rawPose, dataUrl, records, dateISO) {
+function validatePhoto(rawPose, dataUrl, records, dateISO, meals) {
   const pose = photoPose(String(rawPose == null ? '' : rawPose).trim());
   if (!pose) return { ok: false, message: 'Pick which pose this is.' };
   const s = typeof dataUrl === 'string' ? dataUrl : '';
@@ -702,7 +702,9 @@ function validatePhoto(rawPose, dataUrl, records, dateISO) {
   const date = dateISO || todayStr();
   const rows = Array.isArray(records) ? records : [];
   const replaced = rows.filter(r => r && r.date === date && r.pose === pose.key);
-  const used = photoTotalBytes(rows) - photoTotalBytes(replaced);
+  // The budget is shared with the photos hanging off meals, so what is already
+  // spent is both stores minus the record this one replaces.
+  const used = photoTotalBytes(rows) - photoTotalBytes(replaced) + mealPhotoTotalBytes(meals);
   if (used + bytes > PHOTO_BUDGET_BYTES) {
     return {
       ok: false,
@@ -744,6 +746,93 @@ function photoSpan(records, poseKey) {
   if (series.length === 1) return { count: 1, days: null, first: first.date, last: first.date };
   const ms = new Date(last.date + 'T00:00').getTime() - new Date(first.date + 'T00:00').getTime();
   return { count: series.length, days: Math.round(ms / 86400000), first: first.date, last: last.date };
+}
+
+// ---------- a photo on the meal you logged (idea #72) ----------
+// The photo is stored ON the meal record rather than in a `mealPhotos` array of
+// its own. That is `MERGE_KEYS` again: a meal is identified by `id`, so a photo
+// carried on the meal merges with the meal it belongs to and can never outlive
+// it -- delete the meal on one phone and an array on the other would keep an
+// orphan photo spending budget with nothing on screen pointing at it.
+//
+// It spends from `PHOTO_BUDGET_BYTES`, the same 2MB the progress photos spend
+// from, and that is the decision worth stating rather than a detail. Two
+// independent 2MB budgets add up to a state document the server refuses
+// (`MAX_BODY` is 4MB), and when that happens it is not the photo that fails --
+// it is every save after it, including the one carrying the session just
+// logged. One budget across both stores is what keeps that impossible.
+const MEAL_PHOTO_MAX_BYTES = 160 * 1024;
+// Half the long edge of a progress photo. A meal photo is a reminder of what
+// was on the plate at thumbnail size, not something to compare month to month,
+// so it gets a smaller share of a budget it does not own alone.
+const MEAL_PHOTO_MAX_EDGE = 480;
+
+function mealPhotoBytes(meal) {
+  if (!meal) return 0;
+  if (typeof meal.photoBytes === 'number' && meal.photoBytes > 0) return meal.photoBytes;
+  return photoBytes(meal.photo);
+}
+
+function mealPhotoTotalBytes(meals) {
+  return (Array.isArray(meals) ? meals : []).reduce((n, m) => n + mealPhotoBytes(m), 0);
+}
+
+// Every photo in the document, wherever it lives. Both validators spend from
+// this, so neither can fill the document on its own.
+function storedPhotoBytes(photos, meals) {
+  return photoTotalBytes(photos) + mealPhotoTotalBytes(meals);
+}
+
+function validateMealPhoto(mealId, dataUrl, meals, photos) {
+  const rows = Array.isArray(meals) ? meals : [];
+  const meal = rows.find(m => m && String(m.id) === String(mealId));
+  if (!meal) return { ok: false, message: 'That meal is not in your log any more.' };
+  const s = typeof dataUrl === 'string' ? dataUrl : '';
+  if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(s)) {
+    return { ok: false, message: 'That file is not an image Marcus can store.' };
+  }
+  const bytes = photoBytes(s);
+  if (bytes <= 0) return { ok: false, message: 'That file is not an image Marcus can store.' };
+  if (bytes > MEAL_PHOTO_MAX_BYTES) {
+    return {
+      ok: false,
+      message: `That photo is ${photoSizeLabel(bytes)}, over the ${photoSizeLabel(MEAL_PHOTO_MAX_BYTES)} limit for a meal photo.`
+    };
+  }
+  // A meal that already has a photo is replacing it, so its own bytes are not
+  // spent twice -- the same rule a retaken progress photo gets.
+  const used = storedPhotoBytes(photos, rows) - mealPhotoBytes(meal);
+  if (used + bytes > PHOTO_BUDGET_BYTES) {
+    return {
+      ok: false,
+      message: `No room: that would take photos to ${photoSizeLabel(used + bytes)} of ${photoSizeLabel(PHOTO_BUDGET_BYTES)}. Delete an older one first.`
+    };
+  }
+  return { ok: true, id: meal.id, dataUrl: s, bytes };
+}
+
+// One photo per meal, and the second one replaces the first. Every other meal
+// is returned untouched by identity, so a re-render cannot mistake an unrelated
+// meal for a changed one.
+function attachMealPhoto(meals, entry) {
+  return (Array.isArray(meals) ? meals : []).map(m =>
+    m && entry && String(m.id) === String(entry.id)
+      ? Object.assign({}, m, { photo: entry.dataUrl, photoBytes: entry.bytes })
+      : m
+  );
+}
+
+// Removing the photo has to remove the byte count with it. Leaving `photoBytes`
+// behind would keep charging the budget for a photo that is no longer there,
+// and nothing on screen would say why the next one was refused.
+function detachMealPhoto(meals, mealId) {
+  return (Array.isArray(meals) ? meals : []).map(m => {
+    if (!m || String(m.id) !== String(mealId)) return m;
+    const out = Object.assign({}, m);
+    delete out.photo;
+    delete out.photoBytes;
+    return out;
+  });
 }
 
 // ---------- goals ----------
