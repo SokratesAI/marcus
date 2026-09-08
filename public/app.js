@@ -3256,6 +3256,10 @@ async function askMarcus(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: text,
+        // This phone's own date. The server runs in UTC and the coach used to
+        // get no clock at all, so it read the newest rows in the log as
+        // current and called an eight-day-old week "this week".
+        today: todayStr(),
         // Only what the coach is meant to reason about. Nothing else in the
         // store is sent.
         context: {

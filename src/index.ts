@@ -411,10 +411,11 @@ export function createApp(
   });
 
   app.post("/api/chat", express.json({ limit: MAX_BODY }), async (req, res) => {
-    const { message, context, history } = req.body as {
+    const { message, context, history, today } = req.body as {
       message?: unknown;
       context?: unknown;
       history?: unknown;
+      today?: unknown;
     };
     if (typeof message !== "string" || message.trim().length === 0) {
       res.status(400).json({ error: "message is required" });
@@ -424,7 +425,9 @@ export function createApp(
       message.trim(),
       (context ?? {}) as Parameters<typeof askCoach>[1],
       Array.isArray(history) ? (history as Parameters<typeof askCoach>[2]) : [],
-      { config: coach, fetch: fetchImpl },
+      // The phone's clock, not this pod's: the server runs in UTC and the only
+      // person using this app does not. `buildPrompt` validates it.
+      { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined },
     );
     if (result.status === "ok") {
       res.status(200).json({ reply: result.reply });
