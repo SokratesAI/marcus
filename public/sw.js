@@ -70,3 +70,64 @@ self.addEventListener('fetch', (e) => {
   if (isApi(e.request.url)) return;
   e.respondWith(respond(e.request));
 });
+
+// ---------- push notifications (issue #154) ----------
+// The server sends one Declarative Web Push body:
+// {"web_push":8030,"notification":{title, body, navigate, tag}}. Safari 18.4+
+// renders that itself and never dispatches this event, which is why the whole
+// feature was built and shipped without a push handler here.
+//
+// Every other browser does the opposite. Chrome and Samsung Internet on Android
+// deliver the payload to this worker and show NOTHING unless showNotification()
+// is called before the event settles -- so a notification the server encrypted,
+// the push service accepted and the phone received was dropped on the floor,
+// silently, on the one device Edvard actually reads Marcus on. The declarative
+// JSON is parsed here as well: one payload on the wire, two renderers.
+function pushNotification(data) {
+  let body = null;
+  try {
+    body = data && typeof data.json === 'function' ? data.json() : null;
+  } catch {
+    // A payload this worker cannot parse still has to become a notification.
+    // Silence is the failure this handler exists to end.
+    body = null;
+  }
+  const n = (body && typeof body === 'object' && body.notification) || {};
+  const title = typeof n.title === 'string' && n.title ? n.title : 'Marcus';
+  const navigate = typeof n.navigate === 'string' && n.navigate ? n.navigate : './';
+  return {
+    title,
+    options: {
+      body: typeof n.body === 'string' ? n.body : '',
+      // The server picks the tag so a second send replaces the first on the
+      // lock screen instead of stacking; falling back to one shared tag keeps
+      // that true for a payload that carried none.
+      tag: typeof n.tag === 'string' && n.tag ? n.tag : 'marcus',
+      icon: './apple-touch-icon.png',
+      data: { navigate },
+    },
+  };
+}
+
+self.addEventListener('push', (e) => {
+  const n = pushNotification(e.data);
+  e.waitUntil(self.registration.showNotification(n.title, n.options));
+});
+
+// A notification that cannot be tapped back into the app is half a
+// notification. An already-open Marcus is focused rather than opened a second
+// time -- an installed PWA that spawns a duplicate window on every tap is the
+// thing that makes people turn reminders off again.
+self.addEventListener('notificationclick', (e) => {
+  if (e.notification && typeof e.notification.close === 'function') e.notification.close();
+  const data = (e.notification && e.notification.data) || {};
+  const target = typeof data.navigate === 'string' && data.navigate ? data.navigate : './';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        if (typeof client.focus === 'function') return client.focus();
+      }
+      return typeof self.clients.openWindow === 'function' ? self.clients.openWindow(target) : undefined;
+    })
+  );
+});
