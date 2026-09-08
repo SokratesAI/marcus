@@ -139,6 +139,23 @@ describe("askMarcus", () => {
     ]);
   });
 
+  // The server runs in UTC and this phone does not, and until this the coach
+  // was sent no date at all -- so it read the newest rows in the log as the
+  // current week however old they were.
+  it("sends this phone's own date, so the coach has a clock", async () => {
+    let sent: any;
+    const { ctx } = loadApp({
+      now: new Date("2026-09-08T09:15:00"),
+      fetch: async (_url: string, init: any) => {
+        sent = JSON.parse(init.body);
+        return { ok: true, json: async () => ({ reply: "Squats. Go." }) };
+      },
+    });
+    seed(ctx);
+    await ctx.askMarcus("how is my week?");
+    expect(sent.today).toBe("2026-09-08");
+  });
+
   it("falls back to the built-in reply when the coach is not configured", async () => {
     const { ctx } = loadApp({
       fetch: async () => ({ ok: false, status: 503, json: async () => ({}) }),

@@ -5,7 +5,7 @@ import path from "node:path";
 import request from "supertest";
 import { createApp } from "./index.js";
 import { StateStore } from "./state-store.js";
-import { askCoach, buildPrompt, coachConfig, MAX_HISTORY_TURNS } from "./coach.js";
+import { askCoach, buildPrompt, coachConfig, osloDate, MAX_HISTORY_TURNS } from "./coach.js";
 
 const CONFIG = { baseUrl: "http://agora.test:8080", conversationId: "conv-1" };
 
@@ -57,6 +57,64 @@ describe("buildPrompt", () => {
 
   it("leaves the history block out entirely when there is none", () => {
     expect(buildPrompt("hi", {}, [])).not.toContain("EARLIER IN THIS CONVERSATION");
+  });
+
+  // The bug this block exists for: with no date in the prompt, the newest rows
+  // in the log are indistinguishable from current ones, and the coach said
+  // "you put up 3,691kg of volume this week" about a week eight days gone.
+  it("opens with the date the phone sent, and its weekday", () => {
+    const p = buildPrompt("how is my week?", {}, [], "2026-09-08");
+    expect(p.startsWith("TODAY\n\n2026-09-08 (Tuesday).")).toBe(true);
+    // The date has to come before the data it is meant to judge.
+    expect(p.indexOf("TODAY")).toBeLessThan(p.indexOf("TRAINING DATA"));
+  });
+
+  it("falls back to Oslo's date rather than dropping the block", () => {
+    const bads = [
+      undefined,
+      "",
+      "yesterday",
+      "08-09-2026",
+      "2026-13-01",
+      "2026-02-30",
+      20260908,
+      "2026-9-8",
+      "2026-09-08 ",
+      "2026-09-08T00:00:00Z",
+      "+002026-09-08",
+    ];
+    for (const bad of bads) {
+      const p = buildPrompt("hi", {}, [], bad as string | undefined);
+      expect(p).toContain("TODAY");
+      expect(p).toContain(osloDate());
+    }
+  });
+
+  it("names the weekday of every day of one real week", () => {
+    // A whole week, so an off-by-one in the derivation cannot pass by luck.
+    const week: [string, string][] = [
+      ["2026-09-06", "Sunday"],
+      ["2026-09-07", "Monday"],
+      ["2026-09-08", "Tuesday"],
+      ["2026-09-09", "Wednesday"],
+      ["2026-09-10", "Thursday"],
+      ["2026-09-11", "Friday"],
+      ["2026-09-12", "Saturday"],
+    ];
+    for (const [iso, name] of week) {
+      expect(buildPrompt("hi", {}, [], iso)).toContain(`${iso} (${name})`);
+    }
+  });
+});
+
+describe("osloDate", () => {
+  it("is Oslo's date, not the UTC one, just after midnight there", () => {
+    // 22:30 UTC on 06-30 is 00:30 on 07-01 in Oslo (CEST, UTC+2).
+    expect(osloDate(new Date("2026-06-30T22:30:00Z"))).toBe("2026-07-01");
+    // And in winter, when the offset is one hour.
+    expect(osloDate(new Date("2026-01-31T23:30:00Z"))).toBe("2026-02-01");
+    // Mid-afternoon the two agree, so this is the case that must NOT move.
+    expect(osloDate(new Date("2026-06-30T12:00:00Z"))).toBe("2026-06-30");
   });
 
   it("keeps only the newest turns, so a long chat cannot grow the prompt forever", () => {
@@ -162,6 +220,25 @@ describe("POST /api/chat", () => {
     expect(res.body).toEqual({ reply: "Nice work on the deadlift." });
     const ask = calls.find((c) => c.url.endsWith("/ask"));
     expect(String((ask?.body as { text: string }).text)).toContain("2026-09-04");
+  });
+
+  it("puts the date from the request body into the prompt", async () => {
+    const { calls, fetchImpl } = fakeAgora("claude-cli:claude-sonnet-5");
+    const app = createApp(store, undefined, { fetchImpl, coach: CONFIG });
+    const res = await request(app)
+      .post("/api/chat")
+      .send({ message: "how is my week?", today: "2026-09-08", context: {} });
+    expect(res.status).toBe(200);
+    const sent = String((calls.find((c) => c.url.endsWith("/ask"))?.body as { text: string }).text);
+    expect(sent).toContain("2026-09-08 (Tuesday)");
+  });
+
+  it("still sends a date when the client sends none", async () => {
+    const { calls, fetchImpl } = fakeAgora("claude-cli:claude-sonnet-5");
+    const app = createApp(store, undefined, { fetchImpl, coach: CONFIG });
+    await request(app).post("/api/chat").send({ message: "hi" });
+    const sent = String((calls.find((c) => c.url.endsWith("/ask"))?.body as { text: string }).text);
+    expect(sent).toContain(osloDate());
   });
 
   it("refuses an empty message before reaching the network", async () => {
