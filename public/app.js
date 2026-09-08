@@ -1381,6 +1381,7 @@ const REVIEW_WINDOW_DAYS = 28;
 const REVIEW_MIN_WEEKS = 2;      // one week is a holiday, not a pattern
 const DELOAD_SET_FLOOR = 2;      // a deload that leaves one set is not a session
 const INJURY_WINDOW_DAYS = 7;    // an injury from a month ago is history, not a signal
+const TRIM_MIN_SESSIONS = 2;     // one short session is a bad day, not a pattern
 
 // Idea #220 left one thread open: the sentence parser has flagged an injury on
 // a session since 09-01 -- "got a small injury in my leg" sets `injury: true`
@@ -1441,7 +1442,7 @@ function adherenceByWeekday(plan, sessions, todayISO, windowDays) {
 
 // The chip has to read on its own -- a one-word kind like 'rest' tells a
 // reader nothing unless they already know the four kinds.
-const PROPOSAL_CHIPS = { deload: 'ease off', build: 'add volume', move: 'move a day', rest: 'drop a day', drop: 'drop a lift', phase: 'match the phase' };
+const PROPOSAL_CHIPS = { deload: 'ease off', build: 'add volume', move: 'move a day', rest: 'drop a day', drop: 'drop a lift', trim: 'trim a lift', phase: 'match the phase' };
 function proposalChip(kind) { return PROPOSAL_CHIPS[kind] || kind; }
 
 function totalSets(day) {
@@ -1608,6 +1609,75 @@ function dropProposals(plan, sessions, todayISO, windowDays, weeks) {
   return out;
 }
 
+// `drop` asks whether a lift on a day you keep is a lift you do. This asks the
+// last question left underneath that: the lift IS one you do, and you have never
+// once done the number of sets written next to it. That gap is invisible to
+// everything above -- `adherenceByWeekday` counts sessions, so a day you showed
+// up for reads as kept whatever you actually did inside it.
+//
+// Three decisions, same shape as `dropProposals`, and each one is what keeps it
+// from being noise.
+//
+// The evidence is tied to the weekday the prescription is written on, not to any
+// session anywhere. A lift can sit on two days at two set counts, and counting a
+// Thursday session against Monday's number would trim the wrong day.
+//
+// Every logged instance has to agree. Sets that vary -- 4, then 3, then 4 -- are
+// a week that went badly, not a plan that is wrong, and the plan already has
+// `deload` for the first. Only a count you have hit every single time is a
+// description of what you do.
+//
+// And it never trims below `DELOAD_SET_FLOOR`, for the same reason the deload
+// does not: one set is not a session, and a plan that says so is worse than the
+// one it replaced. It also cannot collide with `drop`, which names only lifts
+// with no logged instance at all -- this one needs at least TRIM_MIN_SESSIONS.
+function trimProposals(plan, sessions, todayISO, windowDays, weeks) {
+  const today = dayKey(todayISO || todayStr());
+  const first = shiftDay(today, -((windowDays || REVIEW_WINDOW_DAYS) - 1));
+  // Keyed by weekday, then by exercise key: every set count logged for that lift
+  // on that weekday. Bare objects for the same reason `dropProposals` uses them.
+  const counts = {};
+  DAY_NAMES.forEach(name => { counts[name] = Object.create(null); });
+  (sessions || []).forEach(s => {
+    if (!s || !s.date || s.date < first || s.date > today) return;
+    const on = counts[weekdayOf(s.date)];
+    (s.exercises || []).forEach(e => {
+      if (!e || !e.name || !Array.isArray(e.sets)) return;
+      const key = exerciseKey(e.name);
+      (on[key] = on[key] || []).push(e.sets.length);
+    });
+  });
+  const out = [];
+  planTrainingDays(plan).forEach(d => {
+    const lifts = [];
+    (d.exercises || []).forEach(e => {
+      if (!e || !e.name || !(e.sets > 0)) return;
+      const logged = counts[d.day][exerciseKey(e.name)] || [];
+      if (logged.length < TRIM_MIN_SESSIONS) return;
+      const done = logged[0];
+      if (!logged.every(n => n === done)) return;
+      if (done >= e.sets || done < DELOAD_SET_FLOOR) return;
+      lifts.push({ name: e.name, sets: done, was: e.sets, times: logged.length });
+    });
+    if (!lifts.length) return;
+    out.push({
+      id: 'trim-' + d.day,
+      kind: 'trim',
+      day: d.day,
+      lifts: lifts,
+      title: 'Write ' + listNames(lifts.map(l => l.name + ' as ' + setsLabel(l.sets))) + ' on ' + d.day,
+      reason: 'Over the last ' + weeks + ' weeks you logged '
+            + listNames(lifts.map(l => l.name + ' on ' + d.day + ' ' + l.times + ' time'
+                + (l.times === 1 ? '' : 's') + ' and did ' + setsLabel(l.sets) + ' every time, where the plan asks for ' + l.was))
+            + '. The plan is describing '
+            + (lifts.length === 1 ? 'a set' : 'sets') + ' you are not doing.',
+    });
+  });
+  return out;
+}
+
+function setsLabel(n) { return n + ' set' + (n === 1 ? '' : 's'); }
+
 // "Dip", "Dip and Row", "Dip, Row and Curl" -- the title reads as a sentence
 // rather than as an array, and the same helper writes it into the reason so the
 // two can never drift apart.
@@ -1669,6 +1739,7 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
   });
 
   dropProposals(plan, sessions, todayISO, windowSize, weeks).forEach(p => proposals.push(p));
+  trimProposals(plan, sessions, todayISO, windowSize, weeks).forEach(p => proposals.push(p));
 
   // 'add volume' is the fallback when nothing else needed saying. A phase
   // resize already changed the week's volume this render, so it does not count
@@ -1794,6 +1865,18 @@ function applyProposal(plan, proposal) {
       const gone = Object.create(null);
       (proposal.names || []).forEach(n => { gone[exerciseKey(n)] = true; });
       day.exercises = (day.exercises || []).filter(e => !gone[exerciseKey(e.name)]);
+    }
+  } else if (proposal.kind === 'trim') {
+    const day = next.days.find(d => d.day === proposal.day);
+    if (day) {
+      const to = Object.create(null);
+      (proposal.lifts || []).forEach(l => { to[exerciseKey(l.name)] = l.sets; });
+      (day.exercises || []).forEach(e => {
+        const want = to[exerciseKey(e.name)];
+        // Only ever downward. The proposal was measured against the plan as it
+        // was when the review ran, and the plan can have been edited since.
+        if (want != null && want < (e.sets || 0)) e.sets = want;
+      });
     }
   } else if (proposal.kind === 'phase') {
     // Sets come off the exercise carrying the most and go onto the one carrying
