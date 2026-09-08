@@ -37,9 +37,8 @@ function renderHome() {
   const todayName = planDayName();
   const todayPlan = plan.days.find(d => d.day === todayName);
   const weights = store.get('weights', []);
-  const lastWeight = weights[weights.length - 1];
-  const firstWeight = weights[0];
-  const delta = lastWeight && firstWeight ? (lastWeight.kg - firstWeight.kg).toFixed(1) : '—';
+  const change = bodyweightChange(weights);
+  const delta = change ? `${change.delta > 0 ? '+' : ''}${change.delta.toFixed(1)}kg` : '—';
   const doneToday = todayLogged(store.get('sessions', []), todayStr());
   const meals = store.get('meals', []).filter(m => m.date === todayStr());
   const kcal = meals.reduce((s, m) => s + m.calories, 0);
@@ -62,7 +61,7 @@ function renderHome() {
     <div class="stat-grid">
       <div class="stat"><div class="stat__value">${weekSessions().length}</div><div class="stat__label">sessions this wk</div></div>
       <div class="stat"><div class="stat__value">${streak()}</div><div class="stat__label">day streak</div></div>
-      <div class="stat"><div class="stat__value">${delta}kg</div><div class="stat__label">weight change</div></div>
+      <div class="stat"><div class="stat__value">${delta}</div><div class="stat__label">${bodyweightChangeLabel(change)}</div></div>
     </div>
 
     ${nextGoal ? `
@@ -3179,10 +3178,11 @@ function marcusReply(text) {
     return `Today's ${todayPlan.focus} day: ${todayPlan.exercises.map(e => `${e.name} ${e.sets}×${e.reps}`).join(', ')}. Let's get it.`;
   }
   if (/progress|how.*doing|going well|on track/.test(t)) {
-    const w = weights.length > 1 ? (weights[weights.length-1].kg - weights[0].kg).toFixed(1) : null;
+    const bw = bodyweightChange(weights);
+    const w = bw ? bw.delta.toFixed(1) : null;
     const vol = weeklyVolumes();
     const lastVol = vol.length ? Math.round(vol[vol.length-1][1]) : 0;
-    return `You're trending well — ${w ? `bodyweight moved ${w}kg over your logged history, ` : ''}and you put up ${lastVol.toLocaleString()}kg of volume this week. Keep stacking sessions.`;
+    return `You're trending well — ${bw ? `bodyweight moved ${w}kg over ${bw.days} days, ` : ''}and you put up ${lastVol.toLocaleString()}kg of volume this week. Keep stacking sessions.`;
   }
   if (/sore|tired|pain|hurt|exhaust/.test(t)) {
     return `Listen to that. A short easy day or extra sleep beats grinding through soreness — swap in mobility work if today's lift feels rough, and tell me if it's a specific joint.`;
