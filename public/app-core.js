@@ -397,6 +397,26 @@ function lastPerformanceLabel(last) {
 // number here rather than a per-lift table I would have had to invent.
 const PROGRESSION_STEP_KG = 2.5;
 
+// Days between `asOfISO` and the newest session logged on or before it, or
+// null when nothing has been logged yet. `trainingLoad` answers the same
+// question for today only, and the Log tab can be backdated -- backfilling
+// last Tuesday must not be told about a layoff that had not started by then --
+// so this reads the one number out of the same log, as of the row's own date.
+//
+// Every kind of session counts, cardio included: a week with three runs in it
+// is not a week off, and asking this question per lift would answer "you have
+// not squatted in eight days" on a normal upper/lower split.
+function daysSinceSession(sessions, asOfISO) {
+  const as = asOfISO || todayStr();
+  let newest = null;
+  (sessions || []).forEach(function (s) {
+    if (!s || !s.date || s.date > as) return;
+    if (!newest || s.date > newest) newest = s.date;
+  });
+  if (!newest) return null;
+  return Math.max(0, daysBetween(newest, as));
+}
+
 // Double progression: hold the weight until you hit the rep target at that
 // weight, then add the smallest jump the bar can make. `lastPerformance` above
 // says what you did; this is the only thing in the app that proposes a number
@@ -422,7 +442,7 @@ const PROGRESSION_STEP_KG = 2.5;
 //
 // Returns null rather than a guess when there is no history, no rep target, or
 // a rep count that was never recorded -- an empty row proposes nothing.
-function nextTarget(last, targetReps) {
+function nextTarget(last, targetReps, layoffDays) {
   if (!last) return null;
   const weight = last.weight;
   const did = last.reps;
@@ -430,6 +450,18 @@ function nextTarget(last, targetReps) {
   if (typeof weight !== 'number' || !Number.isFinite(weight)) return null;
   if (typeof did !== 'number' || !Number.isFinite(did)) return null;
   if (!Number.isFinite(target) || target <= 0) return null;
+  // A layoff is checked before all three of the answers below, for the same
+  // reason `loadVerdict` checks `resting` before either ratio band: it is a
+  // fact about what was logged rather than an inference from the last set.
+  // This function's own contract is that it is the only thing in the app that
+  // proposes a number you have not lifted yet -- so after a week of nothing it
+  // proposes no new number at all, which is what a coach says on the first
+  // session back. `layoffDays` is null unless the caller measured one; the
+  // threshold is the fatigue window and it lives beside that window in app.js
+  // rather than being spelled a second time here.
+  if (typeof layoffDays === 'number' && Number.isFinite(layoffDays) && layoffDays > 0) {
+    return { kind: 'hold', weight: weight, reps: target, reason: 'layoff', days: layoffDays };
+  }
   if (did < target) return { kind: 'hold', weight: weight, reps: target, reason: 'short' };
   if (last.rpe === 10) return { kind: 'hold', weight: weight, reps: target, reason: 'rpe' };
   if (weight === 0) return { kind: 'reps', weight: 0, reps: did + 1, reason: 'bodyweight' };
@@ -441,6 +473,7 @@ function nextTargetLabel(next) {
   const load = next.weight === 0 ? 'bodyweight' : String(next.weight) + ' kg';
   if (next.kind === 'add') return 'Next: ' + load + ' \u00d7 ' + next.reps;
   if (next.kind === 'reps') return 'Next: bodyweight \u00d7 ' + next.reps;
+  if (next.reason === 'layoff') return 'Next: stay at ' + load + ' \u00d7 ' + next.reps + ', first session back after ' + next.days + ' days';
   if (next.reason === 'rpe') return 'Next: stay at ' + load + ' \u00d7 ' + next.reps + ', RPE 10 last time';
   return 'Next: stay at ' + load + ', aim for ' + next.reps;
 }
