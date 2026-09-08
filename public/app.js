@@ -29,7 +29,7 @@ function weekSessions() {
 }
 
 function streak() {
-  return trainingStreak(store.get('sessions', []), todayStr());
+  return trainingStreak(store.get('sessions', []), todayStr(), store.get('plan'));
 }
 
 function renderHome() {
