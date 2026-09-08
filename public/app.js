@@ -1421,6 +1421,20 @@ function reviewWeeks(sessions, todayISO, windowDays) {
   return Math.floor(Math.min(span, windowDays) / 7);
 }
 
+// How long the window the counts came from actually is, in weeks. This is NOT
+// `reviewWeeks`, and the difference is the point: `reviewWeeks` measures how much
+// history you have, and gates the review on it, while every count in a review
+// sentence is taken over the whole `windowDays` window whether you trained in all
+// of it or not. Reporting the history figure beside a window count produces a
+// sentence that cannot be true -- 27 days of history floors to "3 weeks" while the
+// 28-day window it counted holds four Mondays, so "over the last 3 weeks you
+// trained on Monday 4 times" is reachable, and "3 times" reads as every Monday
+// kept when one was missed. The window is a constant, so this is the honest number
+// for the prose.
+function reviewWindowWeeks(windowDays) {
+  return Math.max(1, Math.round((windowDays || REVIEW_WINDOW_DAYS) / 7));
+}
+
 // One row per weekday: how many sessions landed on it inside the window, and
 // whether the written plan says anything is meant to happen there.
 function adherenceByWeekday(plan, sessions, todayISO, windowDays) {
@@ -1695,6 +1709,7 @@ function listNames(names) {
 function planReview(plan, sessions, todayISO, windowDays, goal) {
   const windowSize = windowDays || REVIEW_WINDOW_DAYS;
   const weeks = reviewWeeks(sessions, todayISO, windowSize);
+  const windowWeeks = reviewWindowWeeks(windowSize);
   const phaseFirst = phaseProposal(plan, goal, todayISO);
   const injuries = recentInjuries(sessions, todayISO, INJURY_WINDOW_DAYS);
   if (weeks < REVIEW_MIN_WEEKS) {
@@ -1724,7 +1739,7 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
         day: row.day,
         toDay: to.day,
         title: 'Move ' + row.day + '’s work to ' + to.day,
-        reason: 'Over the last ' + weeks + ' weeks you trained on ' + row.day + ' 0 times and on ' + to.day + ' ' + to.logged + ' times, and the plan calls ' + to.day + ' a rest day. The plan is describing a week you are not having.',
+        reason: 'Over the last ' + windowWeeks + ' weeks you trained on ' + row.day + ' 0 times and on ' + to.day + ' ' + to.logged + ' times, and the plan calls ' + to.day + ' a rest day. The plan is describing a week you are not having.',
       });
     } else {
       proposals.push({
@@ -1732,13 +1747,13 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
         kind: 'rest',
         day: row.day,
         title: 'Make ' + row.day + ' a rest day',
-        reason: 'Over the last ' + weeks + ' weeks you trained on ' + row.day + ' 0 times. A plan you never keep is not a plan you are behind on.',
+        reason: 'Over the last ' + windowWeeks + ' weeks you trained on ' + row.day + ' 0 times. A plan you never keep is not a plan you are behind on.',
       });
     }
   });
 
-  dropProposals(plan, sessions, todayISO, windowSize, weeks).forEach(p => proposals.push(p));
-  trimProposals(plan, sessions, todayISO, windowSize, weeks).forEach(p => proposals.push(p));
+  dropProposals(plan, sessions, todayISO, windowSize, windowWeeks).forEach(p => proposals.push(p));
+  trimProposals(plan, sessions, todayISO, windowSize, windowWeeks).forEach(p => proposals.push(p));
 
   // 'add volume' is the fallback when nothing else needed saying. A phase
   // resize already changed the week's volume this render, so it does not count
@@ -1751,7 +1766,7 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
         kind: 'build',
         day: lightest.day,
         title: 'Add a set to each exercise on ' + lightest.day,
-        reason: 'Your fatigue is ' + load.ratio.toFixed(2) + ' times your fitness, below the 0.8 where training stops building, and you kept every planned day over the last ' + weeks + ' weeks. ' + lightest.day + ' is your lightest at ' + totalSets(lightest) + ' sets.',
+        reason: 'Your fatigue is ' + load.ratio.toFixed(2) + ' times your fitness, below the 0.8 where training stops building, and you kept every planned day over the last ' + windowWeeks + ' weeks. ' + lightest.day + ' is your lightest at ' + totalSets(lightest) + ' sets.',
       });
     }
   }
