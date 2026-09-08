@@ -217,7 +217,7 @@ describe("the Log tab wiring", () => {
 
   it("fills that line from nextTargetLabel", () => {
     const app = appFile("app.js");
-    expect(app).toContain("nextTargetLabel(nextTarget(lastSeen, repsInput.value))");
+    expect(app).toContain("nextTargetLabel(nextTarget(lastSeen, repsInput.value, layoff))");
     expect(app).toContain("querySelector('.ex-next')");
   });
 

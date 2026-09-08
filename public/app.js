@@ -786,7 +786,13 @@ function renderLog() {
     const nextNode = node.querySelector('.ex-next');
     let lastSeen = null;
     const showNext = () => {
-      const label = nextTargetLabel(nextTarget(lastSeen, repsInput.value));
+      // The third argument is the layoff, measured as of the date on the row.
+      // `LOAD_FATIGUE_DAYS` is the same window the Training load card calls
+      // `resting` on, and it is read here rather than restated in app-core.js so
+      // that one number decides both.
+      const since = daysSinceSession(store.get('sessions', []), dateInput ? dateInput.value : todayStr());
+      const layoff = typeof since === 'number' && since >= LOAD_FATIGUE_DAYS ? since : null;
+      const label = nextTargetLabel(nextTarget(lastSeen, repsInput.value, layoff));
       nextNode.textContent = label;
       nextNode.hidden = !label;
     };
