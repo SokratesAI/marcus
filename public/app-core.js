@@ -620,10 +620,11 @@ function stalledLifts(sessions) {
   return { stalled: stalled, watched: keys.length, threshold: STALL_SESSIONS };
 }
 
-// The number the Home card calls "day streak": consecutive days, ending today
-// or yesterday, on which anything at all was logged. It lives here rather than
-// in app.js because it was wrong in two ways nothing could see, and neither of
-// them is visible without a test.
+// The number the Home card calls "day streak": consecutive days on which
+// anything was logged, ending today or yesterday, with the days the plan
+// prescribes as rest stepped over rather than counted as a break. It lives here
+// rather than in app.js because it has now been wrong in three ways nothing
+// could see, and none of them is visible without a test.
 //
 // It counted *sessions*, not days. A lift and a run on the same evening are two
 // entries with one date, and the app supports exactly that (`kind: 'cardio'`
@@ -635,23 +636,64 @@ function stalledLifts(sessions) {
 // showed a streak in the morning and zero in the evening. Both ends are dates
 // now, so the answer does not depend on when the app is opened.
 //
+// The third one is the plan. A streak measured in calendar days punishes you
+// for following your own programme: with Wednesday and Sunday written into the
+// plan as rest, a perfect week resets the counter twice, and over Edvard's
+// first 36 days the tile could never read higher than 2 while he was training
+// five days a week. A rest day the plan asked for is not a missed day, so it
+// neither counts nor ends the run -- the same shape as `loadVerdict` answering
+// `resting` before either ratio band, because it is a fact about the plan
+// rather than an inference from the log. A planned *training* day with nothing
+// logged still ends it; that is the whole point of the number.
+//
+// The plan is the current one applied backwards, which is what `planReview`
+// already does when it counts how often a day was trained. There is no plan
+// history to read, and inventing one to make this number exact would be a
+// bigger lie than the approximation.
+//
+// With no plan passed, no day is a rest day and the answer is the calendar-day
+// one, unchanged.
+//
 // The run is allowed to start yesterday, which is deliberate and is what the
 // old `diff <= 1` was reaching for: not having trained yet today is not a
 // broken streak, it is a day that has not finished.
-function trainingStreak(sessions, todayISO) {
+function planRestDayNames(plan) {
+  const rest = new Set();
+  ((plan && plan.days) || []).forEach(function (d) {
+    if (!d || !d.day) return;
+    if (!(d.exercises || []).length && !d.cardio) rest.add(d.day);
+  });
+  return rest;
+}
+
+// UTC throughout, like `weekdayOf`: stepping a local-midnight Date back by
+// 86400000 ms lands on 23:00 of the previous day across a DST boundary, which
+// in Oslo would silently drop or repeat a day twice a year.
+function shiftISODate(iso, days) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function trainingStreak(sessions, todayISO, plan) {
   const today = todayISO || todayStr();
   // A date later than today comes from a phone whose clock ran ahead -- the
   // store is merged from two of them -- and must neither extend the run nor
   // end it, so it is dropped before the run is walked.
-  const days = Array.from(new Set(
+  const trained = new Set(
     (sessions || []).map(s => s && s.date).filter(d => d && d <= today)
-  )).sort().reverse();
-  let count = 0;
-  let cursor = today;
-  for (const d of days) {
-    if (daysBetween(d, cursor) > 1) break;
-    count++;
-    cursor = d;
+  );
+  if (!trained.size) return 0;
+  // Walking day by day needs a floor, or a plan of nothing but rest days would
+  // walk backwards forever. Nothing before the first session can extend a run.
+  const oldest = Array.from(trained).sort()[0];
+  const rest = planRestDayNames(plan);
+  let count = trained.has(today) ? 1 : 0;
+  let cursor = shiftISODate(today, -1);
+  while (cursor >= oldest) {
+    if (trained.has(cursor)) count++;
+    else if (!rest.has(DAY_NAMES[new Date(cursor + 'T00:00:00Z').getUTCDay()])) break;
+    cursor = shiftISODate(cursor, -1);
   }
   return count;
 }
