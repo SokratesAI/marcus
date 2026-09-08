@@ -1297,7 +1297,7 @@ function trainingLoad(sessions, todayISO) {
   const byDay = dailyLoads(sessions);
   const days = Object.keys(byDay).sort();
   if (!days.length) {
-    return { fitness: 0, fatigue: 0, ratio: 0, days: 0, trend: 'none', verdict: 'nothing logged' };
+    return { fitness: 0, fatigue: 0, ratio: 0, days: 0, daysSinceLast: null, trend: 'none', verdict: 'nothing logged' };
   }
 
   const fitAlpha = 1 - Math.exp(-1 / LOAD_FITNESS_DAYS);
@@ -1322,7 +1322,11 @@ function trainingLoad(sessions, todayISO) {
     trend = Math.abs(delta) < fitness * 0.02 ? 'flat' : (delta > 0 ? 'rising' : 'falling');
   }
 
-  return { fitness, fatigue, ratio, days: covered, trend, verdict: loadVerdict(ratio, covered) };
+  const daysSinceLast = Math.max(0, Math.round(
+    (new Date(today + 'T00:00:00Z') - new Date(days[days.length - 1] + 'T00:00:00Z')) / 86400000));
+
+  return { fitness, fatigue, ratio, days: covered, daysSinceLast, trend,
+           verdict: loadVerdict(ratio, covered, daysSinceLast) };
 }
 
 // The band edges are the acute:chronic ratio literature's, not mine: under 0.8
@@ -1330,7 +1334,15 @@ function trainingLoad(sessions, todayISO) {
 // cost, and above 1.5 is where injury rates climb sharply. They are the
 // product decision in this whole card, so they live in one named function
 // rather than inline in the arithmetic.
-function loadVerdict(ratio, coveredDays) {
+// `resting` is checked before either of the ratio bands, and before the
+// thin-history guard, because it is not an inference from the ratio at all --
+// it is the fact that no session was logged inside the fatigue window. During a
+// layoff both averages simply decay at their own fixed rates, so the ratio
+// converges on a number that depends only on how long ago you stopped: eight
+// days off Edvard's real data reads 0.81, which is the middle of the band the
+// card calls "training hard enough to improve without digging a hole".
+function loadVerdict(ratio, coveredDays, daysSinceLast) {
+  if (typeof daysSinceLast === 'number' && daysSinceLast >= LOAD_FATIGUE_DAYS) return 'resting';
   if (coveredDays < LOAD_MIN_DAYS) return 'too early';
   if (ratio < 0.8) return 'backing off';
   if (ratio <= 1.3) return 'building';
@@ -1340,6 +1352,7 @@ function loadVerdict(ratio, coveredDays) {
 
 function loadVerdictLabel(load) {
   if (load.verdict === 'nothing logged') return 'no sessions logged';
+  if (load.verdict === 'resting') return 'no sessions in ' + load.daysSinceLast + ' days';
   if (load.verdict === 'too early') return 'too early to judge';
   if (load.verdict === 'load spike') return 'load spike — ease off';
   return load.verdict;
@@ -1961,17 +1974,27 @@ function refreshBadge(todayISO) {
 
 function trainingLoadCard(load) {
   const alert = load.verdict === 'load spike' || load.verdict === 'overreaching';
+  const resting = load.verdict === 'resting';
   const kg = (n) => Math.round(n).toLocaleString() + ' kg/day';
+  // Only printed once there is something to print. `daysSinceLast` is null with
+  // nothing logged, and 0 is a session today, which the rest of the card
+  // already says better than a line reading "0 days ago" would.
+  const lastLine = typeof load.daysSinceLast === 'number' && load.daysSinceLast > 0
+    ? `<div class="exercise-line"><span>Last session</span><span>${load.daysSinceLast} day${load.daysSinceLast === 1 ? '' : 's'} ago</span></div>`
+    : '';
   const trendWord = load.trend === 'rising' ? 'rising' : load.trend === 'falling' ? 'falling'
                   : load.trend === 'flat' ? 'holding' : 'not enough history';
   return `
     <div class="card">
       <div class="card__title-row"><h2>Training load</h2><span class="chip ${alert ? 'chip--alert' : 'chip--primary'}">${esc(loadVerdictLabel(load))}</span></div>
-      <div class="exercise-line"><span>Fitness — 42-day average</span><span>${kg(load.fitness)}</span></div>
-      <div class="exercise-line"><span>Fatigue — 7-day average</span><span>${kg(load.fatigue)}</span></div>
+      <div class="exercise-line"><span>Fitness — weighted over 42 days</span><span>${kg(load.fitness)}</span></div>
+      <div class="exercise-line"><span>Fatigue — weighted over 7 days</span><span>${kg(load.fatigue)}</span></div>
       <div class="exercise-line"><span>Fatigue vs fitness</span><span>${load.ratio.toFixed(2)}</span></div>
       <div class="exercise-line"><span>Fitness over the last week</span><span>${trendWord}</span></div>
-      <p class="card__note">Fitness is what you have built up; fatigue is what you are carrying right now. Between 0.8 and 1.3 you are training hard enough to improve without digging a hole. Above 1.5 is the range injuries cluster in.</p>
+      ${lastLine}
+      <p class="card__note">${resting
+        ? `Both numbers are still falling from the training you did before you stopped, so the ratio between them says nothing about now. Log a session and this starts describing you again.`
+        : `Fitness is what you have built up; fatigue is what you are carrying right now. Between 0.8 and 1.3 you are training hard enough to improve without digging a hole. Above 1.5 is the range injuries cluster in.`}</p>
     </div>`;
 }
 
