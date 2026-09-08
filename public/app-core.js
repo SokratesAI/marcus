@@ -498,7 +498,14 @@ function bestSetIsBetter(candidate, best) {
   return candidate.date < best.date;
 }
 
-function personalBests(sessions) {
+// How long a best set keeps the `new` chip beside it. One day, so it covers
+// the session you just logged and the morning after it -- the same reading
+// `trainingStreak` makes when it lets a run start yesterday, because a day you
+// have not finished is not a day that has passed. Beyond that the set is still
+// your best and the card still prints its date; it just stops being news.
+const PB_NEW_DAYS = 1;
+
+function personalBests(sessions, todayISO) {
   // Keyed on a typed exercise name, so a lift called `constructor` or
   // `__proto__` would otherwise read as an already-seen entry off
   // Object.prototype and take its comparison against a function.
@@ -525,9 +532,16 @@ function personalBests(sessions) {
     if (counted && session.date > latestSessionDate) latestSessionDate = session.date;
   });
   const rows = Object.keys(bests).map(function (k) { return bests[k]; });
-  // A best set on the newest day you trained is one you have just done, which
-  // is the only reason this list is worth opening the same evening.
-  rows.forEach(function (r) { r.isNew = latestSessionDate !== '' && r.date === latestSessionDate; });
+  // A best set on the newest day you trained is one you have just done -- but
+  // only if that day was recent. The newest logged session is the newest one
+  // whether it was last night or three weeks ago, so reading it as "just done"
+  // made this chip say `new` next to three of Edvard's lifts eight days after
+  // he last trained. Same shape as `loadVerdict` answering `resting` and
+  // `nextTarget` holding the weight after a layoff: the age of the log is a
+  // fact about the log, not something to infer from its last row.
+  const asOf = todayISO || todayStr();
+  const fresh = latestSessionDate !== '' && daysBetween(latestSessionDate, asOf) <= PB_NEW_DAYS;
+  rows.forEach(function (r) { r.isNew = fresh && r.date === latestSessionDate; });
   // Newest first so a best set tonight is at the top, then alphabetical so the
   // long tail below it does not reshuffle every time anything is logged.
   rows.sort(function (a, b) {

@@ -96,11 +96,42 @@ describe("personalBests", () => {
     const rows = app.personalBests([
       session("2026-09-01", "Squat", [{ weight: 100, reps: 5 }]),
       session("2026-09-05", "Bench Press", [{ weight: 80, reps: 6 }]),
-    ]);
+    ], "2026-09-05");
     const squat = rows.find((r: any) => r.name === "Squat");
     const bench = rows.find((r: any) => r.name === "Bench Press");
     expect(bench.isNew).toBe(true);
     expect(squat.isNew).toBe(false);
+  });
+
+  // Edvard's own log on 2026-09-08: three lifts at their best on 2026-08-31,
+  // the newest day he trained, eight days earlier. The card said `new` next to
+  // all three. The chip is about how recently the set happened, so a best set
+  // on the newest logged day is only new while that day still is.
+  it("drops the new chip once the newest training day is no longer recent", () => {
+    const app = loadApp();
+    const log = [
+      session("2026-08-27", "Squat", [{ weight: 100, reps: 5 }]),
+      session("2026-08-31", "Bench Press", [{ weight: 80, reps: 6 }]),
+    ];
+    const bench = (todayISO: string) =>
+      app.personalBests(log, todayISO).find((r: any) => r.name === "Bench Press");
+    expect(bench("2026-08-31").isNew).toBe(true);
+    expect(bench("2026-09-01").isNew).toBe(true);
+    expect(bench("2026-09-02").isNew).toBe(false);
+    expect(bench("2026-09-08").isNew).toBe(false);
+    // The row itself is untouched: it is still his best and still dated.
+    expect(bench("2026-09-08").weight).toBe(80);
+    expect(bench("2026-09-08").date).toBe("2026-08-31");
+  });
+
+  // Without the argument the function reads the clock, which is what the one
+  // caller in app.js does. A stale log must not light the chip there either.
+  it("reads today off the clock when no date is passed", () => {
+    const app = loadApp();
+    const rows = app.personalBests([
+      session("2020-01-02", "Squat", [{ weight: 100, reps: 5 }]),
+    ]);
+    expect(rows[0].isNew).toBe(false);
   });
 
   it("orders newest best first, then alphabetically inside a date", () => {
@@ -135,7 +166,7 @@ describe("personalBests", () => {
       { kind: "cardio", date: "2026-09-05", activity: "Run", minutes: 40,
         exercises: [{ name: "Squat", sets: [{ weight: 200, reps: 5 }] }] },
       session("2026-09-01", "Squat", [{ weight: 100, reps: 5 }]),
-    ]);
+    ], "2026-09-01");
     expect(rows).toHaveLength(1);
     expect(rows[0].weight).toBe(100);
     // 2026-09-01 is the newest day that counted, because the cardio day did not.
@@ -193,7 +224,7 @@ describe("personalBestsCard", () => {
     const html = app.personalBestsCard(app.personalBests([
       session("2026-09-01", "Squat", [{ weight: 100, reps: 5 }]),
       session("2026-09-05", "Bench Press", [{ weight: 80, reps: 6 }]),
-    ]));
+    ], "2026-09-05"));
     expect(html).toContain("Bench Press");
     expect(html).toContain("80 kg × 6");
     expect(html).toContain("Squat");
