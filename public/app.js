@@ -1257,8 +1257,10 @@ const LOAD_FATIGUE_DAYS = 7;
 // earned. Say "too early" instead of inventing an alarm.
 const LOAD_MIN_DAYS = 28;
 
-// Day keys are done in UTC on purpose. `fmtDate` runs a local Date through
-// toISOString, which in any zone east of Greenwich moves midnight back a day.
+// Day keys are done in UTC on purpose: every input here is already an ISO
+// date string, so anchoring it at Greenwich midnight keeps the arithmetic on
+// whole days and out of reach of a DST jump. `fmtDate` is the other half --
+// it turns a Date into the day it fell on locally.
 const dayKey = (iso) => new Date(iso + 'T00:00:00Z').toISOString().slice(0, 10);
 const shiftDay = (iso, n) => new Date(new Date(iso + 'T00:00:00Z').getTime() + n * 86400000).toISOString().slice(0, 10);
 

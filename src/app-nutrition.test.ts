@@ -257,7 +257,7 @@ describe("the food picker end to end", () => {
 
   it("stamps a single-digit hour with a leading zero, so the day sorts", () => {
     // 09:05 local, which is the case a two-digit clock hour can never expose.
-    const { ctx, byId } = loadApp({ now: new Date("2026-08-31T09:05:00Z") });
+    const { ctx, byId } = loadApp({ now: new Date("2026-08-31T09:05:00") });
     ctx.switchTab("nutrition");
     ctx.pickFood(ctx.FOODS.findIndex((f: any) => f.name === "Banana"));
     byId.foodAmount.value = "1";

@@ -37,7 +37,16 @@ const store = {
 const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-const fmtDate = (d) => new Date(d).toISOString().slice(0, 10);
+// Local calendar date, never UTC. `toISOString` reports the day in Greenwich,
+// so for a phone in Oslo every local midnight-to-02:00 instant -- and every
+// Date built at local midnight, which is how the week buckets and the goal
+// milestones are built -- came back as the day before. The whole suite passed
+// because CI runs in UTC, where the two agree.
+const fmtDate = (d) => {
+  const t = new Date(d);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+};
 const todayStr = () => fmtDate(new Date());
 const niceDate = (iso) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
