@@ -2222,6 +2222,34 @@ function withPlanCardio(plan, dayName, cardio) {
 }
 
 // Sorted by how soon they are, so "next up" is always the first one.
+// The Home tile's bodyweight number, with the window it was measured over.
+// The tile sits between "sessions this wk" and "day streak", so an unlabelled
+// number reads as this week's when it is actually the whole history -- the
+// coach's own reply already says "over your logged history" and the tile did
+// not. The extremes are picked by date rather than by array position: a weigh-in
+// is pushed in the order it was typed, so one entered out of order would put the
+// wrong reading at weights[0]. Fewer than two readings on two different days is
+// no change at all rather than a change of zero, so it answers null and the
+// caller shows a dash.
+function bodyweightChange(weights) {
+  const dated = (weights || []).filter(w => w && w.date && typeof w.kg === 'number');
+  if (dated.length < 2) return null;
+  const sorted = dated.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  if (first.date === last.date) return null;
+  const days = Math.round(
+    (Date.parse(last.date + 'T00:00:00Z') - Date.parse(first.date + 'T00:00:00Z')) / 86400000
+  );
+  return { delta: last.kg - first.kg, fromISO: first.date, toISO: last.date, days };
+}
+
+// Same number as a label, so the tile and any sentence about it cannot drift.
+function bodyweightChangeLabel(change) {
+  if (!change) return 'weight change';
+  return `weight change over ${change.days} day${change.days === 1 ? '' : 's'}`;
+}
+
 function goalsSorted() {
   return store.get('goals', []).slice().sort((a, b) => a.targetDate.localeCompare(b.targetDate));
 }
