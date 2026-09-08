@@ -1237,7 +1237,22 @@ function weeklyVolumes() {
     const key = fmtDate(monday);
     buckets[key] = (buckets[key] || 0) + sessionVolume(s);
   });
-  return Object.entries(buckets).sort(([a],[b]) => a.localeCompare(b));
+  const weeks = Object.keys(buckets).sort();
+  if (!weeks.length) return [];
+  // A week he did not train is a real zero, not a missing reading -- unlike the
+  // line charts, where a day with no entry is unknown. Leaving it out entirely
+  // drew a deload week and a hard week side by side with nothing between them,
+  // so the bar chart showed an unbroken run of training that never happened.
+  const filled = [];
+  const cursor = new Date(weeks[0] + 'T00:00');
+  const last = weeks[weeks.length - 1];
+  for (;;) {
+    const key = fmtDate(cursor);
+    filled.push([key, buckets[key] || 0]);
+    if (key >= last) break;
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return filled;
 }
 
 // ---------- training load: fitness, fatigue, form (idea #194) ----------
@@ -2160,6 +2175,9 @@ function renderProgress() {
   const calByDay = {};
   meals.forEach(m => { calByDay[m.date] = (calByDay[m.date] || 0) + m.calories; });
   const calEntries = Object.entries(calByDay).sort(([a],[b]) => a.localeCompare(b));
+  const weightDays = dailySeries(weights.map(w => ({ date: w && w.date, value: w && w.kg })));
+  const measureDays = dailySeries(measureSeries.map(m => ({ date: m.date, value: m.value })));
+  const calDays = dailySeries(calEntries.map(([d, v]) => ({ date: d, value: v })));
   const vols = weeklyVolumes();
 
   const goals = goalsSorted();
@@ -2314,17 +2332,17 @@ function renderProgress() {
   const axisColor = getComputedStyle(document.body).getPropertyValue('--md-on-surface-variant').trim();
   const gridColor = 'rgba(128,128,128,.15)';
   const common = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-    scales: { x: { ticks: { color: axisColor, font: { size: 10 } }, grid: { display: false } },
+    scales: { x: { ticks: { color: axisColor, font: { size: 10 }, autoSkip: true, maxTicksLimit: 7, maxRotation: 0 }, grid: { display: false } },
               y: { ticks: { color: axisColor, font: { size: 10 } }, grid: { color: gridColor } } } };
 
   charts.weight = new Chart(document.getElementById('weightChart'), {
     type: 'line',
-    data: { labels: weights.map(w => niceDate(w.date)), datasets: [{ data: weights.map(w => w.kg), borderColor: '#2E7D32', backgroundColor: 'rgba(46,125,50,.15)', tension: .3, fill: true, pointRadius: 2 }] },
+    data: { labels: weightDays.labels.map(niceDate), datasets: [{ data: weightDays.values, spanGaps: true, borderColor: '#2E7D32', backgroundColor: 'rgba(46,125,50,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
   charts.measure = new Chart(document.getElementById('measureChart'), {
     type: 'line',
-    data: { labels: measureSeries.map(m => niceDate(m.date)), datasets: [{ data: measureSeries.map(m => m.value), borderColor: '#8E24AA', backgroundColor: 'rgba(142,36,170,.15)', tension: .3, fill: true, pointRadius: 2 }] },
+    data: { labels: measureDays.labels.map(niceDate), datasets: [{ data: measureDays.values, spanGaps: true, borderColor: '#8E24AA', backgroundColor: 'rgba(142,36,170,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
   charts.volume = new Chart(document.getElementById('volumeChart'), {
@@ -2334,7 +2352,7 @@ function renderProgress() {
   });
   charts.cal = new Chart(document.getElementById('calChart'), {
     type: 'line',
-    data: { labels: calEntries.map(([d]) => niceDate(d)), datasets: [{ data: calEntries.map(([,v]) => v), borderColor: '#5B8DEF', backgroundColor: 'rgba(91,141,239,.15)', tension: .3, fill: true, pointRadius: 2 }] },
+    data: { labels: calDays.labels.map(niceDate), datasets: [{ data: calDays.values, spanGaps: true, borderColor: '#5B8DEF', backgroundColor: 'rgba(91,141,239,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
 }
