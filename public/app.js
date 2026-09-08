@@ -3388,6 +3388,7 @@ function subscriptionBody(sub) {
 async function readReminderState(deps) {
   const notification = deps && deps.notification;
   const registration = deps && deps.registration;
+  const fetchFn = deps && deps.fetchFn;
   if (!notification || !registration) return { state: 'unsupported' };
   if (notification.permission === 'denied') return { state: 'blocked' };
   let sub = null;
@@ -3396,7 +3397,51 @@ async function readReminderState(deps) {
   } catch {
     return { state: 'off' };
   }
-  return { state: sub ? 'on' : 'off' };
+  if (!sub) return { state: 'off' };
+
+  // The browser saying yes is half the answer and it was the whole answer until
+  // now. The other half is the server's list, which is what the 20:00 job sends
+  // to -- and Edvard's phone was subscribed in this browser while Marcus held no
+  // record of it, so the card read "on for this device" about a device that was
+  // never going to hear anything. Ask.
+  const body = subscriptionBody(sub);
+  if (!body || !fetchFn) return { state: 'on' };
+  let known;
+  try {
+    const res = await fetchFn('/api/push/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: body.endpoint }),
+    });
+    // An unreachable or unhappy server says nothing about this subscription, and
+    // this browser is still genuinely subscribed. Reporting 'off' here would turn
+    // every offline app-open into "your reminders are off", which is a lie in the
+    // other direction.
+    if (!res || !res.ok) return { state: 'on' };
+    const json = await res.json();
+    known = json && json.known === true;
+  } catch {
+    return { state: 'on' };
+  }
+  if (known) return { state: 'on' };
+
+  // Marcus has never heard of this device, or has forgotten it. The browser holds
+  // the only copy of the endpoint, so this is the one moment it can be handed
+  // back -- and POST /api/push/subscribe is idempotent, which is what makes a
+  // silent repair the right thing rather than a hidden write.
+  try {
+    const res = await fetchFn('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res && res.ok) return { state: 'on' };
+  } catch {
+    /* fall through to the honest answer below */
+  }
+  // The repair failed, so nothing will be delivered to this phone. 'off' is the
+  // true state and tapping the toggle re-runs the whole enable path.
+  return { state: 'off' };
 }
 
 async function enableReminders(deps) {
