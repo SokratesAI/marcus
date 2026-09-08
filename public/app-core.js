@@ -1317,6 +1317,46 @@ function measurementSeries(records, siteKey) {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
+// A Chart.js category axis puts one slot on the x-axis per point it is given,
+// so two weigh-ins a week apart and two a day apart are drawn the same distance
+// apart. Every line on the Progress tab was built that way, which made its
+// slope a function of how often he logged rather than of what changed -- and
+// what changed is the only thing those charts exist to show. `dailySeries`
+// returns one slot per calendar day between the first reading and the last, so
+// horizontal distance is time again.
+//
+// A day with no reading is `null`, never `0`. A zero is a claim that he weighed
+// nothing, or ate nothing, on a day he simply did not open the app. Chart.js
+// draws a line straight across a null when `spanGaps` is on, which is the
+// honest picture: the value between two readings is unknown, and now the gap is
+// at least the right width.
+//
+// Two readings on one day is the user correcting himself, so the later one in
+// the sorted order wins rather than both being plotted.
+function dailySeries(points) {
+  const clean = (Array.isArray(points) ? points : [])
+    .filter(p => p && typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && typeof p.value === 'number' && isFinite(p.value))
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (!clean.length) return { labels: [], values: [] };
+  const byDate = {};
+  clean.forEach(p => { byDate[p.date] = p.value; });
+  const last = clean[clean.length - 1].date;
+  const labels = [];
+  const values = [];
+  // Walking a real Date by one day leaves month lengths, leap years and the
+  // spring-forward Sunday to the calendar instead of to arithmetic here.
+  const cursor = new Date(clean[0].date + 'T00:00');
+  for (;;) {
+    const iso = fmtDate(cursor);
+    labels.push(iso);
+    values.push(Object.prototype.hasOwnProperty.call(byDate, iso) ? byDate[iso] : null);
+    if (iso >= last) break;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return { labels, values };
+}
+
 // What a single reading cannot tell you is whether it is going the right way, so
 // the change since the first one is reported beside the latest. One reading is a
 // starting point and gets a null change rather than a zero -- a zero would read
