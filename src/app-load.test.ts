@@ -144,12 +144,66 @@ describe("trainingLoad", () => {
   // The one that pins the rest-day walk. If the loop only visited days that
   // have a session, the last day it saw would be the hard one two weeks back
   // and fatigue would still be high -- a taper would read as "building".
-  it("calls a two-week layoff backing off, because the empty days count as zero", () => {
+  it("lets a two-week layoff drag the ratio under 0.8, because the empty days count as zero", () => {
     const { ctx } = loadApp();
     const load = ctx.trainingLoad(everyOtherDay(90, 14, 5000), TODAY);
     expect(load.fitness).toBeGreaterThan(0);
     expect(load.ratio).toBeLessThan(0.8);
-    expect(load.verdict).toBe("backing off");
+    // The ratio is what pins the rest-day walk. The verdict is `resting`
+    // rather than `backing off` because nothing was logged inside the fatigue
+    // window at all -- see the layoff block below.
+    expect(load.verdict).toBe("resting");
+  });
+
+  // The card was telling Edvard he was "building" -- the middle of the band it
+  // describes as training hard enough to improve -- eight days after his last
+  // session. It is not an arithmetic bug: with no load at all both averages
+  // decay at their own fixed rates, so their ratio settles on a number that
+  // depends only on how long ago you stopped, and his real data lands it at
+  // 0.81. The ratio has to stop being the headline once there is no recent
+  // training for it to be about.
+  it("calls a layoff resting rather than reading the decaying ratio as a verdict", () => {
+    const { ctx } = loadApp();
+    // Deliberately the shape of Edvard's real data on 2026-09-08: about a
+    // month of steady training and then eight days of nothing. Fitness is
+    // still young, so the ratio lands at 0.82 -- inside the building band.
+    const load = ctx.trainingLoad(everyOtherDay(34, 8, 3000), TODAY);
+    expect(load.daysSinceLast).toBe(8);
+    expect(load.verdict).toBe("resting");
+    // The guard against a vacuous pass: the ratio really is inside the
+    // building band here, so the old code really would have said "building".
+    expect(load.ratio).toBeGreaterThanOrEqual(0.8);
+    expect(load.ratio).toBeLessThanOrEqual(1.3);
+    expect(ctx.loadVerdict(load.ratio, load.days)).toBe("building");
+  });
+
+  // The boundary is the product decision: `resting` means nothing was logged
+  // inside the fatigue window, so the window's own length is where it starts.
+  it("starts resting on the day the last session leaves the fatigue window", () => {
+    const { ctx } = loadApp();
+    expect(ctx.trainingLoad(everyOtherDay(35, 7, 3000), TODAY).daysSinceLast).toBe(7);
+    expect(ctx.trainingLoad(everyOtherDay(35, 7, 3000), TODAY).verdict).toBe("resting");
+    expect(ctx.LOAD_FATIGUE_DAYS).toBe(7);
+  });
+
+  it("still judges the ratio on the last day the fatigue window can still see", () => {
+    const { ctx } = loadApp();
+    const load = ctx.trainingLoad(everyOtherDay(90, 6, 3000), TODAY);
+    expect(load.daysSinceLast).toBe(6);
+    expect(load.verdict).not.toBe("resting");
+  });
+
+  it("counts days since the last session, and reports null when there are none", () => {
+    const { ctx } = loadApp();
+    expect(ctx.trainingLoad(everyOtherDay(90, 0, 3000), TODAY).daysSinceLast).toBe(0);
+    expect(ctx.trainingLoad([], TODAY).daysSinceLast).toBeNull();
+  });
+
+  it("says resting before too early, because thin history does not make a layoff a guess", () => {
+    const { ctx } = loadApp();
+    const load = ctx.trainingLoad([sess(ago(12), 3000), sess(ago(10), 3000)], TODAY);
+    expect(load.days).toBeLessThan(ctx.LOAD_MIN_DAYS);
+    expect(load.verdict).toBe("resting");
   });
 
   it("calls three months of steady training building", () => {
@@ -235,6 +289,7 @@ describe("loadVerdictLabel", () => {
     expect(ctx.loadVerdictLabel({ verdict: "nothing logged" })).toBe("no sessions logged");
     expect(ctx.loadVerdictLabel({ verdict: "too early" })).toBe("too early to judge");
     expect(ctx.loadVerdictLabel({ verdict: "load spike" })).toContain("ease off");
+    expect(ctx.loadVerdictLabel({ verdict: "resting", daysSinceLast: 9 })).toBe("no sessions in 9 days");
   });
 
   it("passes the self-explanatory ones through unchanged", () => {
@@ -260,5 +315,46 @@ describe("trainingLoadCard", () => {
     const fine = ctx.trainingLoadCard({ fitness: 100, fatigue: 100, ratio: 1, days: 90, trend: "flat", verdict: "building" });
     expect(spike).toContain("chip--alert");
     expect(fine).not.toContain("chip--alert");
+  });
+
+  it("prints how long ago the last session was, and drops the line when it was today", () => {
+    const { ctx } = loadApp();
+    const base = { fitness: 700, fatigue: 600, ratio: 0.86, days: 40, trend: "falling" };
+    const off = ctx.trainingLoadCard({ ...base, daysSinceLast: 8, verdict: "resting" });
+    expect(off).toContain("Last session");
+    expect(off).toContain("8 days ago");
+    expect(off).toContain("no sessions in 8 days");
+    const one = ctx.trainingLoadCard({ ...base, daysSinceLast: 1, verdict: "building" });
+    expect(one).toContain("1 day ago");
+    const todayCard = ctx.trainingLoadCard({ ...base, daysSinceLast: 0, verdict: "building" });
+    expect(todayCard).not.toContain("Last session");
+    const none = ctx.trainingLoadCard({ fitness: 0, fatigue: 0, ratio: 0, days: 0, daysSinceLast: null, trend: "none", verdict: "nothing logged" });
+    expect(none).not.toContain("Last session");
+  });
+
+  // The note under the numbers is the sentence that was actively wrong during
+  // a layoff: it explains the 0.8-1.3 band while the ratio sits inside it for
+  // a reason that has nothing to do with training.
+  it("stops explaining the ratio band once the ratio is only decay", () => {
+    const { ctx } = loadApp();
+    const base = { fitness: 700, fatigue: 600, ratio: 0.86, days: 40, trend: "falling" };
+    const off = ctx.trainingLoadCard({ ...base, daysSinceLast: 8, verdict: "resting" });
+    expect(off).not.toContain("without digging a hole");
+    expect(off).toContain("says nothing about now");
+    const on = ctx.trainingLoadCard({ ...base, daysSinceLast: 1, verdict: "building" });
+    expect(on).toContain("without digging a hole");
+    expect(on).not.toContain("says nothing about now");
+  });
+
+  // "7-day average" is what the line said, and with nothing logged for eight
+  // days his real 7-day average is zero while the line reads 610 kg/day. The
+  // number is right; the word for it was not.
+  it("does not call either weighted average a plain average", () => {
+    const { ctx } = loadApp();
+    const html = ctx.trainingLoadCard({ fitness: 700, fatigue: 600, ratio: 0.86, days: 40, daysSinceLast: 2, trend: "flat", verdict: "building" });
+    expect(html).not.toContain("42-day average");
+    expect(html).not.toContain("7-day average");
+    expect(html).toContain("weighted over 42 days");
+    expect(html).toContain("weighted over 7 days");
   });
 });
