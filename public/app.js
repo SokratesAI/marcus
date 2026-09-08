@@ -37,7 +37,7 @@ function renderHome() {
   const todayName = planDayName();
   const todayPlan = plan.days.find(d => d.day === todayName);
   const weights = store.get('weights', []);
-  const change = bodyweightChange(weights);
+  const change = bodyweightChange(weights, todayStr());
   const delta = change ? `${change.delta > 0 ? '+' : ''}${change.delta.toFixed(1)}kg` : '—';
   const doneToday = todayLogged(store.get('sessions', []), todayStr());
   const meals = store.get('meals', []).filter(m => m.date === todayStr());
@@ -3193,11 +3193,17 @@ function marcusReply(text) {
     return `Today's ${todayPlan.focus} day: ${todayPlan.exercises.map(e => `${e.name} ${e.sets}×${e.reps}`).join(', ')}. Let's get it.`;
   }
   if (/progress|how.*doing|going well|on track/.test(t)) {
-    const bw = bodyweightChange(weights);
+    const bw = bodyweightChange(weights, todayStr());
     const w = bw ? bw.delta.toFixed(1) : null;
     const vol = weeklyVolumes();
     const lastVol = vol.length ? Math.round(vol[vol.length-1][1]) : 0;
-    return `You're trending well — ${bw ? `bodyweight moved ${w}kg over ${bw.days} days, ` : ''}and you put up ${lastVol.toLocaleString()}kg of volume this week. Keep stacking sessions.`;
+    // The same correction the Home tile got: a delta whose last reading is old
+    // is not a trend, so the sentence says when the scale stopped rather than
+    // quoting the span as if it ran up to today.
+    const bwPhrase = !bw ? ''
+      : bw.stale ? `bodyweight moved ${w}kg, though you have not weighed in for ${bw.daysSinceLast} days, `
+      : `bodyweight moved ${w}kg over ${bw.days} days, `;
+    return `You're trending well — ${bwPhrase}and you put up ${lastVol.toLocaleString()}kg of volume this week. Keep stacking sessions.`;
   }
   if (/sore|tired|pain|hurt|exhaust/.test(t)) {
     return `Listen to that. A short easy day or extra sleep beats grinding through soreness — swap in mobility work if today's lift feels rough, and tell me if it's a specific joint.`;

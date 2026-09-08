@@ -2245,7 +2245,29 @@ function withPlanCardio(plan, dayName, cardio) {
 // wrong reading at weights[0]. Fewer than two readings on two different days is
 // no change at all rather than a change of zero, so it answers null and the
 // caller shows a dash.
-function bodyweightChange(weights) {
+// A reading is stale once the gap since the last weigh-in is more than twice
+// the gap this log normally runs at. There is no fixed number of days here on
+// purpose: the same three-day gap is nothing for someone who weighs weekly and
+// a full stop for someone who weighs every morning, so the log's own median gap
+// is the scale. Edvard's log is a weigh-in every 2 days, so it goes stale after
+// 4 -- and on 2026-09-08 it had been 9, while the tile still read "-2.1kg
+// weight change over 26 days" as if that were the current trend.
+const BW_STALE_GAP_FACTOR = 2;
+
+function medianGapDays(sortedISO) {
+  const gaps = [];
+  for (let i = 1; i < sortedISO.length; i++) gaps.push(daysBetween(sortedISO[i - 1], sortedISO[i]));
+  if (!gaps.length) return null;
+  gaps.sort((a, b) => a - b);
+  const mid = Math.floor(gaps.length / 2);
+  const median = gaps.length % 2 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+  // Two readings typed on the same day are a gap of 0, and a cadence of 0 would
+  // call every reading stale the day after it was taken. A day is the shortest
+  // cadence the date field can express, so that is the floor.
+  return Math.max(1, median);
+}
+
+function bodyweightChange(weights, todayISO) {
   const dated = (weights || []).filter(w => w && w.date && typeof w.kg === 'number');
   if (dated.length < 2) return null;
   const sorted = dated.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -2255,12 +2277,27 @@ function bodyweightChange(weights) {
   const days = Math.round(
     (Date.parse(last.date + 'T00:00:00Z') - Date.parse(first.date + 'T00:00:00Z')) / 86400000
   );
-  return { delta: last.kg - first.kg, fromISO: first.date, toISO: last.date, days };
+  // `todayISO` is optional so a caller that has no clock still gets the delta
+  // and the span; what it cannot get is the staleness, and null says so rather
+  // than defaulting to "fresh".
+  const today = todayISO || null;
+  const daysSinceLast = today ? Math.max(0, daysBetween(last.date, today)) : null;
+  const typicalGap = medianGapDays(sorted.map(w => w.date));
+  const stale = daysSinceLast !== null && typicalGap !== null
+    && daysSinceLast > typicalGap * BW_STALE_GAP_FACTOR;
+  return { delta: last.kg - first.kg, fromISO: first.date, toISO: last.date, days,
+           daysSinceLast, typicalGap, stale };
 }
 
 // Same number as a label, so the tile and any sentence about it cannot drift.
+// A stale reading names when it stopped instead of the span it covers: the span
+// is the less useful of the two facts once the number is no longer about now,
+// and the tile has room for one.
 function bodyweightChangeLabel(change) {
   if (!change) return 'weight change';
+  if (change.stale) {
+    return `weight change, last weighed ${change.daysSinceLast} day${change.daysSinceLast === 1 ? '' : 's'} ago`;
+  }
   return `weight change over ${change.days} day${change.days === 1 ? '' : 's'}`;
 }
 
