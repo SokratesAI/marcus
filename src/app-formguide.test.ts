@@ -21,6 +21,9 @@ function loadCore(): any {
       "\n;globalThis.FORM_GUIDE = FORM_GUIDE;" +
       "\n;globalThis.formGuide = formGuide;" +
       "\n;globalThis.formGuideBody = formGuideBody;" +
+      "\n;globalThis.BARBELL_LIFTS = BARBELL_LIFTS;" +
+      "\n;globalThis.MUSCLE_GROUPS = MUSCLE_GROUPS;" +
+      "\n;globalThis.muscleGroupFor = muscleGroupFor;" +
       "\n;globalThis.seededPlan = store.get('plan');",
     ctx,
   );
@@ -80,11 +83,13 @@ describe("formGuide lookup", () => {
     expect(app.formGuide("RDL")).toBe(app.formGuide("Romanian Deadlift"));
   });
 
-  // Front Squat is a different lift. A fuzzy matcher would hand it the back
-  // squat's cues, which is worse than handing it nothing.
+  // Front Squat is a different lift from Back Squat and now has cues of its
+  // own, so the thing to hold is that it never inherits the back squat's.
   it("does not match a different lift that contains a known name", () => {
-    expect(app.formGuide("Front Squat")).toBe(null);
+    expect(app.formGuide("Front Squat")).not.toBe(app.formGuide("Back Squat"));
+    expect(app.formGuide("Front Squat").name).toBe("Front Squat");
     expect(app.formGuide("Deadlift Variation")).toBe(null);
+    expect(app.formGuide("Squat Jump")).toBe(null);
   });
 
   it("returns null for an empty or missing name", () => {
@@ -92,6 +97,39 @@ describe("formGuide lookup", () => {
     expect(app.formGuide("   ")).toBe(null);
     expect(app.formGuide(null)).toBe(null);
     expect(app.formGuide(undefined)).toBe(null);
+  });
+});
+
+// Two tables in this file name the same lifts for different reasons, and until
+// now nothing compared them. `BARBELL_LIFTS` decides whether the Log row can
+// tell you how to load the bar; `FORM_GUIDE` decides whether that row has cues
+// AND -- through `muscleGroupFor`, which reads the guide entry's `group` and
+// nothing else -- whether the sets count toward anything on the weekly muscle
+// balance card. Front Squat was in the first table and not the second, so the
+// app could load its bar, had nothing to say about it, and counted a week of
+// them as no leg work at all.
+describe("the lift tables agree with each other", () => {
+  const app = loadCore();
+
+  it("has a form guide entry for every barbell lift, under every spelling", () => {
+    const names: string[] = [];
+    for (const lift of app.BARBELL_LIFTS) names.push(lift.name, ...(lift.aka || []));
+    expect(names.length).toBeGreaterThan(9);
+    expect(names.filter((n) => app.formGuide(n) === null)).toEqual([]);
+  });
+
+  it("counts every barbell lift toward a muscle group", () => {
+    const ungrouped = app.BARBELL_LIFTS
+      .map((lift: any) => lift.name)
+      .filter((name: string) => app.MUSCLE_GROUPS.indexOf(app.muscleGroupFor(name)) === -1);
+    expect(ungrouped).toEqual([]);
+  });
+
+  // The positive control for the two above: they are filters over a list, so
+  // both pass vacuously if the list is empty or the lookup answers everything.
+  it("still reports a lift that is in neither table", () => {
+    expect(app.formGuide("Zercher Squat")).toBe(null);
+    expect(app.muscleGroupFor("Zercher Squat")).toBe(null);
   });
 });
 

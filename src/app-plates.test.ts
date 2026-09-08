@@ -154,15 +154,15 @@ describe("isBarbellLift", () => {
     expect(app.isBarbellLift("Zercher Squat")).toBe(false);
   });
 
-  it("has a form guide for every barbell lift except Front Squat", () => {
+  it("has a form guide for every barbell lift", () => {
     const app = loadApp();
-    // Front Squat is deliberately in one table and not the other: it is a
-    // barbell lift, and the form guide deliberately gives it nothing rather
-    // than the back squat's cues. Pinning both directions here means neither
-    // table can be edited into agreeing with the other by accident.
+    // This used to pin Front Squat as deliberately absent from the guide. The
+    // reasoning behind that was about MATCHING -- a fuzzy lookup would hand it
+    // the back squat's cues -- and cues of its own answer that better, while
+    // the absence had a cost nobody had measured: `muscleGroupFor` reads the
+    // guide entry's group, so a week of front squats counted as no leg work.
     for (const e of app.BARBELL_LIFTS) {
-      if (e.name === "Front Squat") expect(app.formGuide(e.name)).toBeNull();
-      else expect(app.formGuide(e.name), e.name).not.toBeNull();
+      expect(app.formGuide(e.name), e.name).not.toBeNull();
     }
   });
 });
