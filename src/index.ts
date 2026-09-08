@@ -218,6 +218,39 @@ export function createApp(
     }
   });
 
+  // Issue: Edvard's card read "on for this device" while the server's list was
+  // empty, so the 20:00 job had nobody to send to and the test button answered
+  // 404 -- two halves of one state that nothing ever compared. `getSubscription`
+  // is the browser's half; this route is the server's, and it is the only way a
+  // phone can find out that Marcus has forgotten it before a reminder is due.
+  //
+  // Same authorisation as `/api/push/test` and for the same reason: the
+  // endpoint is a long unguessable URL the browser holds, and a caller who has
+  // it can already unsubscribe that device through DELETE. This answers strictly
+  // less than that call does. It is POST rather than GET so the endpoint stays
+  // out of access logs and referrers.
+  //
+  // It never returns the list, or a count, or any endpoint it was not given.
+  // The question is "do you have this one", and a route that answers anything
+  // wider is a route that leaks Edvard's other devices to whoever holds one.
+  app.post("/api/push/status", express.json({ limit: "16kb" }), async (req, res) => {
+    const endpoint = (req.body as { endpoint?: unknown } | undefined)?.endpoint;
+    if (typeof endpoint !== "string" || endpoint.length === 0) {
+      res.status(400).json({ error: "endpoint is required" });
+      return;
+    }
+    try {
+      const subs = await subscriptions.list();
+      res.status(200).json({ known: subs.some((s) => s.endpoint === endpoint) });
+    } catch (err) {
+      logger.error({ err }, "could not read the push subscriptions");
+      // 500 and not `{ known: false }`: an unreadable store is not the same
+      // fact as an absent device, and the phone must not re-register itself
+      // over a disk error.
+      res.status(500).json({ error: "could not read the subscriptions" });
+    }
+  });
+
   // Idea #217, second slice: the send itself. This is the route the 20:00
   // CronJob calls; it is not a route a phone calls, which is why it is the one
   // route here that needs a credential.

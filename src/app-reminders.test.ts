@@ -369,6 +369,111 @@ describe("readReminderState", () => {
   });
 });
 
+// Edvard's report, 2026-09-08: the card said "on for this device" and the
+// server's list was empty, so the 20:00 job had nobody to send to and the test
+// button answered 404. `getSubscription` alone could never have caught that --
+// the browser's answer was correct and it was not the whole state.
+describe("readReminderState against the server's own list", () => {
+  const granted = { permission: "granted" };
+
+  function deps(sub: any, fetchFn: any) {
+    return { notification: granted, registration: fakeRegistration(sub, { existing: sub }), fetchFn };
+  }
+
+  it("asks the server about this endpoint, by endpoint and not by count", async () => {
+    const sub = fakeSubscription();
+    const seen: any[] = [];
+    await loadApp().readReminderState(deps(sub, async (url: string, init?: any) => {
+      seen.push({ url, init });
+      return res(200, { known: true });
+    }));
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe("/api/push/status");
+    expect(seen[0].init.method).toBe("POST");
+    expect(JSON.parse(seen[0].init.body).endpoint).toBe("https://web.push.apple.com/abc");
+  });
+
+  it("re-registers this device when the server has no record of it, and reads on again", async () => {
+    const sub = fakeSubscription();
+    const urls: string[] = [];
+    const out = await loadApp().readReminderState(deps(sub, async (url: string, init?: any) => {
+      urls.push(url);
+      if (url === "/api/push/status") return res(200, { known: false });
+      return res(201, { subscribed: true });
+    }));
+    expect(urls).toEqual(["/api/push/status", "/api/push/subscribe"]);
+    // The whole record goes back, not just the endpoint -- the server cannot
+    // encrypt to a device whose keys it does not hold.
+    expect(out.state).toBe("on");
+  });
+
+  it("posts the keys back, not just the endpoint, when it repairs", async () => {
+    const sub = fakeSubscription();
+    let body: any = null;
+    await loadApp().readReminderState(deps(sub, async (url: string, init?: any) => {
+      if (url === "/api/push/status") return res(200, { known: false });
+      body = JSON.parse(init.body);
+      return res(201, {});
+    }));
+    expect(body.endpoint).toBe("https://web.push.apple.com/abc");
+    expect(body.keys.p256dh).toBe("x".repeat(87));
+    expect(body.keys.auth).toBe("y".repeat(22));
+  });
+
+  it("reads off when the repair itself is refused", async () => {
+    // Nothing will ever be delivered to this phone, so "on" would be the same
+    // lie the card was already telling.
+    const sub = fakeSubscription();
+    const out = await loadApp().readReminderState(deps(sub, async (url: string) =>
+      url === "/api/push/status" ? res(200, { known: false }) : res(507, { error: "full" })));
+    expect(out.state).toBe("off");
+  });
+
+  it("reads off when the repair cannot be sent at all", async () => {
+    const sub = fakeSubscription();
+    const out = await loadApp().readReminderState(deps(sub, async (url: string) => {
+      if (url === "/api/push/status") return res(200, { known: false });
+      throw new Error("offline mid-repair");
+    }));
+    expect(out.state).toBe("off");
+  });
+
+  it("stays on when the server cannot be reached, and does not try to repair", async () => {
+    // An offline app-open says nothing about this subscription. Flipping the
+    // card to off there is the same defect pointing the other way.
+    const sub = fakeSubscription();
+    const urls: string[] = [];
+    const out = await loadApp().readReminderState(deps(sub, async (url: string) => {
+      urls.push(url);
+      throw new Error("offline");
+    }));
+    expect(out.state).toBe("on");
+    expect(urls).toEqual(["/api/push/status"]);
+  });
+
+  it("stays on when the store is unreadable, rather than re-registering over a 500", async () => {
+    const sub = fakeSubscription();
+    const urls: string[] = [];
+    const out = await loadApp().readReminderState(deps(sub, async (url: string) => {
+      urls.push(url);
+      return res(500, { error: "could not read the subscriptions" });
+    }));
+    expect(out.state).toBe("on");
+    expect(urls).toEqual(["/api/push/status"]);
+  });
+
+  it("never asks the server when this browser has no subscription to ask about", async () => {
+    const urls: string[] = [];
+    const out = await loadApp().readReminderState({
+      notification: granted,
+      registration: fakeRegistration(fakeSubscription()),
+      fetchFn: async (url: string) => { urls.push(url); return res(200, { known: false }); },
+    });
+    expect(out.state).toBe("off");
+    expect(urls).toEqual([]);
+  });
+});
+
 describe("the reminders card", () => {
   it("is in the markup the Progress tab renders, with the status line and the button", () => {
     expect(APP_SOURCE).toMatch(/id="reminderStatus"/);

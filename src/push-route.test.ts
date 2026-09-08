@@ -158,3 +158,55 @@ describe("POST /api/push/send", () => {
     expect(res.body).toEqual({ sent: 0, failed: 0, pruned: 0 });
   });
 });
+
+describe("POST /api/push/status", () => {
+  it("says known for a device the store holds", async () => {
+    await subscribe("https://web.push.apple.com/known-one");
+    const res = await request(app).post("/api/push/status").send({ endpoint: "https://web.push.apple.com/known-one" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ known: true });
+  });
+
+  it("says not known for a device the store has never seen, even with others stored", async () => {
+    // The failing half of Edvard's report: the browser is subscribed and the
+    // server's list does not contain it. With another row present, a matcher
+    // that answers "is the list non-empty" passes and this one does not.
+    await subscribe("https://web.push.apple.com/some-other-phone");
+    const res = await request(app).post("/api/push/status").send({ endpoint: "https://web.push.apple.com/his-phone" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ known: false });
+  });
+
+  it("answers not known against an empty store rather than failing", async () => {
+    const res = await request(app).post("/api/push/status").send({ endpoint: "https://web.push.apple.com/anything" });
+    expect(res.status).toBe(200);
+    expect(res.body.known).toBe(false);
+  });
+
+  it("refuses a body with no endpoint", async () => {
+    expect((await request(app).post("/api/push/status").send({})).status).toBe(400);
+    expect((await request(app).post("/api/push/status").send({ endpoint: "" })).status).toBe(400);
+    expect((await request(app).post("/api/push/status").send({ endpoint: 7 })).status).toBe(400);
+  });
+
+  it("never returns another device's endpoint or the size of the list", async () => {
+    await subscribe("https://web.push.apple.com/phone-a");
+    await subscribe("https://web.push.apple.com/phone-b");
+    const res = await request(app).post("/api/push/status").send({ endpoint: "https://web.push.apple.com/phone-a" });
+    expect(Object.keys(res.body)).toEqual(["known"]);
+    expect(JSON.stringify(res.body)).not.toContain("phone-b");
+  });
+
+  it("is a 500, not a false negative, when the store cannot be read", async () => {
+    // A phone told "not known" re-registers itself. Over a disk error that is a
+    // write on top of a broken store, so the honest answer is that nobody knows.
+    const broken = createApp(new StateStore(dir), undefined, {
+      subscriptions: { async list() { throw new Error("volume gone"); } } as unknown as SubscriptionStore,
+      vapidKeys: new VapidKeyStore(dir),
+      coach: null,
+    });
+    const res = await request(broken).post("/api/push/status").send({ endpoint: "https://web.push.apple.com/x" });
+    expect(res.status).toBe(500);
+    expect(res.body.known).toBeUndefined();
+  });
+});
