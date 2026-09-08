@@ -568,13 +568,27 @@ function personalBestLabel(best) {
 // than a citation -- there is no study that puts the number at three.
 const STALL_SESSIONS = 3;
 
+// A stall is counted in sessions, so it never expires on its own: three held
+// sessions in June still read as "stuck" in September, on a lift that has not
+// been trained since. That is advice about a lift the programme no longer
+// contains, and it is the same failure the Personal bests chip and the weight
+// tile each had -- a card that knows what happened and not when. So a lift goes
+// *dormant* once the gap since its last session is more than twice the gap that
+// lift normally runs at, the same scale `bodyweightChange` uses and for the same
+// reason: a fixed number of days is wrong for a lift trained twice a week and
+// wrong again for one trained every six. The row is kept and labelled rather
+// than dropped -- the fact is still true, it is just no longer about now -- and
+// only the live ones are counted in the chip, because the chip is what asks him
+// to change something.
+const STALL_DORMANT_GAP_FACTOR = 2;
+
 // Improvement is `bestSetIsBetter`, unchanged and not re-spelled here. That is
 // the whole reason a bodyweight lift works: every Pull-Up set is 0 kg, so the
 // weight comparison ties forever and a set of 9 where the best was 8 counts as
 // getting better, which is the right answer and needs no second rule. A
 // separate "did the weight go up" test would report every calisthenic lift as
 // permanently stuck.
-function stalledLifts(sessions) {
+function stalledLifts(sessions, todayISO) {
   // Keyed on a typed exercise name -- a lift called `constructor` must not read
   // as an already-seen entry off Object.prototype, the same guard personalBests
   // and the plan proposals carry.
@@ -605,8 +619,12 @@ function stalledLifts(sessions) {
       // a row someone typed a name into and left, and counting it would report a
       // stall that never happened.
       if (!sessionBest) return;
-      const entry = seen[key] || (seen[key] = { name: ex.name, best: null, since: 0, total: 0 });
+      const entry = seen[key] || (seen[key] = { name: ex.name, best: null, since: 0, total: 0, dates: [] });
       entry.total += 1;
+      // Every session date for this lift, already in date order because
+      // `ordered` is sorted -- the cadence below is this lift's own, not the
+      // log's, so a weekly squat and a twice-weekly press age differently.
+      entry.dates.push(session.date);
       // The name shown is the most recent spelling, since exerciseKey folds case
       // and spacing and the user is looking at what they last typed.
       entry.name = ex.name;
@@ -623,15 +641,29 @@ function stalledLifts(sessions) {
     .map(function (k) { return seen[k]; })
     .filter(function (e) { return e.since >= STALL_SESSIONS; })
     .map(function (e) {
-      return { name: e.name, sessions: e.since, best: e.best, sessionsLogged: e.total };
+      const lastISO = e.dates[e.dates.length - 1];
+      // `todayISO` is optional so a caller with no clock still gets the stall
+      // count; what it cannot get is dormancy, and null says so rather than
+      // defaulting to "still training this".
+      const daysSinceLast = todayISO ? Math.max(0, daysBetween(lastISO, todayISO)) : null;
+      const typicalGap = medianGapDays(e.dates);
+      const dormant = daysSinceLast !== null && typicalGap !== null
+        && daysSinceLast > typicalGap * STALL_DORMANT_GAP_FACTOR;
+      return { name: e.name, sessions: e.since, best: e.best, sessionsLogged: e.total,
+               lastISO: lastISO, daysSinceLast: daysSinceLast, typicalGap: typicalGap,
+               dormant: dormant };
     });
-  // Longest stuck first, because that is the one to change something about;
-  // alphabetical under it so the tail does not reshuffle on every log.
+  // Live stalls first: a lift still in the programme is the one to change
+  // something about this week. Longest stuck under that, alphabetical under
+  // that so the tail does not reshuffle on every log.
   stalled.sort(function (a, b) {
+    if (a.dormant !== b.dormant) return a.dormant ? 1 : -1;
     if (a.sessions !== b.sessions) return b.sessions - a.sessions;
     return a.name.localeCompare(b.name);
   });
-  return { stalled: stalled, watched: keys.length, threshold: STALL_SESSIONS };
+  const active = stalled.filter(function (e) { return !e.dormant; }).length;
+  return { stalled: stalled, active: active, watched: keys.length,
+           threshold: STALL_SESSIONS };
 }
 
 // The number the Home card calls "day streak": consecutive days on which

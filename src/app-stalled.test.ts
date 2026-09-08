@@ -38,7 +38,8 @@ function loadApp(): any {
     APP_SOURCE +
       "\n;globalThis.stalledLifts = stalledLifts;" +
       "\n;globalThis.stalledLiftsCard = stalledLiftsCard;" +
-      "\n;globalThis.STALL_SESSIONS = STALL_SESSIONS;",
+      "\n;globalThis.STALL_SESSIONS = STALL_SESSIONS;" +
+      "\n;globalThis.STALL_DORMANT_GAP_FACTOR = STALL_DORMANT_GAP_FACTOR;",
     ctx,
   );
   return ctx;
@@ -258,7 +259,8 @@ describe("stalledLiftsCard", () => {
   it("names each stuck lift, its count and the set it is stuck on", () => {
     const app = loadApp();
     const html = app.stalledLiftsCard({
-      stalled: [{ name: "Bench Press", sessions: 3, best: { weight: 80, reps: 5, date: "2026-09-01" }, sessionsLogged: 4 }],
+      stalled: [{ name: "Bench Press", sessions: 3, best: { weight: 80, reps: 5, date: "2026-09-01" }, sessionsLogged: 4, dormant: false, daysSinceLast: 1 }],
+      active: 1,
       watched: 6,
       threshold: 3,
     });
@@ -272,7 +274,8 @@ describe("stalledLiftsCard", () => {
   it("escapes a lift name rather than rendering it as markup", () => {
     const app = loadApp();
     const html = app.stalledLiftsCard({
-      stalled: [{ name: '<img src=x onerror="boom">', sessions: 3, best: { weight: 50, reps: 5, date: "2026-09-01" }, sessionsLogged: 4 }],
+      stalled: [{ name: '<img src=x onerror="boom">', sessions: 3, best: { weight: 50, reps: 5, date: "2026-09-01" }, sessionsLogged: 4, dormant: false, daysSinceLast: 1 }],
+      active: 1,
       watched: 1,
       threshold: 3,
     });
@@ -286,6 +289,131 @@ describe("the Progress tab renders the card", () => {
   // deleting the call site would leave all of them green and put nothing on the
   // screen. This is the only thing that would fail.
   it("calls stalledLiftsCard(stalledLifts(...)) from the progress view", () => {
-    expect(APP_SOURCE).toContain("${stalledLiftsCard(stalledLifts(store.get('sessions', [])))}");
+    expect(APP_SOURCE).toContain("${stalledLiftsCard(stalledLifts(store.get('sessions', []), todayStr()))}");
+  });
+});
+
+// A stall is counted in sessions and so never expires on its own. These pin the
+// clock half: a lift dropped from the programme stalled once and is not stuck
+// now, and the chip that asks Edvard to change something must not count it.
+describe("stalledLifts knows a lift was abandoned", () => {
+  const weekly = (name: string, weight: number) => [
+    day("2026-06-01", name, [set(weight, 5)]),
+    day("2026-06-08", name, [set(weight, 5)]),
+    day("2026-06-15", name, [set(weight, 5)]),
+    day("2026-06-22", name, [set(weight, 5)]),
+  ];
+
+  it("marks a lift dormant once the gap is more than twice its own cadence", () => {
+    const app = loadApp();
+    // Weekly lift, last trained 2026-06-22. 15 days later is more than 2x7.
+    const report = app.stalledLifts(weekly("Bench Press", 80), "2026-07-07");
+    expect(report.stalled).toHaveLength(1);
+    expect(report.stalled[0].dormant).toBe(true);
+    expect(report.stalled[0].daysSinceLast).toBe(15);
+    expect(report.stalled[0].typicalGap).toBe(7);
+    expect(report.active).toBe(0);
+    // The stall itself is still reported -- the row is kept, not dropped.
+    expect(report.stalled[0].sessions).toBe(3);
+  });
+
+  it("leaves a lift still on its normal cadence active", () => {
+    const app = loadApp();
+    // 13 days is inside 2x7, so this is a late week and not an abandoned lift.
+    const report = app.stalledLifts(weekly("Bench Press", 80), "2026-07-05");
+    expect(report.stalled[0].dormant).toBe(false);
+    expect(report.active).toBe(1);
+  });
+
+  it("uses each lift's own cadence rather than the log's", () => {
+    const app = loadApp();
+    // Squat every 14 days, Press every 2. Same last date, same today: the
+    // fortnightly lift is still on schedule and the twice-weekly one is gone.
+    const sessions = [
+      day("2026-06-01", "Back Squat", [set(100, 5)]),
+      day("2026-06-15", "Back Squat", [set(100, 5)]),
+      day("2026-06-29", "Back Squat", [set(100, 5)]),
+      day("2026-07-13", "Back Squat", [set(100, 5)]),
+      day("2026-07-07", "Overhead Press", [set(50, 5)]),
+      day("2026-07-09", "Overhead Press", [set(50, 5)]),
+      day("2026-07-11", "Overhead Press", [set(50, 5)]),
+      day("2026-07-13", "Overhead Press", [set(50, 5)]),
+    ];
+    const report = app.stalledLifts(sessions, "2026-07-27");
+    const by = Object.fromEntries(report.stalled.map((r: any) => [r.name, r]));
+    expect(by["Back Squat"].dormant).toBe(false);
+    expect(by["Overhead Press"].dormant).toBe(true);
+    expect(report.active).toBe(1);
+  });
+
+  it("sorts live stalls above dormant ones however long they have been stuck", () => {
+    const app = loadApp();
+    const sessions = [
+      // Dormant, stuck for four sessions.
+      day("2026-06-01", "Old Lift", [set(60, 5)]),
+      day("2026-06-08", "Old Lift", [set(60, 5)]),
+      day("2026-06-15", "Old Lift", [set(60, 5)]),
+      day("2026-06-22", "Old Lift", [set(60, 5)]),
+      day("2026-06-29", "Old Lift", [set(60, 5)]),
+      // Live, stuck for three.
+      day("2026-07-06", "New Lift", [set(40, 5)]),
+      day("2026-07-13", "New Lift", [set(40, 5)]),
+      day("2026-07-20", "New Lift", [set(40, 5)]),
+      day("2026-07-27", "New Lift", [set(40, 5)]),
+    ];
+    const report = app.stalledLifts(sessions, "2026-07-30");
+    expect(report.stalled.map((r: any) => r.name)).toEqual(["New Lift", "Old Lift"]);
+    expect(report.stalled[1].sessions).toBeGreaterThan(report.stalled[0].sessions);
+  });
+
+  it("reports no dormancy at all when the caller has no clock", () => {
+    const app = loadApp();
+    const report = app.stalledLifts(weekly("Bench Press", 80));
+    expect(report.stalled[0].daysSinceLast).toBeNull();
+    expect(report.stalled[0].dormant).toBe(false);
+    expect(report.active).toBe(1);
+  });
+});
+
+describe("the Stuck lifts card separates the two", () => {
+  it("counts only live stalls in the chip and says none active when there are none", () => {
+    const app = loadApp();
+    const html = app.stalledLiftsCard({
+      stalled: [{ name: "Bench Press", sessions: 3, best: { weight: 80, reps: 5, date: "2026-06-22" },
+                  sessionsLogged: 4, dormant: true, daysSinceLast: 15 }],
+      active: 0,
+      watched: 6,
+      threshold: 3,
+    });
+    expect(html).toContain("none active");
+    expect(html).toContain("chip--primary");
+    expect(html).not.toContain("chip--alert");
+    expect(html).toContain("not trained for 15 days");
+    expect(html).not.toContain("3 sessions ·");
+  });
+
+  it("uses the singular for a lift last trained one day ago", () => {
+    const app = loadApp();
+    const html = app.stalledLiftsCard({
+      stalled: [{ name: "Bench Press", sessions: 3, best: { weight: 80, reps: 5, date: "2026-06-22" },
+                  sessionsLogged: 4, dormant: true, daysSinceLast: 1 }],
+      active: 0,
+      watched: 6,
+      threshold: 3,
+    });
+    expect(html).toContain("not trained for 1 day");
+    expect(html).not.toContain("1 days");
+  });
+
+  it("explains the mixed list only when there is a dormant row in it", () => {
+    const app = loadApp();
+    const live = { name: "A", sessions: 3, best: { weight: 80, reps: 5, date: "2026-07-27" },
+                   sessionsLogged: 4, dormant: false, daysSinceLast: 1 };
+    const dead = { name: "B", sessions: 3, best: { weight: 60, reps: 5, date: "2026-06-22" },
+                   sessionsLogged: 4, dormant: true, daysSinceLast: 40 };
+    const mixed = app.stalledLiftsCard({ stalled: [live, dead], active: 1, watched: 6, threshold: 3 });
+    const clean = app.stalledLiftsCard({ stalled: [live], active: 1, watched: 6, threshold: 3 });
+    expect(mixed).toContain("stopped training");
+    expect(clean).not.toContain("stopped training");
   });
 });

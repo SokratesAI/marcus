@@ -2197,13 +2197,13 @@ function stalledLiftsCard(report) {
   }
   return `
     <div class="card">
-      <div class="card__title-row"><h2>Stuck lifts</h2><span class="chip chip--alert">${report.stalled.length} of ${report.watched}</span></div>
+      <div class="card__title-row"><h2>Stuck lifts</h2><span class="chip ${report.active ? 'chip--alert' : 'chip--primary'}">${report.active ? `${report.active} of ${report.watched}` : 'none active'}</span></div>
       ${report.stalled.map(r => `
       <div class="exercise-line">
         <span>${esc(r.name)}</span>
-        <span>${r.sessions} sessions · ${esc(personalBestLabel(r.best))} · ${niceDate(r.best.date)}</span>
+        <span>${r.dormant ? `not trained for ${r.daysSinceLast} day${r.daysSinceLast === 1 ? '' : 's'}` : `${r.sessions} sessions`} · ${esc(personalBestLabel(r.best))} · ${niceDate(r.best.date)}</span>
       </div>`).join('')}
-      <p class="card__note">Sessions logged since the lift last got heavier or added a rep, and the set it has been stuck on. ${report.threshold} in a row is where holding the weight has stopped being a plan — back the weight off and build it again, or change the rep target. One or two held sessions is the progression working, not a problem.</p>
+      <p class="card__note">Sessions logged since the lift last got heavier or added a rep, and the set it has been stuck on. ${report.threshold} in a row is where holding the weight has stopped being a plan — back the weight off and build it again, or change the rep target. One or two held sessions is the progression working, not a problem.${report.active < report.stalled.length ? ` A lift you have stopped training is listed with how long it has been instead of a session count — it stalled once, but it is not stuck now.` : ''}</p>
     </div>`;
 }
 
@@ -2313,7 +2313,7 @@ function renderProgress() {
     <div class="section-title">Where you stand</div>
     ${trainingLoadCard(trainingLoad(store.get('sessions', [])))}
     ${personalBestsCard(personalBests(store.get('sessions', [])))}
-    ${stalledLiftsCard(stalledLifts(store.get('sessions', [])))}
+    ${stalledLiftsCard(stalledLifts(store.get('sessions', []), todayStr()))}
     ${muscleBalanceCard(weeklyMuscleSets(store.get('sessions', [])))}
     <div class="card">
       <h2>Bodyweight</h2>
