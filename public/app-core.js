@@ -2337,6 +2337,14 @@ function goalsSorted() {
   return store.get('goals', []).slice().sort((a, b) => a.targetDate.localeCompare(b.targetDate));
 }
 
+// The goals a drafted week should serve: every one whose day has not passed,
+// nearest first. The draft used to send goalsSorted()[0], which is one goal
+// only, and it is a goal already behind him once its target date has gone.
+function draftGoals(todayISO) {
+  const today = todayISO || todayStr();
+  return goalsSorted().filter(g => g.targetDate >= today);
+}
+
 function goalCountdown(targetISO, todayISO) {
   const days = daysBetween(todayISO || todayStr(), targetISO);
   if (days < 0) return 'target date passed';

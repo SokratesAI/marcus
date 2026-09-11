@@ -229,7 +229,7 @@ async function requestDraft() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        goal: goalsSorted()[0] || null,
+        goals: draftGoals(),
         context: {
           plan: store.get('plan'),
           sessions: store.get('sessions', []),

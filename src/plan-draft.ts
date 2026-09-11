@@ -61,18 +61,44 @@ export interface DraftGoal {
   targetDate?: unknown;
 }
 
+function describeGoal(goal: DraftGoal): string {
+  const text = String(goal.text).trim();
+  return typeof goal.targetDate === "string" && goal.targetDate ? `${text} (target date ${goal.targetDate})` : text;
+}
+
+/** Idea #209 asks for "one or more goals". The page used to send only the
+ * nearest, so a second goal reached the model as a row in the JSON dump and
+ * nothing told it the week had to serve it. Sorted here rather than trusted
+ * from the caller, because the prompt says "nearest first". */
+function goalLines(goals: DraftGoal | DraftGoal[] | null, storedGoals: unknown): string {
+  const list = (Array.isArray(goals) ? goals : goals ? [goals] : [])
+    .filter((g) => g && typeof g.text === "string" && g.text.trim().length)
+    .map((g, i) => ({ g, i, date: typeof g.targetDate === "string" && g.targetDate ? g.targetDate : "\uffff" }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.i - b.i)
+    .map(({ g }) => g);
+  if (!list.length) {
+    // The page sends only goals still ahead of him, so an empty list beside a
+    // non-empty stored list means every goal's date has passed -- which is not
+    // the same as never having set one, and the coach should say so.
+    return Array.isArray(storedGoals) && storedGoals.length
+      ? "Every goal Edvard has written has passed its target date, so build a sensible general week and suggest in the note that he sets a new goal."
+      : "Edvard has not written a goal yet, so build a sensible general week.";
+  }
+  if (list.length === 1) return `Edvard is training for: ${describeGoal(list[0])}`;
+  return [
+    `Edvard is training for ${list.length} goals at once, nearest first:`,
+    ...list.map((g) => `- ${describeGoal(g)}`),
+    "The week has to serve every one of them. Where they pull in different directions, favour the nearest target date, and say in the note what you traded off.",
+  ].join("\n");
+}
+
 /** The prompt is built here rather than in the browser for the same reason
  * `buildPrompt` is: what reaches the model is decided in one place and is
  * testable. */
-export function buildDraftPrompt(goal: DraftGoal | null, context: CoachContext): string {
-  const goalLine = goal && typeof goal.text === "string" && goal.text.trim().length
-    ? `Edvard is training for: ${goal.text.trim()}${
-        typeof goal.targetDate === "string" && goal.targetDate ? ` (target date ${goal.targetDate})` : ""
-      }`
-    : "Edvard has not written a goal yet, so build a sensible general week.";
+export function buildDraftPrompt(goals: DraftGoal | DraftGoal[] | null, context: CoachContext): string {
   return [
     "Draft one week of training for Edvard.",
-    goalLine,
+    goalLines(goals, context.goals),
     "TRAINING DATA (his own records, as stored by the app)",
     JSON.stringify(
       {
@@ -227,7 +253,7 @@ export type DraftResult =
   | { status: "unusable"; reason: string };
 
 export async function draftWeek(
-  goal: DraftGoal | null,
+  goal: DraftGoal | DraftGoal[] | null,
   context: CoachContext,
   deps: {
     config: CoachConfig | null;
