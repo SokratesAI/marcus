@@ -39,12 +39,21 @@ describe("phasePosition", () => {
   });
 
   it("says when this is the last week of a phase, so the week can lead into the next", () => {
-    expect(phasePosition(TRIATHLON, "2026-10-05")).toContain("last week of Base, so let it lead into Build");
+    const line = phasePosition(TRIATHLON, "2026-10-06");
+    expect(line).toContain("week 6 of 6 of the Base phase");
+    expect(line).toContain("last week of Base, so let it lead into Build");
+  });
+
+  it("never calls a week the last one while its own count says another follows", () => {
+    // Base is 40 days, so its sixth week is five days long and the fifth ends six days before the phase does.
+    const line = phasePosition(TRIATHLON, "2026-10-04");
+    expect(line).toContain("week 5 of 6 of the Base phase");
+    expect(line).not.toContain("last week");
   });
 
   it("says the taper runs up to the target day rather than naming a phase that does not exist", () => {
-    const line = phasePosition(TRIATHLON, "2026-12-01");
-    expect(line).toContain("Taper phase");
+    const line = phasePosition(TRIATHLON, "2026-12-05");
+    expect(line).toContain("week 2 of 2 of the Taper phase");
     expect(line).toContain("it runs up to the target day");
     expect(line).toContain("last week before the target day");
   });

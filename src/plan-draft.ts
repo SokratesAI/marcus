@@ -108,12 +108,13 @@ export function phasePosition(goal: DraftGoal, todayISO: string): string | null 
   const start = index > 0 ? dayAfter(phases[index - 1].date) : isoDay(goal.created);
   const about = phase.note ? ` (${phase.note})` : "";
   let line = `This week is in the ${phase.label} phase${about}, which ends ${phase.date}`;
+  // With a start day the week count decides; without one, the calendar does.
   let lastWeek = daysBetween(todayISO, phase.date) < 7;
   if (start && start <= todayISO) {
     const weeks = Math.max(1, Math.ceil((daysBetween(start, phase.date) + 1) / 7));
     const week = Math.min(weeks, Math.floor(daysBetween(start, todayISO) / 7) + 1);
     line = `This is week ${week} of ${weeks} of the ${phase.label} phase${about}, which ends ${phase.date}`;
-    lastWeek = lastWeek || week === weeks;
+    lastWeek = week === weeks;
   }
   const next = phases[index + 1];
   line += next ? `; ${next.label} follows until ${next.date}.` : "; it runs up to the target day.";

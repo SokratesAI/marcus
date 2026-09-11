@@ -491,7 +491,8 @@ export function createApp(
     // `goals` is every goal still ahead of him; `goal` is the one-goal body a
     // page cached before idea #209's multi-goal change still sends.
     // `today` is his own calendar day as the page reads it; the server's clock
-    // is UTC and would put a goal a phase early for two hours every night.
+    // is UTC and would put a goal a phase early for the hour or two after his
+    // midnight (one in winter, two in summer).
     const { goal, goals, context, today } = req.body as {
       goal?: unknown;
       goals?: unknown;
