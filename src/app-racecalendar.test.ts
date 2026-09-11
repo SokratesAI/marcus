@@ -1,6 +1,7 @@
 import { APP_SOURCE } from "./app-source.js";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
+import { phasePosition } from "./plan-draft.js";
 
 // Same vm shape as app-weektarget.test.ts: raceCalendar takes a goal and a day
 // and returns rows -- no DOM node is touched.
@@ -79,6 +80,26 @@ describe("raceCalendar", () => {
       expect(list.map((r: any) => r.week)).toEqual(list.map((_: any, i: number) => i + 1));
       expect(list.every((r: any) => r.weeks === list.length)).toBe(true);
     }
+  });
+
+  it("agrees with the coach's draft line about this week, on every day of a goal", () => {
+    // The Plan tab lists the weeks and a drafted week tells the coach where it
+    // sits; the two used to count a mid-week phase start differently, so the
+    // coach heard "week 2 of 6" while the list said "week 1 of 5".
+    const app = loadApp();
+    const made = app.validateGoal("Olympic triathlon", "2026-11-23", TODAY);
+    const nextDay = (d: string) => new Date(Date.parse(d + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
+    let compared = 0;
+    for (const g of [made.goal, goal()]) {
+      for (let d = g.created; d <= g.targetDate; d = nextDay(d)) {
+        const row = app.raceCalendar(g, d)[0];
+        expect(row.week).not.toBe(null);
+        expect(phasePosition(g, d)).toContain(`week ${row.week} of ${row.weeks} of the ${row.phase} phase`);
+        compared++;
+      }
+    }
+    // Both goals run from their created day to the race, so this is every day of both.
+    expect(compared).toBeGreaterThan(100);
   });
 
   it("names a phase shorter than a week in the row it starts in", () => {

@@ -2058,8 +2058,9 @@ function raceCalendar(goal, todayISO) {
       // to the phase its Monday is in, so a phase that starts mid-week owns
       // from the next Monday -- unless it has already started this week, when
       // this row (judged on today) is its first. Counting from the phase's
-      // first day instead, as the one-week draft line does, starts such a phase
-      // at "week 2" on this list.
+      // first day instead starts such a phase at "week 2" on this list. The
+      // coach's draft line (phasePosition in src/plan-draft.ts) counts the same
+      // way, and a test holds the two to the same answer on every day.
       if (from && from <= ref) {
         const thisMonday = weekStartOf(today);
         let first = weekStartOf(shiftDay(from, 6));
