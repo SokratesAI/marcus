@@ -76,8 +76,17 @@ function daysBetween(fromISO: string, toISO: string): number {
   return Math.round((Date.parse(toISO + "T00:00:00Z") - Date.parse(fromISO + "T00:00:00Z")) / 86400000);
 }
 
+function shiftDay(iso: string, days: number): string {
+  return new Date(Date.parse(iso + "T00:00:00Z") + days * 86400000).toISOString().slice(0, 10);
+}
+
 function dayAfter(iso: string): string {
-  return new Date(Date.parse(iso + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
+  return shiftDay(iso, 1);
+}
+
+/** Monday of the week containing `iso`, in UTC -- the page's weekStartOf. */
+function mondayOf(iso: string): string {
+  return shiftDay(iso, -((new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7));
 }
 
 interface Phase {
@@ -111,8 +120,16 @@ export function phasePosition(goal: DraftGoal, todayISO: string): string | null 
   // With a start day the week count decides; without one, the calendar does.
   let lastWeek = daysBetween(todayISO, phase.date) < 7;
   if (start && start <= todayISO) {
-    const weeks = Math.max(1, Math.ceil((daysBetween(start, phase.date) + 1) / 7));
-    const week = Math.min(weeks, Math.floor(daysBetween(start, todayISO) / 7) + 1);
+    // Counted over the Mondays the phase owns, the rule the Plan tab's "every
+    // week to the race" list (raceCalendar in public/app.js) uses, so the coach
+    // and the list never disagree about the same week. A phase that starts
+    // mid-week owns from the next Monday, unless it has already started this
+    // week, when this week is its first.
+    const thisMonday = mondayOf(todayISO);
+    let first = mondayOf(shiftDay(start, 6));
+    if (first > thisMonday) first = thisMonday;
+    const weeks = Math.max(1, Math.floor(daysBetween(first, mondayOf(phase.date)) / 7) + 1);
+    const week = Math.min(weeks, Math.floor(daysBetween(first, thisMonday) / 7) + 1);
     line = `This is week ${week} of ${weeks} of the ${phase.label} phase${about}, which ends ${phase.date}`;
     lastWeek = week === weeks;
   }

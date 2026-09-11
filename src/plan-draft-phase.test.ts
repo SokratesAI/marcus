@@ -21,16 +21,20 @@ const TRIATHLON = {
 };
 
 describe("phasePosition", () => {
-  it("names the week of the phase he is in, counted from the day the goal was set", () => {
+  it("names the week of the phase he is in, counted over the Mondays since the goal was set", () => {
+    // Set on a Tuesday, so Base owns from Monday 09-07 to Monday 10-05.
     const line = phasePosition(TRIATHLON, "2026-09-15");
-    expect(line).toContain("week 3 of 6 of the Base phase (Build the foundation.)");
+    expect(line).toContain("week 2 of 5 of the Base phase (Build the foundation.)");
     expect(line).toContain("ends 2026-10-10");
     expect(line).toContain("Build follows until 2026-11-10");
     expect(line).not.toContain("last week");
   });
 
   it("starts a later phase the day after the one before it ends", () => {
-    expect(phasePosition(TRIATHLON, "2026-10-11")).toContain("week 1 of 5 of the Build phase");
+    // Build starts on Sunday 10-11, so on that day its first week is the one it started in.
+    expect(phasePosition(TRIATHLON, "2026-10-11")).toContain("week 1 of 6 of the Build phase");
+    // From the Monday after, that partial week no longer shows, and Build owns five.
+    expect(phasePosition(TRIATHLON, "2026-10-12")).toContain("week 1 of 5 of the Build phase");
   });
 
   it("reads the phase you are in by the calendar, whatever order the milestones are stored in", () => {
@@ -40,20 +44,21 @@ describe("phasePosition", () => {
 
   it("says when this is the last week of a phase, so the week can lead into the next", () => {
     const line = phasePosition(TRIATHLON, "2026-10-06");
-    expect(line).toContain("week 6 of 6 of the Base phase");
+    expect(line).toContain("week 5 of 5 of the Base phase");
     expect(line).toContain("last week of Base, so let it lead into Build");
   });
 
   it("never calls a week the last one while its own count says another follows", () => {
-    // Base is 40 days, so its sixth week is five days long and the fifth ends six days before the phase does.
+    // Sunday 10-04 is six days before Base ends, but Base's last Monday (10-05) is still to come.
     const line = phasePosition(TRIATHLON, "2026-10-04");
-    expect(line).toContain("week 5 of 6 of the Base phase");
+    expect(line).toContain("week 4 of 5 of the Base phase");
     expect(line).not.toContain("last week");
   });
 
   it("says the taper runs up to the target day rather than naming a phase that does not exist", () => {
     const line = phasePosition(TRIATHLON, "2026-12-05");
-    expect(line).toContain("week 2 of 2 of the Taper phase");
+    // Taper starts on Saturday 11-28, so it owns one Monday: the race week's.
+    expect(line).toContain("week 1 of 1 of the Taper phase");
     expect(line).toContain("it runs up to the target day");
     expect(line).toContain("last week before the target day");
   });
@@ -75,7 +80,7 @@ describe("phasePosition", () => {
 describe("a drafted week knows where it sits in the progression", () => {
   it("puts the phase and the week in it beside the goal, and asks for the week to fit it", () => {
     const prompt = buildDraftPrompt(TRIATHLON, {}, "2026-09-15");
-    expect(prompt).toContain("week 3 of 6 of the Base phase");
+    expect(prompt).toContain("week 2 of 5 of the Base phase");
     expect(prompt).toContain("one step in a progression from Base through Build and Peak to Taper");
   });
 
@@ -88,7 +93,7 @@ describe("a drafted week knows where it sits in the progression", () => {
     };
     const prompt = buildDraftPrompt([TRIATHLON, squat], {}, "2026-09-15");
     expect(prompt).toContain("- Squat 140kg (target date 2026-10-20). This is week 1 of 6 of the Build phase");
-    expect(prompt).toContain("- Olympic triathlon (target date 2026-12-05). This is week 3 of 6 of the Base phase");
+    expect(prompt).toContain("- Olympic triathlon (target date 2026-12-05). This is week 2 of 5 of the Base phase");
   });
 
   it("leaves the prompt as it was for a goal with no phases", () => {
@@ -117,7 +122,7 @@ describe("a drafted week knows where it sits in the progression", () => {
         .post("/api/plan-draft")
         .send({ goals: [TRIATHLON], today: "2026-10-11", context: {} });
       expect(res.status).toBe(200);
-      expect(calls.join("")).toContain("week 1 of 5 of the Build phase");
+      expect(calls.join("")).toContain("week 1 of 6 of the Build phase");
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
