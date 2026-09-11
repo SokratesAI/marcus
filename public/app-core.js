@@ -2211,7 +2211,11 @@ function validateGoal(rawText, rawDate, todayISO) {
   if (text.length > GOAL_MAX_CHARS) return { ok: false, message: `Keep the goal under ${GOAL_MAX_CHARS} characters.` };
   const today = todayISO || todayStr();
   const date = String(rawDate == null ? '' : rawDate).trim();
-  if (!date) return { ok: false, message: 'Give it a target date — that is what the phases are cut from.' };
+  // "Improve overall health and fitness" has no race day, and refusing it was
+  // refusing half of what idea #209 asks for. An ongoing goal has no phases --
+  // they are cut from a date -- and `targetDate: ''` is what every reader below
+  // checks for.
+  if (!date) return { ok: true, goal: { id: uid(), text, targetDate: '', created: today, milestones: [] } };
   // A date input cannot produce this, but a paste can -- and `2027-02-31` does
   // not throw, it rolls forward to 3 March. Comparing the parsed components back
   // against what was typed is what catches the roll.
@@ -2333,16 +2337,23 @@ function bodyweightChangeLabel(change) {
   return `weight change over ${change.days} day${change.days === 1 ? '' : 's'}`;
 }
 
+// An ongoing goal (no target date) sorts after every dated one: a race is the
+// thing a week has to be shaped around, and "get fitter" is served by any week.
+function goalSortKey(goal) {
+  return (goal && goal.targetDate) || '\uffff';
+}
+
 function goalsSorted() {
-  return store.get('goals', []).slice().sort((a, b) => a.targetDate.localeCompare(b.targetDate));
+  return store.get('goals', []).slice().sort((a, b) => goalSortKey(a).localeCompare(goalSortKey(b)));
 }
 
 // The goals a drafted week should serve: every one whose day has not passed,
-// nearest first. The draft used to send goalsSorted()[0], which is one goal
-// only, and it is a goal already behind him once its target date has gone.
+// nearest first, then the ongoing ones, which never pass. The draft used to send
+// goalsSorted()[0], which is one goal only, and it is a goal already behind him
+// once its target date has gone.
 function draftGoals(todayISO) {
   const today = todayISO || todayStr();
-  return goalsSorted().filter(g => g.targetDate >= today);
+  return goalsSorted().filter(g => !g.targetDate || g.targetDate >= today);
 }
 
 // The goal Home is about: the nearest one still ahead, the same goal the draft
@@ -2356,6 +2367,7 @@ function homeGoal(todayISO) {
 }
 
 function goalCountdown(targetISO, todayISO) {
+  if (!targetISO) return 'ongoing';
   const days = daysBetween(todayISO || todayStr(), targetISO);
   if (days < 0) return 'target date passed';
   if (days === 0) return 'today';

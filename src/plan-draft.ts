@@ -149,7 +149,9 @@ export function phasePosition(goal: DraftGoal, todayISO: string): string | null 
 
 function describeGoal(goal: DraftGoal, todayISO: string): string {
   const text = String(goal.text).trim();
-  const described = typeof goal.targetDate === "string" && goal.targetDate ? `${text} (target date ${goal.targetDate})` : text;
+  const described = typeof goal.targetDate === "string" && goal.targetDate
+    ? `${text} (target date ${goal.targetDate})`
+    : `${text} (an ongoing goal with no target date, so no phases: a steady week that builds toward it)`;
   const position = phasePosition(goal, todayISO);
   return position ? `${described}. ${position}` : described;
 }
