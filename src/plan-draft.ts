@@ -123,15 +123,19 @@ export function phasePosition(goal: DraftGoal, todayISO: string): string | null 
     // Counted over the Mondays the phase owns, the rule the Plan tab's "every
     // week to the race" list (raceCalendar in public/app.js) uses, so the coach
     // and the list never disagree about the same week. A phase that starts
-    // mid-week owns from the next Monday, unless it has already started this
-    // week, when this week is its first.
+    // mid-week owns from the next Monday; the days before it are its opening
+    // days and get no number, so a week's number never changes under it.
     const thisMonday = mondayOf(todayISO);
-    let first = mondayOf(shiftDay(start, 6));
-    if (first > thisMonday) first = thisMonday;
+    const first = mondayOf(shiftDay(start, 6));
     const weeks = Math.max(1, Math.floor(daysBetween(first, mondayOf(phase.date)) / 7) + 1);
-    const week = Math.min(weeks, Math.floor(daysBetween(first, thisMonday) / 7) + 1);
-    line = `This is week ${week} of ${weeks} of the ${phase.label} phase${about}, which ends ${phase.date}`;
-    lastWeek = week === weeks;
+    if (first <= thisMonday) {
+      const week = Math.min(weeks, Math.floor(daysBetween(first, thisMonday) / 7) + 1);
+      line = `This is week ${week} of ${weeks} of the ${phase.label} phase${about}, which ends ${phase.date}`;
+      lastWeek = week === weeks;
+    } else {
+      line = `This week holds the opening days of the ${phase.label} phase${about}, which began ${start} and ends ${phase.date}`;
+      if (first <= phase.date) line += `; its week 1 of ${weeks} starts ${first}`;
+    }
   }
   const next = phases[index + 1];
   line += next ? `; ${next.label} follows until ${next.date}.` : "; it runs up to the target day.";

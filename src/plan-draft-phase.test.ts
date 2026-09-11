@@ -31,10 +31,38 @@ describe("phasePosition", () => {
   });
 
   it("starts a later phase the day after the one before it ends", () => {
-    // Build starts on Sunday 10-11, so on that day its first week is the one it started in.
-    expect(phasePosition(TRIATHLON, "2026-10-11")).toContain("week 1 of 6 of the Build phase");
-    // From the Monday after, that partial week no longer shows, and Build owns five.
+    // Build starts on Sunday 10-11. That day is its opening day, not a numbered
+    // week: Build owns the five Mondays from 10-12.
+    const sunday = phasePosition(TRIATHLON, "2026-10-11")!;
+    expect(sunday).toContain("opening days of the Build phase (Add intensity.), which began 2026-10-11");
+    expect(sunday).toContain("its week 1 of 5 starts 2026-10-12");
+    expect(sunday).not.toMatch(/week \d+ of \d+ of the/);
     expect(phasePosition(TRIATHLON, "2026-10-12")).toContain("week 1 of 5 of the Build phase");
+  });
+
+  it("gives the Monday after a mid-week phase start the same number on the Sunday as on the Monday", () => {
+    // Used to say week 1 of 6 on the Sunday and week 1 of 5 on the Monday, so
+    // the phase's length changed under him overnight.
+    const announced = phasePosition(TRIATHLON, "2026-10-11")!.match(/its week 1 of (\d+) starts 2026-10-12/);
+    const onMonday = phasePosition(TRIATHLON, "2026-10-12")!.match(/week 1 of (\d+) of the Build phase/);
+    expect(announced?.[1]).toBe("5");
+    expect(onMonday?.[1]).toBe(announced?.[1]);
+  });
+
+  it("names a phase that ends before its first Monday without promising a week 1", () => {
+    // A 30-day goal's Taper runs Tuesday 02-03 to race-day Wednesday 02-04, so
+    // it owns no Monday at all.
+    const tenK = {
+      text: "10 km", targetDate: "2026-02-04", created: "2026-01-05",
+      milestones: [
+        { label: "Peak", note: "", date: "2026-02-02", done: false },
+        { label: "Taper", note: "", date: "2026-02-04", done: false },
+      ],
+    };
+    const line = phasePosition(tenK, "2026-02-03")!;
+    expect(line).toContain("opening days of the Taper phase, which began 2026-02-03 and ends 2026-02-04");
+    expect(line).not.toContain("its week 1");
+    expect(line).toContain("last week before the target day");
   });
 
   it("reads the phase you are in by the calendar, whatever order the milestones are stored in", () => {
@@ -122,7 +150,8 @@ describe("a drafted week knows where it sits in the progression", () => {
         .post("/api/plan-draft")
         .send({ goals: [TRIATHLON], today: "2026-10-11", context: {} });
       expect(res.status).toBe(200);
-      expect(calls.join("")).toContain("week 1 of 6 of the Build phase");
+      // 10-11 is Build's one opening day, so only that day produces this line.
+      expect(calls.join("")).toContain("opening days of the Build phase (Add intensity.), which began 2026-10-11");
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

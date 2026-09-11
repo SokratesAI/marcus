@@ -2176,19 +2176,18 @@ function raceCalendar(goal, todayISO) {
       const from = index > 0 ? shiftDay(phases[index - 1].date, 1) : (goal.created || null);
       row.phase = phase.label;
       row.multiplier = PHASE_VOLUME[phase.label] == null ? null : PHASE_VOLUME[phase.label];
-      // Counted over the rows this phase owns, Monday to Monday. A row belongs
-      // to the phase its Monday is in, so a phase that starts mid-week owns
-      // from the next Monday -- unless it has already started this week, when
-      // this row (judged on today) is its first. Counting from the phase's
-      // first day instead starts such a phase at "week 2" on this list. The
-      // coach's draft line (phasePosition in src/plan-draft.ts) counts the same
-      // way, and a test holds the two to the same answer on every day.
+      // Counted over the Mondays this phase owns, and only those. A phase that
+      // starts mid-week owns from the next Monday; this week's row, judged on
+      // today, can already be in it, and that row carries the phase with no
+      // number. Counting that partial week as week 1 made the same calendar
+      // week read "week 2 of 6" on the Sunday and "week 1 of 5" from the Monday,
+      // and a week drafted on the Sunday kept the old label. The coach's draft
+      // line (phasePosition in src/plan-draft.ts) counts the same way, and a
+      // test holds the two to the same answer on every day.
       if (from && from <= ref) {
-        const thisMonday = weekStartOf(today);
-        let first = weekStartOf(shiftDay(from, 6));
-        if (first > thisMonday && from <= today) first = thisMonday;
+        const first = weekStartOf(shiftDay(from, 6));
         row.weeks = Math.max(1, Math.floor(daysBetween(first, weekStartOf(phase.date)) / 7) + 1);
-        row.week = Math.max(1, Math.min(row.weeks, Math.floor(daysBetween(first, k) / 7) + 1));
+        if (k >= first) row.week = Math.min(row.weeks, Math.floor(daysBetween(first, k) / 7) + 1);
       }
     }
     weeks.push(row);
