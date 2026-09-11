@@ -1,7 +1,7 @@
 import { APP_SOURCE } from "./app-source.js";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
-import { buildDraftPrompt } from "./plan-draft.js";
+import { buildDraftPrompt, weekTargetLine } from "./plan-draft.js";
 
 // Idea #209: "Improve overall health and fitness" is his own example of a goal,
 // and it has no race day. Same vm shape as app-plandraft-today.test.ts, except
@@ -103,15 +103,63 @@ describe("a goal with no target date", () => {
     const app = loadApp([]);
     run(app, `store.set('goals', [{ id: 'a', text: 'Improve overall health and fitness', targetDate: '', created: '2026-09-01', milestones: [] }])`);
     const week = run(app, "homeWeekTarget('2026-09-11')");
-    expect(week.reason).toBe("ongoing goal");
-    expect(week.note).toBe("That goal has no target date, so there are no phases to size the week from.");
-    expect(week.phase).toBe(null);
+    // Its own phase, with no end date -- not `null`, which is what hid the
+    // whole week card, and not one of the four periodised phases.
+    expect(week.phase).toBe("Ongoing");
+    expect(week.phaseEnds).toBe(null);
+    expect(week.multiplier).toBe(1);
     // A dated goal every phase of which is behind him still says that, and a
     // store with no goal at all still says there is no goal.
     run(app, `store.set('goals', [{ id: 'b', text: '10 km', targetDate: '2026-09-05', created: '2026-08-01', milestones: [{ label: 'Peak', note: '', date: '2026-09-05', done: false }] }])`);
     expect(run(app, "homeWeekTarget('2026-09-11')").reason).toBe("phases done");
+    expect(run(app, "homeWeekTarget('2026-09-11')").phase).toBe(null);
     run(app, `store.set('goals', [])`);
     expect(run(app, "homeWeekTarget('2026-09-11')").reason).toBe("no goal");
+  });
+
+  // Two weeks of sessions, so the baseline rule (WEEK_MIN_BASELINE_WEEKS) is
+  // satisfied and a real kilogram target can be reached.
+  const withTwoLoggedWeeks = (app: any, goalText = "Improve overall health and fitness") =>
+    run(app, `(() => {
+      store.set('goals', [{ id: 'a', text: ${JSON.stringify(goalText)}, targetDate: '', created: '2026-08-01', milestones: [] }]);
+      store.set('sessions', [
+        { id: 's1', date: '2026-08-25', label: 'Push', exercises: [{ name: 'Bench', sets: [{ reps: 10, weight: 100 }, { reps: 10, weight: 100 }] }] },
+        { id: 's2', date: '2026-09-01', label: 'Push', exercises: [{ name: 'Bench', sets: [{ reps: 10, weight: 100 }, { reps: 10, weight: 100 }] }] },
+        { id: 's3', date: '2026-09-08', label: 'Push', exercises: [{ name: 'Bench', sets: [{ reps: 10, weight: 100 }] }] }]);
+    })()`);
+
+  it("gets a kilogram target for the week instead of an empty Home card", () => {
+    const app = loadApp([]);
+    withTwoLoggedWeeks(app);
+    const week = run(app, "homeWeekTarget('2026-09-11')");
+    expect(week.reason).toBe("ok");
+    expect(week.baseline).toBeGreaterThan(0);
+    // 1.00 -- an ongoing goal is held level with his own rolling average rather
+    // than ramped, because a ramp with no race to end it never stops.
+    expect(week.volumeTarget).toBe(week.baseline);
+
+    run(app, "renderHome()");
+    const home = app.nodes.view.innerHTML as string;
+    expect(home).toContain("This week");
+    expect(home).toContain(`/ ${week.volumeTarget} kg`);
+    // The heading is "Ongoing", not "Ongoing phase" -- there is no phase window
+    // to name, and no end date to print after it.
+    expect(home).toContain(">Ongoing<");
+    expect(home).not.toContain("Ongoing phase");
+    expect(home).toContain("no target date, so every week is sized the same way");
+    expect(home).not.toMatch(/NaN|Invalid Date|through undefined/);
+  });
+
+  it("tells the coach why the week is sized that way, without naming a phase", async () => {
+    const sent: string[] = [];
+    const app = loadApp(sent);
+    withTwoLoggedWeeks(app);
+    await app.requestDraft();
+    const body = JSON.parse(sent[0]);
+    const line = weekTargetLine(body.week);
+    expect(line).toContain("kg of volume");
+    expect(line).toContain("his goal has no target date, so there are no phases");
+    expect(line).not.toContain("the Ongoing phase");
   });
 
   it("says ongoing on Home, Plan and Progress instead of a countdown", () => {

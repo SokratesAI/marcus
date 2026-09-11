@@ -202,9 +202,15 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
  * "no goal" and a malformed body are all the same prompt as before. So is an
  * `ok` target of 0 kg -- an all-cardio log -- because nothing can be sized to
  * zero strength volume; the goal and phase lines still shape that week. The
- * phase must be one of the four the page has a multiplier for, since it is
- * written into the prompt. */
-const TARGET_PHASES = new Set(["Base", "Build", "Peak", "Taper"]);
+ * phase must be one the page has a multiplier for, since it is written into
+ * the prompt -- the four periodised ones, plus `Ongoing` for a goal with no
+ * target date. */
+const TARGET_PHASES = new Set(["Base", "Build", "Peak", "Taper", "Ongoing"]);
+
+/** The phase `weekTarget` gives a goal with no target date. It is not one of
+ * the four periodised phases and it has no end date, so the prompt has to say
+ * why the week is sized the way it is in different words. */
+const ONGOING_PHASE = "Ongoing";
 
 export function weekTargetLine(week: unknown, startISO?: string | null): string | null {
   if (!week || typeof week !== "object") return null;
@@ -219,10 +225,13 @@ export function weekTargetLine(week: unknown, startISO?: string | null): string 
   const lead = startISO
     ? `Sized the way his Home screen sizes a week, the week starting ${startISO} has a strength target of`
     : "His Home screen sets this week's strength target at";
+  const reason = w.phase.trim() === ONGOING_PHASE
+    ? "his goal has no target date, so there are no phases and every week is sized the same way"
+    : `${startISO ? "that week is in" : "this is"} the ${w.phase.trim()} phase`;
   return (
     `${lead} ${Math.round(w.volumeTarget)} kg of volume ` +
     `(sets x reps x kilograms, summed over the week): ${direction} his own average of ${Math.round(w.baseline)} kg ` +
-    `over the last ${weeks} completed week${weeks === 1 ? "" : "s"}, because ${startISO ? "that week is in" : "this is"} the ${w.phase.trim()} phase.`
+    `over the last ${weeks} completed week${weeks === 1 ? "" : "s"}, because ${reason}.`
   );
 }
 
