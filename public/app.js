@@ -44,7 +44,7 @@ function renderHome() {
   const kcal = meals.reduce((s, m) => s + m.calories, 0);
   // The nearest goal, and the first phase of it still outstanding -- that pair is
   // what turns a far-off date into something today can be measured against.
-  const nextGoal = goalsSorted()[0];
+  const nextGoal = homeGoal();
   const nextPhase = nextGoal && nextGoal.milestones.find(m => !m.done);
   const week = homeWeekTarget();
 
@@ -2019,7 +2019,8 @@ function weekTarget(goal, plan, sessions, todayISO) {
 // The Home card's week, and the one the Draft button sends: one call, so the
 // two screens cannot be sized from different goals or sessions.
 function homeWeekTarget(todayISO) {
-  return weekTarget(goalsSorted()[0], store.get('plan'), store.get('sessions', []), todayISO || todayStr());
+  const today = todayISO || todayStr();
+  return weekTarget(homeGoal(today), store.get('plan'), store.get('sessions', []), today);
 }
 
 // One plain sentence, so the card is not a row of numbers a reader has to know

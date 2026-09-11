@@ -2345,6 +2345,16 @@ function draftGoals(todayISO) {
   return goalsSorted().filter(g => g.targetDate >= today);
 }
 
+// The goal Home is about: the nearest one still ahead, the same goal the draft
+// puts first. goalsSorted()[0] is the OLDEST date, so once a race has passed it
+// kept deciding the week's phase while the draft had already moved on to the
+// next goal. With every goal behind him it is the latest one, so the card still
+// says its date has passed rather than going blank.
+function homeGoal(todayISO) {
+  const all = goalsSorted();
+  return draftGoals(todayISO)[0] || all[all.length - 1];
+}
+
 function goalCountdown(targetISO, todayISO) {
   const days = daysBetween(todayISO || todayStr(), targetISO);
   if (days < 0) return 'target date passed';
