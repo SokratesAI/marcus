@@ -156,7 +156,7 @@ describe("draftPreview", () => {
     const applied = app.applyDraft(PLAN, days).days;
     const rows = app.draftPreview(PLAN, days);
     rows.forEach((r: any, i: number) => {
-      const { change, ...rest } = r;
+      const { change, cardioChange, ...rest } = r;
       expect(rest).toEqual(applied[i]);
     });
   });
@@ -213,5 +213,45 @@ describe("draftCard", () => {
     expect(html).not.toContain("<img src=x>");
     expect(html).not.toContain("<b>Legs</b>");
     expect(html).toContain("&lt;b&gt;Legs&lt;/b&gt;");
+  });
+});
+
+describe("cardio the coach drafts", () => {
+  it("puts a drafted swim on its day, replacing the cardio that was there", () => {
+    const app = loadApp();
+    const next = app.applyDraft(PLAN, [
+      { day: "Tuesday", focus: "Swim", exercises: [], cardio: { activity: "Swim", minutes: 45 } },
+    ]);
+    const tuesday = next.days.find((d: any) => d.day === "Tuesday");
+    expect(tuesday.cardio).toEqual({ activity: "Swim", minutes: 45 });
+  });
+
+  it("keeps his own cardio on a drafted day the coach gave none", () => {
+    const app = loadApp();
+    const next = app.applyDraft(PLAN, [{ day: "Tuesday", focus: "Pull", exercises: [] }]);
+    expect(next.days.find((d: any) => d.day === "Tuesday").cardio).toEqual({ activity: "Run", minutes: 30 });
+  });
+
+  it("adds cardio to a day that had none", () => {
+    const app = loadApp();
+    const next = app.applyDraft(PLAN, [
+      { day: "Wednesday", focus: "Bike", exercises: [], cardio: { activity: "Bike", minutes: 60 } },
+    ]);
+    expect(next.days.find((d: any) => d.day === "Wednesday").cardio).toEqual({ activity: "Bike", minutes: 60 });
+  });
+
+  it("labels drafted cardio new and his own kept, on the card he accepts from", () => {
+    const app = loadApp();
+    const days = [
+      { day: "Monday", focus: "Run", exercises: [], cardio: { activity: "Run", minutes: 40 } },
+      { day: "Tuesday", focus: "Pull", exercises: [] },
+    ];
+    const rows = app.draftPreview(PLAN, days);
+    expect(rows.find((d: any) => d.day === "Monday").cardioChange).toBe("drafted");
+    expect(rows.find((d: any) => d.day === "Tuesday").cardioChange).toBe("kept");
+    expect(rows.find((d: any) => d.day === "Wednesday").cardioChange).toBeNull();
+    const html = app.draftCard(PLAN, { days, note: "" });
+    expect(html).toContain("40 min &middot; new");
+    expect(html).toContain("30 min &middot; kept");
   });
 });

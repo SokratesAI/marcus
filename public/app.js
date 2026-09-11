@@ -1787,8 +1787,10 @@ let planDraftBusy = false;
 // Pure: a plan and the coach's days in, a new plan out. A day the draft does
 // not name becomes a rest day rather than keeping last week's exercises --
 // "here is your week" has to mean the whole week, or the days it left out read
-// as ones it endorsed. Cardio is kept either way, because Edvard put it there
-// himself and the coach was never asked about it.
+// as ones it endorsed. Cardio the coach drafts goes on its day, replacing what
+// was there; a day it drafted no cardio for keeps Edvard's own, because he put
+// it there himself and a draft that says nothing about it has not asked to
+// take it away.
 function applyDraft(plan, days) {
   const next = JSON.parse(JSON.stringify(plan || {}));
   const drafted = days || [];
@@ -1797,10 +1799,12 @@ function applyDraft(plan, days) {
     // Spreading the existing day first is what keeps its cardio: only focus and
     // exercises are ever overwritten, on a drafted day and on a cleared one.
     if (!match) return Object.assign({}, d, { focus: 'Rest', exercises: [] });
-    return Object.assign({}, d, {
+    const day = Object.assign({}, d, {
       focus: match.focus,
       exercises: (match.exercises || []).map(e => ({ name: e.name, sets: e.sets, reps: e.reps })),
     });
+    if (match.cardio) day.cardio = { activity: match.cardio.activity, minutes: match.cardio.minutes };
+    return day;
   });
   return next;
 }
@@ -1817,7 +1821,11 @@ function draftPreview(plan, days) {
   return after.map((d, i) => {
     const named = (days || []).some(x => x && x.day === d.day);
     const had = ((before[i] && before[i].exercises) || []).length > 0;
-    return Object.assign({}, d, { change: named ? 'drafted' : (had ? 'cleared' : 'rest') });
+    const draftedCardio = (days || []).some(x => x && x.day === d.day && x.cardio);
+    return Object.assign({}, d, {
+      change: named ? 'drafted' : (had ? 'cleared' : 'rest'),
+      cardioChange: d.cardio ? (draftedCardio ? 'drafted' : 'kept') : null,
+    });
   });
 }
 
@@ -1838,7 +1846,7 @@ function draftCard(plan, draft) {
               <span class="plan-day__focus">${esc(d.focus)}${d.change === 'cleared' ? ' &middot; cleared' : ''}</span>
             </div>
             ${d.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}\u00d7${e.reps}</span></div>`).join('')}
-            ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min &middot; kept</span></div>` : ``}
+            ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min &middot; ${d.cardioChange === 'drafted' ? 'new' : 'kept'}</span></div>` : ``}
             ${d.change === 'cleared' ? `<div class="exercise-line exercise-line--cleared"><span>Marcus left this day out, so what is on it now goes</span></div>` : ``}
           </div>`).join('')}
         <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> Use this week</button>
