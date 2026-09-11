@@ -258,9 +258,15 @@ export function calendarWeekLine(row: unknown): string | null {
   const phase = typeof r.phase === "string" && r.phase.trim() ? r.phase.trim() : null;
   const counted = Number.isInteger(r.week) && Number.isInteger(r.weeks)
     && (r.week as number) >= 1 && (r.week as number) <= (r.weeks as number);
-  const position = phase
-    ? counted ? `week ${r.week} of ${r.weeks} of the ${phase} phase` : `in the ${phase} phase`
-    : "outside every phase";
+  // An ongoing goal's rows all carry the same phase and no week number, so
+  // "in the Ongoing phase" would name a phase that does not exist -- the goal
+  // has none. Say why the week is the way it is instead, in the same words
+  // weekTargetLine uses for it.
+  const position = phase === ONGOING_PHASE
+    ? "no different from any other: his goal has no target date, so there are no phases"
+    : phase
+      ? counted ? `week ${r.week} of ${r.weeks} of the ${phase} phase` : `in the ${phase} phase`
+      : "outside every phase";
   return (
     `Draft the week starting ${start}, not the current week: in the plan for ${r.goal.trim()}, that week is ${position}` +
     (r.raceWeek === true ? ", and it is the race week." : ".")
