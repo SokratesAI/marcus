@@ -353,6 +353,24 @@ function applyDueWeek() {
   return true;
 }
 
+// A phone left open on Sunday and picked up on Monday never taps a tab, so the
+// check in switchTab alone leaves last week on screen until one is tapped.
+// Coming back to the foreground is the moment the app is next looked at.
+function applyDueWeekOnVisible(doc, apply, redraw) {
+  if (!doc || typeof doc.addEventListener !== 'function') return;
+  doc.addEventListener('visibilitychange', () => {
+    if (doc.visibilityState !== 'visible') return;
+    if (apply()) redraw();
+  });
+}
+
+// Only the tabs that draw the plan are redrawn. Log and Food may hold a
+// half-typed entry, and the stored plan has already changed underneath them.
+const PLAN_TABS = ['home', 'plan'];
+function redrawPlanTab() {
+  if (PLAN_TABS.indexOf(currentTab) !== -1) switchTab(currentTab);
+}
+
 function dropWeekAhead(start) {
   const all = store.get('plannedWeeks', []);
   all.filter(w => w && w.start === start).forEach(w => recordDeletion('plannedWeeks', w.id));
@@ -3922,6 +3940,7 @@ document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !termS
 switchTab('home');
 adoptServerCopyOnBoot().catch(() => {});
 retryWhenBackOnline(window, document, retryServerSyncNow);
+applyDueWeekOnVisible(document, applyDueWeek, redrawPlanTab);
 document.getElementById('updateReload')?.addEventListener('click', () => window.location.reload());
 if ('serviceWorker' in navigator) {
   watchForUpdate(navigator.serviceWorker, showUpdateBanner);
