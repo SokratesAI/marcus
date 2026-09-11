@@ -70,13 +70,20 @@ function describeGoal(goal: DraftGoal): string {
  * nearest, so a second goal reached the model as a row in the JSON dump and
  * nothing told it the week had to serve it. Sorted here rather than trusted
  * from the caller, because the prompt says "nearest first". */
-function goalLines(goals: DraftGoal | DraftGoal[] | null): string {
+function goalLines(goals: DraftGoal | DraftGoal[] | null, storedGoals: unknown): string {
   const list = (Array.isArray(goals) ? goals : goals ? [goals] : [])
     .filter((g) => g && typeof g.text === "string" && g.text.trim().length)
     .map((g, i) => ({ g, i, date: typeof g.targetDate === "string" && g.targetDate ? g.targetDate : "\uffff" }))
     .sort((a, b) => a.date.localeCompare(b.date) || a.i - b.i)
     .map(({ g }) => g);
-  if (!list.length) return "Edvard has not written a goal yet, so build a sensible general week.";
+  if (!list.length) {
+    // The page sends only goals still ahead of him, so an empty list beside a
+    // non-empty stored list means every goal's date has passed -- which is not
+    // the same as never having set one, and the coach should say so.
+    return Array.isArray(storedGoals) && storedGoals.length
+      ? "Every goal Edvard has written has passed its target date, so build a sensible general week and suggest in the note that he sets a new goal."
+      : "Edvard has not written a goal yet, so build a sensible general week.";
+  }
   if (list.length === 1) return `Edvard is training for: ${describeGoal(list[0])}`;
   return [
     `Edvard is training for ${list.length} goals at once, nearest first:`,
@@ -91,7 +98,7 @@ function goalLines(goals: DraftGoal | DraftGoal[] | null): string {
 export function buildDraftPrompt(goals: DraftGoal | DraftGoal[] | null, context: CoachContext): string {
   return [
     "Draft one week of training for Edvard.",
-    goalLines(goals),
+    goalLines(goals, context.goals),
     "TRAINING DATA (his own records, as stored by the app)",
     JSON.stringify(
       {

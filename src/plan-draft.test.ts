@@ -58,6 +58,12 @@ describe("buildDraftPrompt", () => {
     expect(buildDraftPrompt([one], {})).toBe(buildDraftPrompt(one, {}));
   });
 
+  it("says his goals have passed, not that he never set one, when none is still ahead", () => {
+    const prompt = buildDraftPrompt([], { goals: [{ text: "Olympic triathlon", targetDate: "2026-06-01" }] });
+    expect(prompt).toContain("passed its target date");
+    expect(prompt).not.toContain("has not written a goal");
+  });
+
   it("treats a list of blank goals as no goal", () => {
     expect(buildDraftPrompt([{ text: "  " }], {})).toContain("has not written a goal");
   });
