@@ -182,7 +182,7 @@ function renderPlan() {
     renderPlan();
   });
 
-  // Wrapped: a bare listener hands requestDraft the click event as a goal id.
+  // Wrapped so requestDraft gets no arguments; it also ignores a click event.
   document.getElementById('draftWeek').addEventListener('click', () => requestDraft());
 
   document.getElementById('addPlanCardio').addEventListener('click', () => {
@@ -252,6 +252,7 @@ async function requestDraft(goalId, start) {
   const fromRow = typeof goalId === 'string';
   const row = fromRow ? calendarRow(goalId, start) : null;
   if (fromRow && !row) { toast('That week is no longer on the calendar'); return; }
+  if (row) raceCalendarOpen = goalId;
   planDraftBusy = true;
   renderPlan();
   try {
@@ -1822,6 +1823,9 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
 // agreed to.
 let planDraft = null;
 let planDraftBusy = false;
+// The goal whose "every week to the race" list a row's Draft button was tapped
+// in, so the re-render that shows the busy state does not fold that list shut.
+let raceCalendarOpen = null;
 
 // Pure: a plan and the coach's days in, a new plan out. A day the draft does
 // not name becomes a rest day rather than keeping last week's exercises --
@@ -1889,7 +1893,8 @@ function draftCard(plan, draft) {
             ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min &middot; ${d.cardioChange === 'drafted' ? 'new' : 'kept'}</span></div>` : ``}
             ${d.change === 'cleared' ? `<div class="exercise-line exercise-line--cleared"><span>Marcus left this day out, so what is on it now goes</span></div>` : ``}
           </div>`).join('')}
-        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> Use this week</button>
+        ${draft.weekOf ? `<p class="card__note">Marcus keeps one weekly plan, so using this replaces the week you are on now.</p>` : ``}
+        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> ${draft.weekOf ? 'Use it as my plan now' : 'Use this week'}</button>
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="discardDraft()">Discard</button>
       </div>`;
 }
@@ -2125,7 +2130,7 @@ function volumeChangeLabel(multiplier) {
 function raceCalendarBlock(weeks, goalId) {
   if (!weeks.length) return '';
   return `
-    <details class="race-calendar" style="margin:8px 0">
+    <details class="race-calendar" style="margin:8px 0"${goalId && goalId === raceCalendarOpen ? ' open' : ''}>
       <summary>Every week to the race (${weeks.length})</summary>
       ${weeks.map((w, i) => `
         <div class="exercise-line">

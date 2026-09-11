@@ -83,6 +83,8 @@ describe("buildDraftPrompt with a calendar row", () => {
     expect(rowAt).toBeGreaterThan(goalAt);
     expect(prompt).toContain('shape it for the week in the "Draft the week starting" line above, not for the current week');
     expect(prompt).not.toContain("shape it for the phase and the week in it named above");
+    // With two goals the goal lines say "favour the nearest"; the tapped row wins.
+    expect(prompt).toContain("that goal's week comes first");
   });
 
   it("sizes the kilogram target for that week, not this one", () => {

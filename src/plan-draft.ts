@@ -269,7 +269,7 @@ export function buildDraftPrompt(
   const calendar = calendarWeekLine(calendarWeek);
   const progression = calendar
     ? [
-        '- The week is one step in a progression from Base through Build and Peak to Taper: shape it for the week in the "Draft the week starting" line above, not for the current week, and name that phase and week in the note.',
+        '- The week is one step in a progression from Base through Build and Peak to Taper: shape it for the week in the "Draft the week starting" line above, not for the current week, and name that phase and week in the note. Where his goals pull in different directions, that goal\'s week comes first.',
       ]
     : phased
     ? [

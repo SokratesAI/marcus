@@ -103,6 +103,21 @@ describe("a calendar row's Draft button", () => {
     const html: string = vm.runInContext("draftCard(store.get('plan'), planDraft)", app);
     expect(html).toContain(`Marcus's week of ${vm.runInContext(`niceDate('${build.start}')`, app)}`);
     expect(html).toContain(`Drafted for Build week 2 of ${build.weeks}`);
+    // One weekly plan: accepting a later week replaces this one, and says so.
+    expect(html).toContain("Use it as my plan now");
+    expect(html).toContain("replaces the week you are on now");
+    expect(html).not.toContain("Use this week");
+  });
+
+  it("keeps the tapped goal's list open through the re-render, and only that one", async () => {
+    const app = loadApp([]);
+    const closed: string = vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app);
+    expect(closed).toContain('<details class="race-calendar" style="margin:8px 0">');
+    await app.requestDraft("g1", rows(app)[1].start);
+    expect(vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app))
+      .toContain('<details class="race-calendar" style="margin:8px 0" open>');
+    expect(vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'other')", app))
+      .not.toContain(" open>");
   });
 
   it("refuses this week's row and a week that is not on the calendar, sending nothing", async () => {
@@ -124,6 +139,8 @@ describe("a calendar row's Draft button", () => {
     const html: string = vm.runInContext("draftCard(store.get('plan'), planDraft)", app);
     expect(html).toContain("<h2>Marcus's week</h2>");
     expect(html).not.toContain("Drafted for");
+    expect(html).toContain("Use this week");
+    expect(html).not.toContain("Use it as my plan now");
   });
 
   it("treats a click event handed in as Draft my week, not as a goal id", async () => {
