@@ -332,10 +332,11 @@ describe("goals", () => {
       expect(r.goal.milestones.map((m: any) => m.label)).toEqual(["Base", "Build", "Peak", "Taper"]);
     });
 
-    it("refuses an empty sentence, a missing date and a date already gone", () => {
+    it("refuses an empty sentence and a date already gone", () => {
       const { ctx } = loadApp();
       expect(ctx.validateGoal("   ", "2027-07-01", "2026-08-31").message).toMatch(/what you are training for/);
-      expect(ctx.validateGoal("Run a marathon", "", "2026-08-31").message).toMatch(/target date/);
+      // A missing date is an ongoing goal now (idea #209) -- app-goal-ongoing.test.ts.
+      expect(ctx.validateGoal("Run a marathon", "", "2026-08-31").ok).toBe(true);
       expect(ctx.validateGoal("Run a marathon", "2026-08-30", "2026-08-31").message).toMatch(/in the future/);
       expect(ctx.validateGoal("Run a marathon", "2026-08-31", "2026-08-31").message).toMatch(/in the future/);
     });

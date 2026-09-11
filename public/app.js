@@ -70,6 +70,7 @@ function renderHome() {
     <div class="card">
       <div class="card__title-row"><h2>${esc(nextGoal.text)}</h2><span class="chip chip--primary">${esc(goalCountdown(nextGoal.targetDate))}</span></div>
       ${nextPhase ? `<div class="exercise-line"><span>${esc(nextPhase.label)} phase</span><span>through ${niceDate(nextPhase.date)}</span></div>`
+                  : !nextGoal.targetDate ? `<div class="empty">No target date, so no phases — every week works toward it.</div>`
                   : `<div class="empty">Every phase ticked off — target day is the only thing left.</div>`}
     </div>` : ``}
 
@@ -103,7 +104,7 @@ function renderPlan() {
     ${goals.length ? goals.map(g => `
       <div class="card" style="display:block">
         <div class="card__title-row"><h2>${esc(g.text)}</h2><span class="chip chip--primary">${esc(goalCountdown(g.targetDate))}</span></div>
-        <div style="font-size:12px;color:var(--md-on-surface-variant);margin:2px 0 8px">Target ${niceDate(g.targetDate)} · phases are cut from your dates, not coached yet</div>
+        <div style="font-size:12px;color:var(--md-on-surface-variant);margin:2px 0 8px">${g.targetDate ? `Target ${niceDate(g.targetDate)} · phases are cut from your dates, not coached yet` : `No target date · an ongoing goal, so there are no phases to cut`}</div>
         ${g.milestones.map(m => `
           <div class="exercise-line">
             <span><button class="icon-btn" onclick="toggleMilestone('${g.id}','${m.id}')"><span class="material-icons-round">${m.done ? 'check_box' : 'check_box_outline_blank'}</span></button>${esc(m.label)} — ${esc(m.note)}</span>
@@ -116,7 +117,7 @@ function renderPlan() {
     <div class="card">
       <h2>Add a goal</h2>
       <div class="field"><label>What are you training for</label><input id="goalText" type="text" placeholder="e.g. Olympic triathlon next summer"></div>
-      <div class="field"><label>Target date</label><input id="goalDate" type="date"></div>
+      <div class="field"><label>Target date (leave empty for an ongoing goal)</label><input id="goalDate" type="date"></div>
       <button class="btn btn--filled btn--block" id="addGoal"><span class="material-icons-round">flag</span> Set goal</button>
     </div>
 
@@ -2097,10 +2098,15 @@ function weekTarget(goal, plan, sessions, todayISO) {
 
   const phase = currentPhase(goal, today);
   if (!phase) {
+    // Three ways to have no phase, not two. An ongoing goal (no target date)
+    // never had phases, so "every phase date has passed" would be a false
+    // sentence about it -- and the reason is what any later reader branches on.
+    const ongoing = !!goal && !goal.targetDate;
     return Object.assign(base, {
-      reason: goal ? 'phases done' : 'no goal',
-      note: goal ? 'Every phase date has passed — the target day is the only thing left.'
-                 : 'No goal yet, so there is no phase to size the week from.',
+      reason: !goal ? 'no goal' : ongoing ? 'ongoing goal' : 'phases done',
+      note: !goal ? 'No goal yet, so there is no phase to size the week from.'
+          : ongoing ? 'That goal has no target date, so there are no phases to size the week from.'
+                    : 'Every phase date has passed — the target day is the only thing left.',
     });
   }
   const multiplier = PHASE_VOLUME[phase.label];
@@ -2430,6 +2436,16 @@ function stalledLiftsCard(report) {
 // a stalled CDN can leave it absent, and the one thing on this tab that
 // answers "am I on track" should not be the thing that disappears.
 function goalProgressCard(goal, todayISO) {
+  // An ongoing goal has no window to measure time against and no phases to
+  // tick, so both meters would be made up -- "100% of the time gone" on a goal
+  // with no end. It says what it is instead.
+  if (!goal.targetDate) {
+    return `
+    <div class="card">
+      <div class="card__title-row"><h2>${esc(goal.text)}</h2><span class="chip chip--primary">ongoing</span></div>
+      <div class="exercise-line"><span>No target date</span><span>set ${niceDate(goal.created)}</span></div>
+    </div>`;
+  }
   const p = goalProgress(goal, todayISO);
   const left = p.daysLeft < 0 ? 'target date passed'
              : p.daysLeft === 0 ? 'target day is today'
