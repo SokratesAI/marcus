@@ -1,5 +1,43 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import request from "supertest";
+import { createApp } from "./index.js";
+import { StateStore } from "./state-store.js";
 import { buildDraftPrompt, calendarWeekLine, weekTargetLine } from "./plan-draft.js";
+
+// Same fake Agora as plan-draft.test.ts's route tests: the body of every call is
+// recorded, so the test reads what actually reached the coach.
+describe("POST /api/plan-draft with a calendar row", () => {
+  let dir: string;
+  let store: StateStore;
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "marcus-draft-row-"));
+    store = new StateStore(dir);
+  });
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("carries the row the page sent through to the coach's prompt", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.push(String(init?.body ?? ""));
+      if (String(url).includes("/conversations?active=true")) {
+        return { ok: true, json: async () => [{ id: "c1", model: "claude-cli:claude-sonnet-5" }] } as Response;
+      }
+      const week = { days: [{ day: "Monday", focus: "Swim", exercises: [] }], note: "Build." };
+      return { ok: true, json: async () => ({ reply: JSON.stringify(week) }) } as Response;
+    }) as unknown as typeof globalThis.fetch;
+    const app = createApp(store, undefined, { fetchImpl, coach: { baseUrl: "http://agora", conversationId: "c1" } });
+    const res = await request(app)
+      .post("/api/plan-draft")
+      .send({ goals: [GOAL], today: "2026-09-16", context: {}, calendarWeek: ROW });
+    expect(res.status).toBe(200);
+    expect(calls.join("")).toContain("Draft the week starting 2026-10-05, not the current week");
+  });
+});
 
 const ROW = { goal: "Olympic triathlon", start: "2026-10-05", phase: "Build", week: 2, weeks: 6, raceWeek: false };
 const TARGET = { reason: "ok", phase: "Build", multiplier: 1, baseline: 3000, baselineWeeks: 3, volumeTarget: 3000 };
