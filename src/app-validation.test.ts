@@ -417,6 +417,19 @@ describe("goals", () => {
     });
   });
 
+  describe("draftGoals", () => {
+    it("hands the draft every goal still ahead, nearest first, and none that has passed", () => {
+      const { ctx } = loadApp();
+      ctx.store.set("goals", [
+        { id: "far", targetDate: "2027-07-01", milestones: [] },
+        { id: "gone", targetDate: "2026-09-10", milestones: [] },
+        { id: "today", targetDate: "2026-09-11", milestones: [] },
+        { id: "near", targetDate: "2026-10-01", milestones: [] },
+      ]);
+      expect(ctx.draftGoals("2026-09-11").map((g: any) => g.id)).toEqual(["today", "near", "far"]);
+    });
+  });
+
   describe("goalProgress", () => {
     // One goal shape reused across the verdicts: a year-long window whose four
     // phases fall on known dates, so "overdue" is a date comparison I can check

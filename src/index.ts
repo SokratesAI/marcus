@@ -488,9 +488,11 @@ export function createApp(
   // it is not -- see plan-draft.ts. It never writes to the store: the response
   // is a proposal the page shows behind an accept gate.
   app.post("/api/plan-draft", express.json({ limit: MAX_BODY }), async (req, res) => {
-    const { goal, context } = req.body as { goal?: unknown; context?: unknown };
+    // `goals` is every goal still ahead of him; `goal` is the one-goal body a
+    // page cached before idea #209's multi-goal change still sends.
+    const { goal, goals, context } = req.body as { goal?: unknown; goals?: unknown; context?: unknown };
     const result = await draftWeek(
-      (goal ?? null) as Parameters<typeof draftWeek>[0],
+      (Array.isArray(goals) ? goals : goal ?? null) as Parameters<typeof draftWeek>[0],
       (context ?? {}) as Parameters<typeof draftWeek>[1],
       { config: coach, fetch: fetchImpl },
     );

@@ -32,6 +32,36 @@ describe("buildDraftPrompt", () => {
     expect(prompt).toContain("2026-09-01");
   });
 
+  it("names every goal, nearest target first, and says the week has to serve all of them", () => {
+    const prompt = buildDraftPrompt(
+      [
+        { text: "Olympic triathlon", targetDate: "2027-06-01" },
+        { text: "Squat 140kg", targetDate: "2026-12-01" },
+      ],
+      {},
+    );
+    const goalBlock = prompt.split("TRAINING DATA")[0];
+    expect(goalBlock).toContain("2 goals at once");
+    expect(goalBlock.indexOf("Squat 140kg")).toBeGreaterThan(-1);
+    expect(goalBlock.indexOf("Squat 140kg")).toBeLessThan(goalBlock.indexOf("Olympic triathlon"));
+    expect(goalBlock).toContain("serve every one of them");
+  });
+
+  it("puts a goal with no date after the dated ones", () => {
+    const prompt = buildDraftPrompt([{ text: "Get fitter" }, { text: "Olympic triathlon", targetDate: "2027-06-01" }], {});
+    const goalBlock = prompt.split("TRAINING DATA")[0];
+    expect(goalBlock.indexOf("Olympic triathlon")).toBeLessThan(goalBlock.indexOf("Get fitter"));
+  });
+
+  it("reads a one-goal list exactly as it reads the single goal", () => {
+    const one = { text: "Olympic triathlon", targetDate: "2027-06-01" };
+    expect(buildDraftPrompt([one], {})).toBe(buildDraftPrompt(one, {}));
+  });
+
+  it("treats a list of blank goals as no goal", () => {
+    expect(buildDraftPrompt([{ text: "  " }], {})).toContain("has not written a goal");
+  });
+
   it("lists every legal day name, since the parser refuses anything else", () => {
     const prompt = buildDraftPrompt(null, {});
     for (const day of PLAN_DAY_NAMES) expect(prompt).toContain(day);
@@ -194,6 +224,27 @@ describe("POST /api/plan-draft", () => {
     expect(res.body).toEqual({ days: WEEK.days, note: WEEK.note });
     expect(calls.join("")).toContain("2026-09-04");
     expect(calls.join("")).toContain("Olympic triathlon");
+  });
+
+  it("sends every goal in a `goals` list to the coach, not only the first", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.push(String(init?.body ?? ""));
+      if (String(url).includes("/conversations?active=true")) {
+        return { ok: true, json: async () => [{ id: "c1", model: "claude-cli:claude-sonnet-5" }] } as Response;
+      }
+      return { ok: true, json: async () => ({ reply: JSON.stringify(WEEK) }) } as Response;
+    }) as unknown as typeof globalThis.fetch;
+    const app = createApp(store, undefined, { fetchImpl, coach: CONFIG });
+    const res = await request(app)
+      .post("/api/plan-draft")
+      .send({ goals: [{ text: "Squat 140kg", targetDate: "2026-12-01" }, { text: "Olympic triathlon", targetDate: "2027-06-01" }], context: {} });
+    expect(res.status).toBe(200);
+    // The context carries no goals, so both names can only have come from the goal lines.
+    const sent = calls.join("");
+    expect(sent).toContain("2 goals at once");
+    expect(sent).toContain("Squat 140kg");
+    expect(sent).toContain("Olympic triathlon");
   });
 
   it("never writes the draft into the store — it is a proposal, not a plan", async () => {
