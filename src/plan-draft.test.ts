@@ -288,3 +288,29 @@ describe("cardio in a drafted week", () => {
     expect(JSON.parse(m![1].replace(/'/g, '"'))).toEqual([...PLAN_CARDIO_ACTIVITIES]);
   });
 });
+
+import { PLAN_CARDIO_MAX_MINUTES } from "./plan-draft.js";
+
+describe("cardio in a drafted week, inside the Plan tab's own bounds", () => {
+  const reply = (day: Record<string, unknown>) => JSON.stringify({ days: [day], note: "" });
+
+  it("refuses a session longer than the form would accept, and takes one at the limit", () => {
+    const over = parseDraftReply(reply({ day: "Sunday", focus: "Bike", exercises: [], cardio: { activity: "Bike", minutes: 1441 } }));
+    expect(over).toEqual({ ok: false, reason: "the Bike on Sunday is longer than 1440 minutes" });
+    const at = parseDraftReply(reply({ day: "Sunday", focus: "Bike", exercises: [], cardio: { activity: "Bike", minutes: 1440 } }));
+    expect(at.ok).toBe(true);
+  });
+
+  it("uses exactly the front end's minutes ceiling", () => {
+    const m = appFile("app-core.js").match(/minutes:\s*\{\s*min:\s*1,\s*max:\s*(\d+)/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBe(PLAN_CARDIO_MAX_MINUTES);
+  });
+
+  it("names a Rest day with a session on it after the session, as the Plan tab does", () => {
+    const r = parseDraftReply(reply({ day: "Tuesday", focus: "Rest", exercises: [], cardio: { activity: "Swim", minutes: 45 } }));
+    expect(r.ok && r.days[0].focus).toBe("Swim");
+    const kept = parseDraftReply(reply({ day: "Monday", focus: "Legs", exercises: [], cardio: { activity: "Run", minutes: 20 } }));
+    expect(kept.ok && kept.days[0].focus).toBe("Legs");
+  });
+});

@@ -32,6 +32,10 @@ export const PLAN_DAY_NAMES = [
  * it is one the page could never have written itself. */
 export const PLAN_CARDIO_ACTIVITIES = ["Run", "Bike", "Swim", "Row", "Ski", "Walk", "Other"] as const;
 
+/** The front end's `BOUNDS.minutes.max`: the longest session the Plan tab's
+ * form accepts, so a drafted one can be no longer. */
+export const PLAN_CARDIO_MAX_MINUTES = 1440;
+
 export interface DraftExercise {
   name: string;
   sets: number;
@@ -150,7 +154,10 @@ export function parseDraftReply(reply: string): DraftParse {
     }
     const cardio = parseCardio(row.cardio, day);
     if ("reason" in cardio) return { ok: false, reason: cardio.reason };
-    days.push({ day, focus, exercises, cardio: cardio.cardio });
+    // A day with a swim on it is not a rest day. Same rename the Plan tab's
+    // `withPlanCardio` makes when he adds cardio to a Rest day by hand.
+    const named = focus.toLowerCase() === "rest" ? cardio.cardio.activity : focus;
+    days.push({ day, focus: named, exercises, cardio: cardio.cardio });
   }
 
   const rawNote = (body as { note?: unknown }).note;
@@ -183,10 +190,13 @@ function parseCardio(raw: unknown, day: string): { cardio: DraftCardio } | { rea
   const wanted = typeof row.activity === "string" ? row.activity.trim().toLowerCase() : "";
   const activity = PLAN_CARDIO_ACTIVITIES.find((a) => a.toLowerCase() === wanted);
   if (!activity) return { reason: `"${String(row.activity)}" on ${day} is not an activity the plan knows` };
-  // Whole minutes, as the Plan tab's own form insists: the card shows the
-  // number as written.
+  // Whole minutes inside the form's own bounds, as the Plan tab insists: the
+  // card shows the number as written.
   if (!Number.isInteger(row.minutes) || (row.minutes as number) < 1) {
     return { reason: `the ${activity} on ${day} has no whole number of minutes` };
+  }
+  if ((row.minutes as number) > PLAN_CARDIO_MAX_MINUTES) {
+    return { reason: `the ${activity} on ${day} is longer than ${PLAN_CARDIO_MAX_MINUTES} minutes` };
   }
   return { cardio: { activity, minutes: row.minutes as number } };
 }
