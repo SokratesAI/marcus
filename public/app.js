@@ -230,6 +230,7 @@ async function requestDraft() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         goals: draftGoals(),
+        today: todayStr(),
         context: {
           plan: store.get('plan'),
           sessions: store.get('sessions', []),
