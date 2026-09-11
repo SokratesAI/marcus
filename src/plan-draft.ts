@@ -200,7 +200,7 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
  * written into the prompt. */
 const TARGET_PHASES = new Set(["Base", "Build", "Peak", "Taper"]);
 
-export function weekTargetLine(week: unknown): string | null {
+export function weekTargetLine(week: unknown, startISO?: string | null): string | null {
   if (!week || typeof week !== "object") return null;
   const w = week as DraftWeekTarget;
   if (w.reason !== "ok" || typeof w.phase !== "string" || !TARGET_PHASES.has(w.phase.trim())) return null;
@@ -209,10 +209,46 @@ export function weekTargetLine(week: unknown): string | null {
   const pct = Math.round(Math.abs(w.multiplier - 1) * 100);
   const direction = pct === 0 ? "level with" : w.multiplier > 1 ? `${pct}% above` : `${pct}% below`;
   const weeks = Math.round(w.baselineWeeks);
+  // A calendar row's week is sized by the same rule Home uses on this one.
+  const lead = startISO
+    ? `Sized the way his Home screen sizes a week, the week starting ${startISO} has a strength target of`
+    : "His Home screen sets this week's strength target at";
   return (
-    `His Home screen sets this week's strength target at ${Math.round(w.volumeTarget)} kg of volume ` +
+    `${lead} ${Math.round(w.volumeTarget)} kg of volume ` +
     `(sets x reps x kilograms, summed over the week): ${direction} his own average of ${Math.round(w.baseline)} kg ` +
-    `over the last ${weeks} completed week${weeks === 1 ? "" : "s"}, because this is the ${w.phase.trim()} phase.`
+    `over the last ${weeks} completed week${weeks === 1 ? "" : "s"}, because ${startISO ? "that week is in" : "this is"} the ${w.phase.trim()} phase.`
+  );
+}
+
+/** One row of the Plan tab's "every week to the race" list (raceCalendar in
+ * public/app.js), as the row's Draft button sends it. */
+export interface DraftCalendarWeek {
+  goal?: unknown;
+  start?: unknown;
+  phase?: unknown;
+  week?: unknown;
+  weeks?: unknown;
+  raceWeek?: unknown;
+}
+
+/** Idea #209's per-row Draft button. The row's label is sent rather than
+ * re-derived from its date, because `phasePosition` judged on a future Monday
+ * counts a phase that began mid-week this week one week short of the row he
+ * tapped. Anything malformed says nothing, and the draft is of this week. */
+export function calendarWeekLine(row: unknown): string | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as DraftCalendarWeek;
+  const start = isoDay(r.start);
+  if (!start || typeof r.goal !== "string" || !r.goal.trim()) return null;
+  const phase = typeof r.phase === "string" && r.phase.trim() ? r.phase.trim() : null;
+  const counted = Number.isInteger(r.week) && Number.isInteger(r.weeks)
+    && (r.week as number) >= 1 && (r.week as number) <= (r.weeks as number);
+  const position = phase
+    ? counted ? `week ${r.week} of ${r.weeks} of the ${phase} phase` : `in the ${phase} phase`
+    : "outside every phase";
+  return (
+    `Draft the week starting ${start}, not the current week: in the plan for ${r.goal.trim()}, that week is ${position}` +
+    (r.raceWeek === true ? ", and it is the race week." : ".")
   );
 }
 
@@ -224,17 +260,23 @@ export function buildDraftPrompt(
   context: CoachContext,
   todayISO?: string,
   week?: unknown,
+  calendarWeek?: unknown,
 ): string {
   const today = isoDay(todayISO) ?? new Date().toISOString().slice(0, 10);
   const phased = (Array.isArray(goals) ? goals : goals ? [goals] : []).some(
     (g) => g && typeof g.text === "string" && g.text.trim() && phasePosition(g, today),
   );
-  const progression = phased
+  const calendar = calendarWeekLine(calendarWeek);
+  const progression = calendar
+    ? [
+        '- The week is one step in a progression from Base through Build and Peak to Taper: shape it for the week in the "Draft the week starting" line above, not for the current week, and name that phase and week in the note.',
+      ]
+    : phased
     ? [
         "- The week is one step in a progression from Base through Build and Peak to Taper: shape it for the phase and the week in it named above, not for the goal in general, and name that phase and week in the note.",
       ]
     : [];
-  const target = weekTargetLine(week);
+  const target = weekTargetLine(week, calendar ? isoDay((calendarWeek as DraftCalendarWeek).start) : null);
   const sizing = target
     ? [
         "- Size the strength sessions so the week, at the weights he has been lifting, lands near the kilogram target named above. If it cannot, say so in the note.",
@@ -243,6 +285,7 @@ export function buildDraftPrompt(
   return [
     "Draft one week of training for Edvard.",
     goalLines(goals, context.goals, today),
+    ...(calendar ? [calendar] : []),
     ...(target ? [target] : []),
     "TRAINING DATA (his own records, as stored by the app)",
     JSON.stringify(
@@ -411,12 +454,15 @@ export async function draftWeek(
     today?: string;
     /** The Home card's weekTarget, unchecked; `weekTargetLine` checks it. */
     week?: unknown;
+    /** A Plan-tab calendar row, unchecked; `calendarWeekLine` checks it. */
+    calendarWeek?: unknown;
   },
 ): Promise<DraftResult> {
   // No history: a draft is a single question about his records, not a turn in
   // a conversation, and re-sending the chat would put the chat's tone in it.
   const empty: ChatTurn[] = [];
-  const result = await askCoach(buildDraftPrompt(goal, context, deps.today, deps.week), context, empty, deps);
+  const result = await askCoach(
+    buildDraftPrompt(goal, context, deps.today, deps.week, deps.calendarWeek), context, empty, deps);
   if (result.status !== "ok") return result;
   const parsed = parseDraftReply(result.reply);
   if (!parsed.ok) return { status: "unusable", reason: parsed.reason };

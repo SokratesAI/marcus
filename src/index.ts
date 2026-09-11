@@ -494,17 +494,19 @@ export function createApp(
     // is UTC and would put a goal a phase early for the hour or two after his
     // midnight (one in winter, two in summer).
     // `week` is the Home card's weekTarget; plan-draft.ts checks its shape.
-    const { goal, goals, context, today, week } = req.body as {
+    // `calendarWeek` is the Plan-tab calendar row whose Draft button was tapped.
+    const { goal, goals, context, today, week, calendarWeek } = req.body as {
       goal?: unknown;
       goals?: unknown;
       context?: unknown;
       today?: unknown;
       week?: unknown;
+      calendarWeek?: unknown;
     };
     const result = await draftWeek(
       (Array.isArray(goals) ? goals : goal ?? null) as Parameters<typeof draftWeek>[0],
       (context ?? {}) as Parameters<typeof draftWeek>[1],
-      { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined, week },
+      { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined, week, calendarWeek },
     );
     if (result.status === "ok") {
       res.status(200).json({ days: result.days, note: result.note });
