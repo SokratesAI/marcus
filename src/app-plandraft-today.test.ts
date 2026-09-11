@@ -77,6 +77,49 @@ describe("the Draft button", () => {
     expect(body.week).toEqual(JSON.parse(JSON.stringify(expected)));
   });
 
+  it("sizes the week from the next goal ahead, not from one whose day has passed", async () => {
+    const sent: string[] = [];
+    const app = loadApp(sent);
+    // The sort puts the passed sprint first. Sized from it, every phase date is
+    // behind him and the card and the draft carry no target at all.
+    vm.runInContext(`(() => {
+      const t = todayStr();
+      store.set('goals', [
+        { text: 'Olympic triathlon', targetDate: shiftDay(t, 120), created: shiftDay(t, -30),
+          milestones: [{ label: 'Base', note: '', date: shiftDay(t, 40), done: false },
+                       { label: 'Taper', note: '', date: shiftDay(t, 120), done: false }] },
+        { text: 'Sprint triathlon', targetDate: shiftDay(t, -3), created: shiftDay(t, -90),
+          milestones: [{ label: 'Peak', note: '', date: shiftDay(t, -10), done: false }] }]);
+      store.set('sessions', [8, 15, 22].map(n => ({ date: shiftDay(t, -n),
+        exercises: [{ name: 'Back Squat', sets: [{ reps: 5, weight: 100 }, { reps: 5, weight: 100 }] }] })));
+    })()`, app);
+    expect(vm.runInContext("goalsSorted()[0].text", app)).toBe("Sprint triathlon");
+    expect(vm.runInContext("homeGoal().text", app)).toBe("Olympic triathlon");
+    expect(vm.runInContext("draftGoals()[0].text", app)).toBe("Olympic triathlon");
+    await app.requestDraft();
+    const body = JSON.parse(sent[0]);
+    expect(body.week.reason).toBe("ok");
+    expect(body.week.phase).toBe("Base");
+  });
+
+  it("keeps the latest goal on Home once every goal has passed", () => {
+    const app = loadApp([]);
+    vm.runInContext(`(() => {
+      const t = todayStr();
+      store.set('goals', [
+        { text: 'Half marathon', targetDate: shiftDay(t, -2), created: shiftDay(t, -60), milestones: [] },
+        { text: '10 km', targetDate: shiftDay(t, -40), created: shiftDay(t, -90), milestones: [] }]);
+    })()`, app);
+    expect(vm.runInContext("draftGoals().length", app)).toBe(0);
+    expect(vm.runInContext("homeGoal().text", app)).toBe("Half marathon");
+  });
+
+  it("shows the same goal on the Next goal card that sizes the week", () => {
+    const renderHome = String(vm.runInContext("renderHome", loadApp([])));
+    expect(renderHome).toContain("const nextGoal = homeGoal()");
+    expect(renderHome).not.toContain("goalsSorted()[0]");
+  });
+
   it("sizes the Home card and the draft through the same function", () => {
     // Two copies of the weekTarget call are how the screens drifted apart in
     // the first place; renderHome and requestDraft must both go through it.
