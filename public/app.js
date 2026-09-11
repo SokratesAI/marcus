@@ -46,7 +46,7 @@ function renderHome() {
   // what turns a far-off date into something today can be measured against.
   const nextGoal = goalsSorted()[0];
   const nextPhase = nextGoal && nextGoal.milestones.find(m => !m.done);
-  const week = weekTarget(nextGoal, plan, store.get('sessions', []), todayStr());
+  const week = homeWeekTarget();
 
   view.innerHTML = `
     <div class="card">
@@ -233,7 +233,7 @@ async function requestDraft() {
         today: todayStr(),
         // The kilogram target the Home card is showing him right now, so the
         // week Marcus drafts and the number on Home cannot disagree.
-        week: weekTarget(goalsSorted()[0], store.get('plan'), store.get('sessions', []), todayStr()),
+        week: homeWeekTarget(),
         context: {
           plan: store.get('plan'),
           sessions: store.get('sessions', []),
@@ -2014,6 +2014,12 @@ function weekTarget(goal, plan, sessions, todayISO) {
     reason: 'ok', baseline, volumeTarget: Math.round(baseline * multiplier),
     note: null,
   });
+}
+
+// The Home card's week, and the one the Draft button sends: one call, so the
+// two screens cannot be sized from different goals or sessions.
+function homeWeekTarget(todayISO) {
+  return weekTarget(goalsSorted()[0], store.get('plan'), store.get('sessions', []), todayISO || todayStr());
 }
 
 // One plain sentence, so the card is not a row of numbers a reader has to know

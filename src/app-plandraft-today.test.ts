@@ -76,4 +76,14 @@ describe("the Draft button", () => {
     expect(expected.phase).toBe("Base");
     expect(body.week).toEqual(JSON.parse(JSON.stringify(expected)));
   });
+
+  it("sizes the Home card and the draft through the same function", () => {
+    // Two copies of the weekTarget call are how the screens drifted apart in
+    // the first place; renderHome and requestDraft must both go through it.
+    const renderHome = String(vm.runInContext("renderHome", loadApp([])));
+    const requestDraft = String(vm.runInContext("requestDraft", loadApp([])));
+    expect(renderHome).toContain("homeWeekTarget()");
+    expect(requestDraft).toContain("homeWeekTarget()");
+    expect(renderHome + requestDraft).not.toContain("weekTarget(goalsSorted");
+  });
 });

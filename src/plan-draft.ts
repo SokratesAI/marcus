@@ -176,11 +176,17 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
  * his own four-week average and the phase (PHASE_VOLUME in the page), and the
  * draft never saw that number, so Marcus could draft a week twice the size the
  * card asks for. Anything but a complete `ok` target says nothing: "too early",
- * "no goal" and a malformed body are all the same prompt as before. */
+ * "no goal" and a malformed body are all the same prompt as before. So is an
+ * `ok` target of 0 kg -- an all-cardio log -- because nothing can be sized to
+ * zero strength volume; the goal and phase lines still shape that week. The
+ * phase must be one of the four the page has a multiplier for, since it is
+ * written into the prompt. */
+const TARGET_PHASES = new Set(["Base", "Build", "Peak", "Taper"]);
+
 export function weekTargetLine(week: unknown): string | null {
   if (!week || typeof week !== "object") return null;
   const w = week as DraftWeekTarget;
-  if (w.reason !== "ok" || typeof w.phase !== "string" || !w.phase.trim()) return null;
+  if (w.reason !== "ok" || typeof w.phase !== "string" || !TARGET_PHASES.has(w.phase.trim())) return null;
   if (!finite(w.volumeTarget) || w.volumeTarget <= 0 || !finite(w.baseline) || w.baseline <= 0) return null;
   if (!finite(w.multiplier) || w.multiplier <= 0 || !finite(w.baselineWeeks) || w.baselineWeeks < 1) return null;
   const pct = Math.round(Math.abs(w.multiplier - 1) * 100);
