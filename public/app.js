@@ -96,7 +96,7 @@ function renderPlan() {
   const plan = store.get('plan');
   const todayName = planDayName();
   const goals = goalsSorted();
-  const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, goals[0]);
+  const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, homeGoal());
   view.innerHTML = `
     <div class="section-title">Goals</div>
     ${goals.length ? goals.map(g => `
@@ -108,6 +108,7 @@ function renderPlan() {
             <span><button class="icon-btn" onclick="toggleMilestone('${g.id}','${m.id}')"><span class="material-icons-round">${m.done ? 'check_box' : 'check_box_outline_blank'}</span></button>${esc(m.label)} — ${esc(m.note)}</span>
             <span>${niceDate(m.date)}</span>
           </div>`).join('')}
+        ${raceCalendarBlock(raceCalendar(g))}
         <button class="btn btn--tonal btn--block" style="margin-top:12px" onclick="deleteGoal('${g.id}')">Remove goal</button>
       </div>`).join('') : `<div class="empty">No goal yet — tell Marcus what you are training for and he will date the phases.</div>`}
 
@@ -212,7 +213,7 @@ function setPlan(plan) {
 
 function acceptProposal(id) {
   const plan = store.get('plan');
-  const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, goalsSorted()[0]);
+  const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, homeGoal());
   const proposal = review.proposals.find(p => p.id === id);
   if (!proposal) { toast('That suggestion is no longer current'); return; }
   if (!setPlan(applyProposal(plan, proposal))) return;
@@ -2021,6 +2022,79 @@ function weekTarget(goal, plan, sessions, todayISO) {
 function homeWeekTarget(todayISO) {
   const today = todayISO || todayStr();
   return weekTarget(homeGoal(today), store.get('plan'), store.get('sessions', []), today);
+}
+
+// Idea #209's week-by-week progression: every calendar week from this one to
+// the race, with the phase it falls in and how the week is sized. The phase
+// follows currentPhase's rule -- the first one whose end date has not passed,
+// starting the day after the previous one ended -- so this list and the Home
+// card cannot put a week in different phases. This week is judged on today, not
+// on its Monday, for the same reason currentPhase is.
+function raceCalendar(goal, todayISO) {
+  const today = dayKey(todayISO || todayStr());
+  if (!goal || !goal.targetDate || goal.targetDate < today) return [];
+  const phases = (goal.milestones || []).filter(m => m && m.date).slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const last = weekStartOf(goal.targetDate);
+  const weeks = [];
+  for (let k = weekStartOf(today); k <= last; k = shiftDay(k, 7)) {
+    const ref = k < today ? today : k;
+    const index = phases.findIndex(p => p.date >= ref);
+    const row = { start: k, phase: null, week: null, weeks: null, multiplier: null,
+                  raceWeek: k === last, then: null };
+    // A phase that begins after this row's Monday and before the next one
+    // would otherwise never be named -- a four-day Taper in the race week read
+    // "Peak" here while Home says Taper on race day -- so the row names it too.
+    const end = shiftDay(k, 6);
+    const starting = phases.find((p, i) => i > 0 && phases[i - 1].date >= ref
+      && shiftDay(phases[i - 1].date, 1) <= end && shiftDay(phases[i - 1].date, 1) <= goal.targetDate);
+    if (starting) row.then = { phase: starting.label, from: shiftDay(phases[phases.indexOf(starting) - 1].date, 1) };
+    if (index >= 0) {
+      const phase = phases[index];
+      const from = index > 0 ? shiftDay(phases[index - 1].date, 1) : (goal.created || null);
+      row.phase = phase.label;
+      row.multiplier = PHASE_VOLUME[phase.label] == null ? null : PHASE_VOLUME[phase.label];
+      // Counted over the rows this phase owns, Monday to Monday. A row belongs
+      // to the phase its Monday is in, so a phase that starts mid-week owns
+      // from the next Monday -- unless it has already started this week, when
+      // this row (judged on today) is its first. Counting from the phase's
+      // first day instead, as the one-week draft line does, starts such a phase
+      // at "week 2" on this list.
+      if (from && from <= ref) {
+        const thisMonday = weekStartOf(today);
+        let first = weekStartOf(shiftDay(from, 6));
+        if (first > thisMonday && from <= today) first = thisMonday;
+        row.weeks = Math.max(1, Math.floor(daysBetween(first, weekStartOf(phase.date)) / 7) + 1);
+        row.week = Math.max(1, Math.min(row.weeks, Math.floor(daysBetween(first, k) / 7) + 1));
+      }
+    }
+    weeks.push(row);
+  }
+  return weeks;
+}
+
+// The Home card's phase multipliers (PHASE_VOLUME) as a short label.
+function volumeChangeLabel(multiplier) {
+  if (multiplier == null) return 'no volume rule';
+  if (multiplier === 1) return 'volume level';
+  const pct = Math.round(Math.abs(multiplier - 1) * 100);
+  return `volume ${multiplier > 1 ? '+' : '−'}${pct}%`;
+}
+
+// Folded by default: a goal a year out is fifty rows (ten years, the most a goal
+// may be, is 520), and they are there when he opens them rather than between
+// him and the next card.
+function raceCalendarBlock(weeks) {
+  if (!weeks.length) return '';
+  return `
+    <details class="race-calendar" style="margin:8px 0">
+      <summary>Every week to the race (${weeks.length})</summary>
+      ${weeks.map(w => `
+        <div class="exercise-line">
+          <span>${niceDate(w.start)}${w.raceWeek ? ' · race week' : ''}</span>
+          <span>${w.phase ? esc(w.phase) + (w.week ? ` week ${w.week} of ${w.weeks}` : '') + ' · ' + esc(volumeChangeLabel(w.multiplier)) : 'no phase'}${w.then ? ` · ${esc(w.then.phase)} from ${niceDate(w.then.from)}` : ''}</span>
+        </div>`).join('')}
+    </details>`;
 }
 
 // One plain sentence, so the card is not a row of numbers a reader has to know
