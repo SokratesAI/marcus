@@ -353,6 +353,31 @@ function applyDueWeek() {
   return true;
 }
 
+// A phone left open on Sunday and picked up on Monday never taps a tab, so the
+// check in switchTab alone leaves last week on screen until one is tapped.
+// Coming back to the foreground is the moment the app is next looked at.
+function applyDueWeekOnVisible(doc, apply, redraw) {
+  if (!doc || typeof doc.addEventListener !== 'function') return;
+  doc.addEventListener('visibilitychange', () => {
+    if (doc.visibilityState !== 'visible') return;
+    if (apply()) redraw();
+  });
+}
+
+// A redraw wipes whatever is typed into a form, so only Home is always redrawn.
+// Plan is redrawn while its three typed fields are empty; Log, Food and a Plan
+// with a half-typed goal keep what is on screen until the next tab tap. The
+// icon badge counts the new plan's open sessions either way, which is what
+// switchTab would have done.
+const PLAN_TYPED_FIELDS = ['goalText', 'goalDate', 'planCardioMinutes'];
+function planHasTyping() {
+  return PLAN_TYPED_FIELDS.some(id => { const el = document.getElementById(id); return !!(el && el.value); });
+}
+function redrawPlanTab() {
+  if (currentTab === 'home' || (currentTab === 'plan' && !planHasTyping())) switchTab(currentTab);
+  else refreshBadge();
+}
+
 function dropWeekAhead(start) {
   const all = store.get('plannedWeeks', []);
   all.filter(w => w && w.start === start).forEach(w => recordDeletion('plannedWeeks', w.id));
@@ -3922,6 +3947,7 @@ document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !termS
 switchTab('home');
 adoptServerCopyOnBoot().catch(() => {});
 retryWhenBackOnline(window, document, retryServerSyncNow);
+applyDueWeekOnVisible(document, applyDueWeek, redrawPlanTab);
 document.getElementById('updateReload')?.addEventListener('click', () => window.location.reload());
 if ('serviceWorker' in navigator) {
   watchForUpdate(navigator.serviceWorker, showUpdateBanner);
