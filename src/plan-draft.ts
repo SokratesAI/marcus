@@ -159,6 +159,40 @@ function goalLines(goals: DraftGoal | DraftGoal[] | null, storedGoals: unknown, 
   ].join("\n");
 }
 
+/** The Home card's "This week" target, as the page's `weekTarget` returns it.
+ * Only the fields the prompt reads; the page sends the whole object. */
+export interface DraftWeekTarget {
+  reason?: unknown;
+  phase?: unknown;
+  multiplier?: unknown;
+  baseline?: unknown;
+  baselineWeeks?: unknown;
+  volumeTarget?: unknown;
+}
+
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/** Idea #209's "weekly goals". The Home card sizes this week in kilograms off
+ * his own four-week average and the phase (PHASE_VOLUME in the page), and the
+ * draft never saw that number, so Marcus could draft a week twice the size the
+ * card asks for. Anything but a complete `ok` target says nothing: "too early",
+ * "no goal" and a malformed body are all the same prompt as before. */
+export function weekTargetLine(week: unknown): string | null {
+  if (!week || typeof week !== "object") return null;
+  const w = week as DraftWeekTarget;
+  if (w.reason !== "ok" || typeof w.phase !== "string" || !w.phase.trim()) return null;
+  if (!finite(w.volumeTarget) || w.volumeTarget <= 0 || !finite(w.baseline) || w.baseline <= 0) return null;
+  if (!finite(w.multiplier) || w.multiplier <= 0 || !finite(w.baselineWeeks) || w.baselineWeeks < 1) return null;
+  const pct = Math.round(Math.abs(w.multiplier - 1) * 100);
+  const direction = pct === 0 ? "level with" : w.multiplier > 1 ? `${pct}% above` : `${pct}% below`;
+  const weeks = Math.round(w.baselineWeeks);
+  return (
+    `His Home screen sets this week's strength target at ${Math.round(w.volumeTarget)} kg of volume ` +
+    `(sets x reps x kilograms, summed over the week): ${direction} his own average of ${Math.round(w.baseline)} kg ` +
+    `over the last ${weeks} completed week${weeks === 1 ? "" : "s"}, because this is the ${w.phase.trim()} phase.`
+  );
+}
+
 /** The prompt is built here rather than in the browser for the same reason
  * `buildPrompt` is: what reaches the model is decided in one place and is
  * testable. */
@@ -166,6 +200,7 @@ export function buildDraftPrompt(
   goals: DraftGoal | DraftGoal[] | null,
   context: CoachContext,
   todayISO?: string,
+  week?: unknown,
 ): string {
   const today = isoDay(todayISO) ?? new Date().toISOString().slice(0, 10);
   const phased = (Array.isArray(goals) ? goals : goals ? [goals] : []).some(
@@ -176,9 +211,16 @@ export function buildDraftPrompt(
         "- The week is one step in a progression from Base through Build and Peak to Taper: shape it for the phase and the week in it named above, not for the goal in general, and name that phase and week in the note.",
       ]
     : [];
+  const target = weekTargetLine(week);
+  const sizing = target
+    ? [
+        "- Size the strength sessions so the week, at the weights he has been lifting, lands near the kilogram target named above. If it cannot, say so in the note.",
+      ]
+    : [];
   return [
     "Draft one week of training for Edvard.",
     goalLines(goals, context.goals, today),
+    ...(target ? [target] : []),
     "TRAINING DATA (his own records, as stored by the app)",
     JSON.stringify(
       {
@@ -201,6 +243,7 @@ export function buildDraftPrompt(
       "- Use the exercises he already logs where they fit; the week is his, not a textbook's.",
       '- "note" is one plain sentence he will read above the week.',
       ...progression,
+      ...sizing,
     ].join("\n"),
   ].join("\n\n");
 }
@@ -343,12 +386,14 @@ export async function draftWeek(
     timeoutMs?: number;
     /** His calendar day as the page reads it; the phase counts come from it. */
     today?: string;
+    /** The Home card's weekTarget, unchecked; `weekTargetLine` checks it. */
+    week?: unknown;
   },
 ): Promise<DraftResult> {
   // No history: a draft is a single question about his records, not a turn in
   // a conversation, and re-sending the chat would put the chat's tone in it.
   const empty: ChatTurn[] = [];
-  const result = await askCoach(buildDraftPrompt(goal, context, deps.today), context, empty, deps);
+  const result = await askCoach(buildDraftPrompt(goal, context, deps.today, deps.week), context, empty, deps);
   if (result.status !== "ok") return result;
   const parsed = parseDraftReply(result.reply);
   if (!parsed.ok) return { status: "unusable", reason: parsed.reason };

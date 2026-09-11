@@ -231,6 +231,9 @@ async function requestDraft() {
       body: JSON.stringify({
         goals: draftGoals(),
         today: todayStr(),
+        // The kilogram target the Home card is showing him right now, so the
+        // week Marcus drafts and the number on Home cannot disagree.
+        week: weekTarget(goalsSorted()[0], store.get('plan'), store.get('sessions', []), todayStr()),
         context: {
           plan: store.get('plan'),
           sessions: store.get('sessions', []),
