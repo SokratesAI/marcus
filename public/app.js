@@ -364,11 +364,13 @@ function applyDueWeekOnVisible(doc, apply, redraw) {
   });
 }
 
-// Only the tabs that draw the plan are redrawn. Log and Food may hold a
-// half-typed entry, and the stored plan has already changed underneath them.
+// Only Home and Plan are redrawn. Log and Food may hold a half-typed entry, so
+// they keep what is on screen until the next tab tap; the icon badge counts the
+// new plan's open sessions either way, which is what switchTab would have done.
 const PLAN_TABS = ['home', 'plan'];
 function redrawPlanTab() {
   if (PLAN_TABS.indexOf(currentTab) !== -1) switchTab(currentTab);
+  else refreshBadge();
 }
 
 function dropWeekAhead(start) {

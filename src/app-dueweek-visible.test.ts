@@ -82,11 +82,15 @@ describe("a week that begins while the app is open", () => {
 
   it("redraws Home and Plan, and leaves Log and Food alone so a half-typed entry survives", () => {
     const app = loadApp();
-    vm.runInContext("globalThis.drawn = []; switchTab = (t) => { globalThis.drawn.push(t); };", app);
+    vm.runInContext(`globalThis.drawn = []; globalThis.badged = [];
+      switchTab = (t) => { globalThis.drawn.push(t); };
+      refreshBadge = () => { globalThis.badged.push(currentTab); };`, app);
     for (const tab of ["home", "plan", "log", "nutrition", "progress"]) {
       vm.runInContext(`currentTab = ${JSON.stringify(tab)}; redrawPlanTab();`, app);
     }
     expect(run(app, "drawn")).toEqual(["home", "plan"]);
+    // The tabs left alone still get the badge switchTab would have refreshed.
+    expect(run(app, "badged")).toEqual(["log", "nutrition", "progress"]);
   });
 
   it("survives a document with no addEventListener", () => {
