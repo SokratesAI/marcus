@@ -77,7 +77,7 @@ function renderHome() {
     ${week.phase ? `
     <div class="section-title">This week</div>
     <div class="card">
-      <div class="card__title-row"><h2>${esc(week.phase)} phase</h2><span class="chip chip--primary">${week.sessionsDone}/${week.sessionsPlanned} sessions</span></div>
+      <div class="card__title-row"><h2>${esc(week.phase)}${week.phaseEnds ? ' phase' : ''}</h2><span class="chip chip--primary">${week.sessionsDone}/${week.sessionsPlanned} sessions</span></div>
       ${week.volumeTarget != null ? `<div class="exercise-line"><span>Volume</span><span>${week.volumeDone} / ${week.volumeTarget} kg</span></div>` : ``}
       <div class="card__note">${esc(weekTargetLabel(week))}</div>
     </div>` : ``}
@@ -2063,6 +2063,14 @@ function applyProposal(plan, proposal) {
 // makes the kilogram number mean anything is the other half: it is a multiple
 // of YOUR OWN recent weekly average, never a number this app invented.
 const PHASE_VOLUME = { Base: 1.10, Build: 1.00, Peak: 0.90, Taper: 0.60 };
+// An ongoing goal (no target date) has no phases, so no entry above applies to
+// it -- but it still has a week, and before this it got no week card at all.
+// 1.00 is deliberate rather than a ramp: with no race to peak for there is
+// nothing to periodise toward, and a weekly increase against a rolling
+// four-week baseline compounds for as long as the goal exists. Level with his
+// own recent average is a consistency floor, not a plateau -- it rises when he
+// does more, and it does not keep rising on its own.
+const ONGOING_VOLUME = 1.00;
 const WEEK_BASELINE_WEEKS = 4;
 // Below this, the average is one week wearing a plural. Say so instead.
 const WEEK_MIN_BASELINE_WEEKS = 2;
@@ -2097,20 +2105,25 @@ function weekTarget(goal, plan, sessions, todayISO) {
   };
 
   const phase = currentPhase(goal, today);
-  if (!phase) {
-    // Three ways to have no phase, not two. An ongoing goal (no target date)
-    // never had phases, so "every phase date has passed" would be a false
-    // sentence about it -- and the reason is what any later reader branches on.
-    const ongoing = !!goal && !goal.targetDate;
+  // An ongoing goal never had phases, so it gets one of its own -- `Ongoing`,
+  // with no end date -- and is then sized by exactly the same baseline rule as
+  // a dated one. It used to return here with a null phase, and the Home card
+  // hides the whole "This week" block on a null phase, so setting "improve
+  // overall health and fitness" as the only goal left the week blank.
+  const ongoing = !phase && !!goal && !goal.targetDate;
+  if (!phase && !ongoing) {
     return Object.assign(base, {
-      reason: !goal ? 'no goal' : ongoing ? 'ongoing goal' : 'phases done',
+      reason: !goal ? 'no goal' : 'phases done',
       note: !goal ? 'No goal yet, so there is no phase to size the week from.'
-          : ongoing ? 'That goal has no target date, so there are no phases to size the week from.'
-                    : 'Every phase date has passed — the target day is the only thing left.',
+                  : 'Every phase date has passed — the target day is the only thing left.',
     });
   }
-  const multiplier = PHASE_VOLUME[phase.label];
-  Object.assign(base, { phase: phase.label, phaseEnds: phase.date, multiplier: multiplier == null ? null : multiplier });
+  const multiplier = ongoing ? ONGOING_VOLUME : PHASE_VOLUME[phase.label];
+  Object.assign(base, {
+    phase: ongoing ? 'Ongoing' : phase.label,
+    phaseEnds: ongoing ? null : phase.date,
+    multiplier: multiplier == null ? null : multiplier,
+  });
 
   const dates = list.map(s => (s && s.date) ? dayKey(s.date) : null).filter(Boolean).sort();
   const firstWeek = dates.length ? weekStartOf(dates[0]) : null;
@@ -2131,7 +2144,7 @@ function weekTarget(goal, plan, sessions, todayISO) {
   base.baselineWeeks = covered.length;
   if (multiplier == null) {
     return Object.assign(base, { reason: 'unknown phase',
-      note: 'Marcus has no volume rule for a ' + phase.label + ' phase, so this week carries the session count only.' });
+      note: 'Marcus has no volume rule for a ' + base.phase + ' phase, so this week carries the session count only.' });
   }
   if (covered.length < WEEK_MIN_BASELINE_WEEKS) {
     return Object.assign(base, { reason: 'too early',
@@ -2236,7 +2249,12 @@ function weekTargetLabel(week) {
   const pct = Math.round(Math.abs(week.multiplier - 1) * 100);
   const direction = week.multiplier > 1 ? pct + '% above' : week.multiplier < 1 ? pct + '% below' : 'level with';
   // Always plural: a baseline under WEEK_MIN_BASELINE_WEEKS never reaches here.
-  return week.phase + ' phase through ' + niceDate(week.phaseEnds) + ' — your last '
+  // An ongoing goal has no end date to print, so it names itself instead of a
+  // phase window. Everything after the dash is the same sentence either way.
+  const where = week.phaseEnds
+    ? week.phase + ' phase through ' + niceDate(week.phaseEnds)
+    : 'That goal has no target date, so every week is sized the same way';
+  return where + ' — your last '
     + week.baselineWeeks + ' weeks averaged ' + week.baseline + ' kg, so this week aims '
     + direction + ' that.';
 }
