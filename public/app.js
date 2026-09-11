@@ -99,11 +99,14 @@ function renderPlan() {
   const todayName = planDayName();
   const goals = goalsSorted();
   const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, homeGoal());
+  // A goal the other phone deleted while its edit form was open falls back to
+  // the Add form rather than saving over nothing.
+  const editing = goalEditId ? goals.find(g => g.id === goalEditId) || null : null;
   view.innerHTML = `
     <div class="section-title">Goals</div>
     ${goals.length ? goals.map(g => `
       <div class="card" style="display:block">
-        <div class="card__title-row"><h2>${esc(g.text)}</h2><span class="chip chip--primary">${esc(goalCountdown(g.targetDate))}</span></div>
+        <div class="card__title-row"><h2>${esc(g.text)}</h2><span style="display:flex;align-items:center;gap:8px"><span class="chip chip--primary">${esc(goalCountdown(g.targetDate))}</span><button class="icon-btn" title="Edit this goal" aria-label="Edit the goal ${esc(g.text)}" onclick="startGoalEdit('${esc(g.id)}')"><span class="material-icons-round">edit</span></button></span></div>
         <div style="font-size:12px;color:var(--md-on-surface-variant);margin:2px 0 8px">${g.targetDate ? `Target ${niceDate(g.targetDate)} · phases are cut from your dates, not coached yet` : `No target date · an ongoing goal, so there are no phases to cut`}</div>
         ${g.milestones.map(m => `
           <div class="exercise-line">
@@ -115,10 +118,11 @@ function renderPlan() {
       </div>`).join('') : `<div class="empty">No goal yet — tell Marcus what you are training for and he will date the phases.</div>`}
 
     <div class="card">
-      <h2>Add a goal</h2>
-      <div class="field"><label>What are you training for</label><input id="goalText" type="text" placeholder="e.g. Olympic triathlon next summer"></div>
-      <div class="field"><label>Target date (leave empty for an ongoing goal)</label><input id="goalDate" type="date"></div>
-      <button class="btn btn--filled btn--block" id="addGoal"><span class="material-icons-round">flag</span> Set goal</button>
+      <h2>${editing ? 'Edit goal' : 'Add a goal'}</h2>
+      <div class="field"><label>What are you training for</label><input id="goalText" type="text" placeholder="e.g. Olympic triathlon next summer" value="${editing ? esc(editing.text) : ''}"></div>
+      <div class="field"><label>Target date (leave empty for an ongoing goal)</label><input id="goalDate" type="date" value="${editing ? esc(editing.targetDate || '') : ''}"></div>
+      <button class="btn btn--filled btn--block" id="addGoal"><span class="material-icons-round">flag</span> ${editing ? 'Save changes' : 'Set goal'}</button>
+      ${editing ? `<button class="btn btn--tonal btn--block" style="margin-top:8px" id="cancelGoalEdit">Cancel</button>` : ``}
     </div>
 
     <div class="section-title">Marcus suggests</div>
@@ -176,13 +180,21 @@ function renderPlan() {
   `;
 
   document.getElementById('addGoal').addEventListener('click', () => {
-    const result = validateGoal(document.getElementById('goalText').value, document.getElementById('goalDate').value);
-    if (!result.ok) { toast(result.message); return; }
+    const text = document.getElementById('goalText').value;
+    const date = document.getElementById('goalDate').value;
     const all = store.get('goals', []);
-    all.push(result.goal);
-    if (!store.set('goals', all)) return;
+    // Re-read the goal from the store rather than closing over `editing`: the
+    // form can sit open across a merge from the other phone.
+    const target = goalEditId ? all.find(g => g.id === goalEditId) : null;
+    const result = goalEditId ? validateGoalEdit(target, text, date) : validateGoal(text, date);
+    if (!result.ok) { toast(result.message); return; }
+    const next = goalEditId ? all.map(g => (g.id === result.goal.id ? result.goal : g)) : all.concat([result.goal]);
+    if (!store.set('goals', next)) return;
+    goalEditId = null;
     renderPlan();
   });
+
+  if (editing) document.getElementById('cancelGoalEdit').addEventListener('click', () => { goalEditId = null; renderPlan(); });
 
   // Wrapped so requestDraft gets no arguments; it also ignores a click event.
   document.getElementById('draftWeek').addEventListener('click', () => requestDraft());
@@ -365,6 +377,21 @@ function applyDueWeekOnVisible(doc, apply, redraw) {
   });
 }
 
+// Which goal the one Add/Edit card is currently editing, or null for Add. It is
+// deliberately the same card and the same two field ids, so the edit form
+// inherits PLAN_TYPED_FIELDS below -- a background redraw cannot wipe a
+// half-typed edit any more than it can wipe a half-typed new goal.
+let goalEditId = null;
+
+function startGoalEdit(id) {
+  goalEditId = id;
+  renderPlan();
+  // The form sits below the goal list, so on a phone with a few goals the tap
+  // would otherwise look like it did nothing. Focusing scrolls it into view.
+  const el = document.getElementById('goalText');
+  if (el && typeof el.focus === 'function') el.focus();
+}
+
 // A redraw wipes whatever is typed into a form, so only Home is always redrawn.
 // Plan is redrawn while its three typed fields are empty; Log, Food and a Plan
 // with a half-typed goal keep what is on screen until the next tab tap. The
@@ -399,6 +426,7 @@ function toggleMilestone(goalId, milestoneId) {
 function deleteGoal(id) {
   recordDeletion('goals', id);
   store.set('goals', store.get('goals', []).filter(g => g.id !== id));
+  if (goalEditId === id) goalEditId = null;
   renderPlan();
 }
 
