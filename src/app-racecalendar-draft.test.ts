@@ -103,9 +103,9 @@ describe("a calendar row's Draft button", () => {
     const html: string = vm.runInContext("draftCard(store.get('plan'), planDraft)", app);
     expect(html).toContain(`Marcus's week of ${vm.runInContext(`niceDate('${build.start}')`, app)}`);
     expect(html).toContain(`Drafted for Build week 2 of ${build.weeks}`);
-    // One weekly plan: accepting a later week replaces this one, and says so.
-    expect(html).toContain("Use it as my plan now");
-    expect(html).toContain("replaces the week you are on now");
+    // A later week waits for its Monday, and the card says so.
+    expect(html).toContain("Save for that week");
+    expect(html).toContain("the week you are on now stays as it is");
     expect(html).not.toContain("Use this week");
   });
 
@@ -140,7 +140,7 @@ describe("a calendar row's Draft button", () => {
     expect(html).toContain("<h2>Marcus's week</h2>");
     expect(html).not.toContain("Drafted for");
     expect(html).toContain("Use this week");
-    expect(html).not.toContain("Use it as my plan now");
+    expect(html).not.toContain("Save for that week");
   });
 
   it("treats a click event handed in as Draft my week, not as a goal id", async () => {
@@ -149,5 +149,138 @@ describe("a calendar row's Draft button", () => {
     await app.requestDraft({ type: "click", target: {} });
     expect(sent).toHaveLength(1);
     expect(JSON.parse(sent[0]).calendarWeek).toBeUndefined();
+  });
+});
+
+const run = (app: any, src: string) => JSON.parse(vm.runInContext(`JSON.stringify(${src})`, app) ?? "null");
+
+describe("a week drafted ahead waits for its Monday", () => {
+  it("is saved under that Monday and leaves the plan he is on untouched", async () => {
+    const app = loadApp([]);
+    const before = run(app, "store.get('plan')");
+    const later = rows(app)[2];
+    await app.requestDraft("g1", later.start);
+    vm.runInContext("acceptDraft()", app);
+    expect(run(app, "store.get('plan')")).toEqual(before);
+    const saved = run(app, "store.get('plannedWeeks')");
+    expect(saved).toHaveLength(1);
+    expect(saved[0].start).toBe(later.start);
+    expect(saved[0].days[0].focus).toBe("Push");
+    expect(run(app, "planDraft")).toBeNull();
+  });
+
+  it("replaces an earlier draft for the same week rather than keeping two", async () => {
+    const app = loadApp([]);
+    const later = rows(app)[2];
+    for (let i = 0; i < 2; i++) {
+      await app.requestDraft("g1", later.start);
+      vm.runInContext("acceptDraft()", app);
+    }
+    expect(run(app, "store.get('plannedWeeks')")).toHaveLength(1);
+  });
+
+  it("Draft my week still writes the plan at once and saves nothing ahead", async () => {
+    const app = loadApp([]);
+    await app.requestDraft();
+    vm.runInContext("acceptDraft()", app);
+    expect(run(app, "store.get('plan').days.find(d => d.day === 'Monday').focus")).toBe("Push");
+    expect(run(app, "store.get('plannedWeeks', [])")).toEqual([]);
+  });
+
+  it("becomes the plan once its week has begun, and a later one keeps waiting", () => {
+    const app = loadApp([]);
+    vm.runInContext(`(() => {
+      const mon = weekStartOf(todayStr());
+      store.set('plannedWeeks', [
+        { id: mon, start: mon, days: [{ day: 'Tuesday', focus: 'Swim day', exercises: [] }] },
+        { id: shiftDay(mon, 7), start: shiftDay(mon, 7), days: [{ day: 'Monday', focus: 'Later', exercises: [] }] },
+      ]);
+    })()`, app);
+    const expected = run(app, "applyDraft(store.get('plan'), store.get('plannedWeeks')[0].days).days");
+    expect(vm.runInContext("applyDueWeek()", app)).toBe(true);
+    expect(run(app, "store.get('plan').days")).toEqual(expected);
+    expect(run(app, "store.get('plan').days.find(d => d.day === 'Tuesday').focus")).toBe("Swim day");
+    expect(run(app, "store.get('plannedWeeks').map(w => w.start)")).toEqual([run(app, "shiftDay(weekStartOf(todayStr()), 7)")]);
+    // Nothing else has begun, so a second call writes nothing.
+    expect(vm.runInContext("applyDueWeek()", app)).toBe(false);
+  });
+
+  it("applies the newest week that has begun when several have, and drops the older", () => {
+    const app = loadApp([]);
+    const out = run(app, `takeDueWeek([
+      { start: '2026-09-07', days: [] }, { start: '2026-09-21', days: [] },
+      { start: '2026-09-14', days: [] }, { start: '2026-09-28', days: [] }], '2026-09-21')`);
+    expect(out.due.start).toBe("2026-09-21");
+    expect(out.waiting.map((w: any) => w.start)).toEqual(["2026-09-28"]);
+    expect(run(app, "takeDueWeek([], '2026-09-21')")).toEqual({ due: null, waiting: [] });
+  });
+
+  it("is checked before every tab renders", () => {
+    const app = loadApp([]);
+    const src = String(vm.runInContext("switchTab", app));
+    expect(src.indexOf("applyDueWeek()")).toBeGreaterThan(-1);
+    expect(src.indexOf("applyDueWeek()")).toBeLessThan(src.indexOf("renderers[tab]()"));
+  });
+
+  it("shows as Planned on its calendar row, and can be dropped", async () => {
+    const app = loadApp([]);
+    const later = rows(app)[2];
+    await app.requestDraft("g1", later.start);
+    vm.runInContext("acceptDraft()", app);
+    const html: string = vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app);
+    expect(html.match(/>Planned</g)).toHaveLength(1);
+    expect(html).toContain(`dropWeekAhead('${later.start}')`);
+    vm.runInContext(`dropWeekAhead('${later.start}')`, app);
+    expect(run(app, "store.get('plannedWeeks')")).toEqual([]);
+    expect(vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app)).not.toContain(">Planned<");
+  });
+
+  it("merges with the other phone's saved weeks on a conflicting push", () => {
+    const app = loadApp([]);
+    const out = run(app, `mergeBackupData(
+      { plannedWeeks: [{ id: '2026-10-12@2', start: '2026-10-12', days: [] }] },
+      { plannedWeeks: [{ id: '2026-10-05@1', start: '2026-10-05', days: [] }] }).plannedWeeks.map(w => w.start).sort()`);
+    expect(out).toEqual(["2026-10-05", "2026-10-12"]);
+  });
+
+  it("does not come back from the other phone once applied or dropped", () => {
+    const app = loadApp([]);
+    vm.runInContext(`(() => {
+      const mon = weekStartOf(todayStr());
+      store.set('plannedWeeks', [
+        { id: mon + '@1', start: mon, days: [{ day: 'Tuesday', focus: 'Swim day', exercises: [] }] },
+        { id: shiftDay(mon, 7) + '@1', start: shiftDay(mon, 7), days: [] },
+      ]);
+    })()`, app);
+    const stale = run(app, "store.get('plannedWeeks')");
+    expect(vm.runInContext("applyDueWeek()", app)).toBe(true);
+    vm.runInContext(`dropWeekAhead(shiftDay(weekStartOf(todayStr()), 7))`, app);
+    // The other phone still holds both weeks and pushes them back.
+    const merged = run(app, `mergeBackupData({ plannedWeeks: store.get('plannedWeeks'), deletions: store.get('deletions') },
+      { plannedWeeks: ${JSON.stringify(stale)} }).plannedWeeks`);
+    expect(merged).toEqual([]);
+  });
+
+  it("a week saved again after one was dropped is not swallowed by the old tombstone", async () => {
+    const app = loadApp([]);
+    const later = rows(app)[2];
+    await app.requestDraft("g1", later.start);
+    vm.runInContext("acceptDraft()", app);
+    vm.runInContext(`dropWeekAhead('${later.start}')`, app);
+    await new Promise(r => setTimeout(r, 2));
+    await app.requestDraft("g1", later.start);
+    vm.runInContext("acceptDraft()", app);
+    const merged = run(app, `mergeBackupData({ plannedWeeks: store.get('plannedWeeks'), deletions: store.get('deletions') }, {}).plannedWeeks`);
+    expect(merged.map((w: any) => w.start)).toEqual([later.start]);
+  });
+
+  it("survives a backup and a restore", async () => {
+    const app = loadApp([]);
+    await app.requestDraft("g1", rows(app)[2].start);
+    vm.runInContext("acceptDraft()", app);
+    const text = vm.runInContext("JSON.stringify(buildBackup('2026-09-11T00:00:00.000Z'))", app);
+    const parsed = run(app, `parseBackup(${JSON.stringify(text)})`);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.data.plannedWeeks).toEqual(run(app, "store.get('plannedWeeks')"));
   });
 });
