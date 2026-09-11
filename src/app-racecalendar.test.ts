@@ -38,7 +38,8 @@ function loadApp(): any {
 }
 
 const TODAY = "2026-09-09";            // a Wednesday; its Monday is 09-07
-// Base 09-01..09-20 (20 days, 3 weeks), Build 09-21..10-04 (2 weeks), race 10-04.
+// Base 09-01 (a Tuesday)..09-20, so it owns the Mondays 09-07 and 09-14;
+// Build 09-21..09-27; Taper 09-28..10-04, the race week.
 const goal = () => ({
   text: "Sprint triathlon", targetDate: "2026-10-04", created: "2026-09-01",
   milestones: [
@@ -56,11 +57,28 @@ describe("raceCalendar", () => {
     expect(rows.map((r: any) => r.raceWeek)).toEqual([false, false, false, true]);
   });
 
-  it("names the phase and its week count the way the drafted week does", () => {
+  it("names the phase and counts the Mondays it owns", () => {
     const rows = loadApp().raceCalendar(goal(), TODAY);
     // This week is judged on today (09-09, day 9 of Base), not on Monday.
     expect(rows.map((r: any) => [r.phase, r.week, r.weeks])).toEqual([
-      ["Base", 2, 3], ["Base", 3, 3], ["Build", 1, 1], ["Taper", 1, 1]]);
+      ["Base", 1, 2], ["Base", 2, 2], ["Build", 1, 1], ["Taper", 1, 1]]);
+  });
+
+  it("starts every phase of a real goal at week 1 and counts without a gap", () => {
+    // A goal built the way the app builds one: buildMilestones cuts the phases
+    // on arbitrary weekdays, which is what a hand-written fixture hid -- a phase
+    // starting mid-week used to open on "week 2" here.
+    const app = loadApp();
+    const made = app.validateGoal("Olympic triathlon", "2026-11-23", TODAY);
+    expect(made.ok).toBe(true);
+    const rows = app.raceCalendar(made.goal, TODAY);
+    const byPhase: Record<string, any[]> = {};
+    rows.forEach((r: any) => { (byPhase[r.phase] ||= []).push(r); });
+    expect(Object.keys(byPhase)).toEqual(["Base", "Build", "Peak", "Taper"]);
+    for (const list of Object.values(byPhase)) {
+      expect(list.map((r: any) => r.week)).toEqual(list.map((_: any, i: number) => i + 1));
+      expect(list.every((r: any) => r.weeks === list.length)).toBe(true);
+    }
   });
 
   it("carries the Home card's multiplier for each phase", () => {
@@ -103,7 +121,7 @@ describe("raceCalendar", () => {
     const html = app.raceCalendarBlock(app.raceCalendar(goal(), TODAY));
     expect(html).toContain("<details");
     expect(html).toContain("Every week to the race (4)");
-    expect(html).toContain("Base week 2 of 3");
+    expect(html).toContain("Base week 1 of 2");
     expect(html).toContain("race week");
     expect(String(vm.runInContext("renderPlan", app))).toContain("raceCalendarBlock(raceCalendar(g))");
   });

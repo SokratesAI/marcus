@@ -2047,13 +2047,18 @@ function raceCalendar(goal, todayISO) {
       const from = index > 0 ? shiftDay(phases[index - 1].date, 1) : (goal.created || null);
       row.phase = phase.label;
       row.multiplier = PHASE_VOLUME[phase.label] == null ? null : PHASE_VOLUME[phase.label];
-      // Counted in calendar weeks, Monday to Monday. Counting from the phase's
-      // first day, as the one-week draft line does, gives two neighbouring rows
-      // the same number whenever a phase starts mid-week.
+      // Counted over the rows this phase owns, Monday to Monday. A row belongs
+      // to the phase its Monday is in, so a phase that starts mid-week owns
+      // from the next Monday -- unless it has already started this week, when
+      // this row (judged on today) is its first. Counting from the phase's
+      // first day instead, as the one-week draft line does, starts such a phase
+      // at "week 2" on this list.
       if (from && from <= ref) {
-        const first = weekStartOf(from);
-        row.weeks = Math.floor(daysBetween(first, weekStartOf(phase.date)) / 7) + 1;
-        row.week = Math.floor(daysBetween(first, k) / 7) + 1;
+        const thisMonday = weekStartOf(today);
+        let first = weekStartOf(shiftDay(from, 6));
+        if (first > thisMonday && from <= today) first = thisMonday;
+        row.weeks = Math.max(1, Math.floor(daysBetween(first, weekStartOf(phase.date)) / 7) + 1);
+        row.week = Math.max(1, Math.min(row.weeks, Math.floor(daysBetween(first, k) / 7) + 1));
       }
     }
     weeks.push(row);
