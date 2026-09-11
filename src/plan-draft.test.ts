@@ -239,3 +239,52 @@ describe("POST /api/plan-draft", () => {
     expect(asked.some((u) => u.endsWith("/ask"))).toBe(false);
   });
 });
+
+import { PLAN_CARDIO_ACTIVITIES } from "./plan-draft.js";
+import { appFile } from "./app-source.js";
+
+describe("cardio in a drafted week", () => {
+  const reply = (day: Record<string, unknown>) => JSON.stringify({ days: [day], note: "" });
+
+  it("asks for cardio by the activities the plan knows", () => {
+    const prompt = buildDraftPrompt({ text: "Olympic triathlon" }, {});
+    for (const a of PLAN_CARDIO_ACTIVITIES) expect(prompt).toContain(a);
+    expect(prompt).toContain('"cardio"');
+  });
+
+  it("keeps a swim the coach put on a day", () => {
+    const r = parseDraftReply(reply({ day: "Tuesday", focus: "Swim", exercises: [], cardio: { activity: "swim", minutes: 45 } }));
+    expect(r).toEqual({ ok: true, days: [{ day: "Tuesday", focus: "Swim", exercises: [], cardio: { activity: "Swim", minutes: 45 } }], note: "" });
+  });
+
+  it("reads an absent or null cardio as no cardio, not as a refusal", () => {
+    for (const cardio of [undefined, null]) {
+      const r = parseDraftReply(reply({ day: "Monday", focus: "Push", exercises: [], cardio }));
+      expect(r.ok).toBe(true);
+      if (r.ok) expect("cardio" in r.days[0]).toBe(false);
+    }
+  });
+
+  it("refuses an activity the Plan tab could never have written", () => {
+    const r = parseDraftReply(reply({ day: "Monday", focus: "Cardio", exercises: [], cardio: { activity: "Zumba", minutes: 30 } }));
+    expect(r).toEqual({ ok: false, reason: '"Zumba" on Monday is not an activity the plan knows' });
+  });
+
+  it("refuses minutes that are not a whole positive number", () => {
+    for (const minutes of ["45", 30.5, 0, undefined]) {
+      const r = parseDraftReply(reply({ day: "Monday", focus: "Run", exercises: [], cardio: { activity: "Run", minutes } }));
+      expect(r).toEqual({ ok: false, reason: "the Run on Monday has no whole number of minutes" });
+    }
+  });
+
+  it("refuses cardio that is not an object", () => {
+    const r = parseDraftReply(reply({ day: "Monday", focus: "Run", exercises: [], cardio: "a long run" }));
+    expect(r).toEqual({ ok: false, reason: "the cardio on Monday is not a session" });
+  });
+
+  it("uses exactly the front end's activity list", () => {
+    const m = appFile("app-core.js").match(/const CARDIO_ACTIVITIES = (\[[^\]]*\]);/);
+    expect(m).not.toBeNull();
+    expect(JSON.parse(m![1].replace(/'/g, '"'))).toEqual([...PLAN_CARDIO_ACTIVITIES]);
+  });
+});

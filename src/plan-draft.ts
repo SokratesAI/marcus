@@ -27,16 +27,29 @@ export const PLAN_DAY_NAMES = [
   "Saturday",
 ] as const;
 
+/** Same list and spelling as the front end's own `CARDIO_ACTIVITIES`. A plan
+ * day's cardio is picked from that list on the Plan tab, so an activity outside
+ * it is one the page could never have written itself. */
+export const PLAN_CARDIO_ACTIVITIES = ["Run", "Bike", "Swim", "Row", "Ski", "Walk", "Other"] as const;
+
 export interface DraftExercise {
   name: string;
   sets: number;
   reps: number;
 }
 
+export interface DraftCardio {
+  activity: string;
+  minutes: number;
+}
+
 export interface DraftDay {
   day: string;
   focus: string;
   exercises: DraftExercise[];
+  /** Absent when the coach put no cardio on the day. An endurance goal -- the
+   * triathlon in the goal form's own placeholder -- is mostly this. */
+  cardio?: DraftCardio;
 }
 
 export interface DraftGoal {
@@ -68,12 +81,13 @@ export function buildDraftPrompt(goal: DraftGoal | null, context: CoachContext):
       1,
     ),
     "ANSWER WITH JSON AND NOTHING ELSE, in exactly this shape:",
-    '{"days":[{"day":"Monday","focus":"Push","exercises":[{"name":"Barbell Bench Press","sets":4,"reps":8}]}],"note":"one sentence on why this week looks like this"}',
+    '{"days":[{"day":"Monday","focus":"Push","exercises":[{"name":"Barbell Bench Press","sets":4,"reps":8}]},{"day":"Tuesday","focus":"Swim","exercises":[],"cardio":{"activity":"Swim","minutes":45}}],"note":"one sentence on why this week looks like this"}',
     [
       "Rules:",
       `- "day" must be one of ${PLAN_DAY_NAMES.join(", ")}, each at most once.`,
-      "- A rest day is a day with an empty exercises list and a focus of Rest.",
+      "- A rest day is a day with an empty exercises list, no cardio and a focus of Rest.",
       '- "sets" and "reps" are whole numbers.',
+      `- "cardio" is optional, at most one per day: "activity" is one of ${PLAN_CARDIO_ACTIVITIES.join(", ")} and "minutes" is a whole number. Leave it out on a day with no cardio.`,
       "- Use the exercises he already logs where they fit; the week is his, not a textbook's.",
       '- "note" is one plain sentence he will read above the week.',
     ].join("\n"),
@@ -114,7 +128,7 @@ export function parseDraftReply(reply: string): DraftParse {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       return { ok: false, reason: "one of the days is not a day" };
     }
-    const row = raw as { day?: unknown; focus?: unknown; exercises?: unknown };
+    const row = raw as { day?: unknown; focus?: unknown; exercises?: unknown; cardio?: unknown };
     const day = canonicalDay(row.day);
     if (!day) return { ok: false, reason: `"${String(row.day)}" is not a day of the week` };
     if (seen.has(day)) return { ok: false, reason: `${day} appears twice` };
@@ -128,7 +142,15 @@ export function parseDraftReply(reply: string): DraftParse {
       if ("reason" in parsed) return { ok: false, reason: parsed.reason };
       exercises.push(parsed.exercise);
     }
-    days.push({ day, focus, exercises });
+    // `null` and absent both mean "no cardio"; anything else has to be a
+    // session the Plan tab could have written by hand.
+    if (row.cardio === undefined || row.cardio === null) {
+      days.push({ day, focus, exercises });
+      continue;
+    }
+    const cardio = parseCardio(row.cardio, day);
+    if ("reason" in cardio) return { ok: false, reason: cardio.reason };
+    days.push({ day, focus, exercises, cardio: cardio.cardio });
   }
 
   const rawNote = (body as { note?: unknown }).note;
@@ -151,6 +173,22 @@ function parseExercise(raw: unknown, day: string): { exercise: DraftExercise } |
     return { reason: `${name} on ${day} has no whole number of reps` };
   }
   return { exercise: { name, sets: row.sets as number, reps: row.reps as number } };
+}
+
+function parseCardio(raw: unknown, day: string): { cardio: DraftCardio } | { reason: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { reason: `the cardio on ${day} is not a session` };
+  }
+  const row = raw as { activity?: unknown; minutes?: unknown };
+  const wanted = typeof row.activity === "string" ? row.activity.trim().toLowerCase() : "";
+  const activity = PLAN_CARDIO_ACTIVITIES.find((a) => a.toLowerCase() === wanted);
+  if (!activity) return { reason: `"${String(row.activity)}" on ${day} is not an activity the plan knows` };
+  // Whole minutes, as the Plan tab's own form insists: the card shows the
+  // number as written.
+  if (!Number.isInteger(row.minutes) || (row.minutes as number) < 1) {
+    return { reason: `the ${activity} on ${day} has no whole number of minutes` };
+  }
+  return { cardio: { activity, minutes: row.minutes as number } };
 }
 
 function canonicalDay(value: unknown): string | null {
