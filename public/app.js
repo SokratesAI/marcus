@@ -14,6 +14,7 @@ function switchTab(tab) {
   destroyCharts();
   const renderers = { home: renderHome, plan: renderPlan, log: renderLog, nutrition: renderNutrition, progress: renderProgress };
   view.innerHTML = '';
+  applyDueWeek();
   renderers[tab]();
   view.scrollTop = 0;
   refreshBadge();
@@ -292,14 +293,64 @@ async function requestDraft(goalId, start) {
 
 function acceptDraft() {
   if (!planDraft) return;
-  if (!setPlan(applyDraft(store.get('plan'), planDraft.days))) return;
+  if (planDraft.weekOf) {
+    // A later week waits for its Monday instead of replacing the week he is on.
+    if (!store.set('plannedWeeks', saveWeekAhead(store.get('plannedWeeks', []), planDraft))) return;
+    toast('Saved for the week of ' + niceDate(planDraft.weekOf));
+  } else {
+    if (!setPlan(applyDraft(store.get('plan'), planDraft.days))) return;
+    toast('Plan updated');
+  }
   planDraft = null;
-  toast('Plan updated');
   renderPlan();
 }
 
 function discardDraft() {
   planDraft = null;
+  renderPlan();
+}
+
+// ---------- weeks drafted ahead (idea #209) ----------
+// A week drafted from a later calendar row is kept here, one entry per Monday,
+// until that week begins, and only then written into the plan. An array rather
+// than a map keyed by date: a backup restore keeps only array-valued keys
+// (and `plan`), so a map would be dropped on the way back in.
+
+// Pure: the list with this draft saved under its Monday, replacing any earlier
+// draft for the same week, oldest week first.
+function saveWeekAhead(list, draft) {
+  const rest = (list || []).filter(w => w && w.start !== draft.weekOf);
+  return rest.concat([{ id: draft.weekOf, start: draft.weekOf, days: draft.days,
+                        note: draft.note || '', label: draft.label || null }])
+    .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+}
+
+// Pure: the saved week to apply now, and what keeps waiting. When more than one
+// has begun (the app was not opened for a while) the newest is applied and the
+// older ones are dropped, since each would be overwritten by the next anyway.
+function takeDueWeek(list, thisMonday) {
+  const all = (list || []).filter(w => w && typeof w.start === 'string');
+  const begun = all.filter(w => w.start <= thisMonday);
+  return {
+    due: begun.reduce((a, b) => (!a || b.start > a.start ? b : a), null),
+    waiting: all.filter(w => w.start > thisMonday),
+  };
+}
+
+// Runs before every tab render, so the week becomes the plan the first time the
+// app is opened in it. Applied with applyDraft, the same write Use this week
+// makes, so a saved week and a week used today cannot come out differently.
+function applyDueWeek() {
+  const { due, waiting } = takeDueWeek(store.get('plannedWeeks', []), weekStartOf(todayStr()));
+  if (!due) return false;
+  if (!setPlan(applyDraft(store.get('plan'), due.days))) return false;
+  store.set('plannedWeeks', waiting);
+  toast('This week is now the one Marcus drafted for ' + niceDate(due.start));
+  return true;
+}
+
+function dropWeekAhead(start) {
+  store.set('plannedWeeks', store.get('plannedWeeks', []).filter(w => w && w.start !== start));
   renderPlan();
 }
 
@@ -1893,8 +1944,8 @@ function draftCard(plan, draft) {
             ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min &middot; ${d.cardioChange === 'drafted' ? 'new' : 'kept'}</span></div>` : ``}
             ${d.change === 'cleared' ? `<div class="exercise-line exercise-line--cleared"><span>Marcus left this day out, so what is on it now goes</span></div>` : ``}
           </div>`).join('')}
-        ${draft.weekOf ? `<p class="card__note">Marcus keeps one weekly plan, so using this replaces the week you are on now.</p>` : ``}
-        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> ${draft.weekOf ? 'Use it as my plan now' : 'Use this week'}</button>
+        ${draft.weekOf ? `<p class="card__note">This waits for that week: from ${niceDate(draft.weekOf)} it becomes your plan, and the week you are on now stays as it is.</p>` : ``}
+        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> ${draft.weekOf ? 'Save for that week' : 'Use this week'}</button>
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="discardDraft()">Discard</button>
       </div>`;
 }
@@ -2129,13 +2180,14 @@ function volumeChangeLabel(multiplier) {
 // this week's row does not, because Draft my week is that button.
 function raceCalendarBlock(weeks, goalId) {
   if (!weeks.length) return '';
+  const saved = goalId ? store.get('plannedWeeks', []).map(w => w && w.start) : [];
   return `
     <details class="race-calendar" style="margin:8px 0"${goalId && goalId === raceCalendarOpen ? ' open' : ''}>
       <summary>Every week to the race (${weeks.length})</summary>
       ${weeks.map((w, i) => `
         <div class="exercise-line">
           <span>${niceDate(w.start)}${w.raceWeek ? ' · race week' : ''}</span>
-          <span>${w.phase ? esc(w.phase) + (w.week ? ` week ${w.week} of ${w.weeks}` : '') + ' · ' + esc(volumeChangeLabel(w.multiplier)) : 'no phase'}${w.then ? ` · ${esc(w.then.phase)} from ${niceDate(w.then.from)}` : ''}${goalId && i > 0 ? ` <button class="icon-btn" title="Draft this week" aria-label="Draft the week of ${niceDate(w.start)}" onclick="requestDraft('${esc(goalId)}','${w.start}')"${planDraftBusy ? ' disabled' : ''}><span class="material-icons-round">auto_awesome</span></button>` : ''}</span>
+          <span>${w.phase ? esc(w.phase) + (w.week ? ` week ${w.week} of ${w.weeks}` : '') + ' · ' + esc(volumeChangeLabel(w.multiplier)) : 'no phase'}${w.then ? ` · ${esc(w.then.phase)} from ${niceDate(w.then.from)}` : ''}${saved.includes(w.start) ? ` · <span class="chip chip--primary">Planned</span> <button class="icon-btn" title="Drop the planned week" aria-label="Drop the week Marcus drafted for ${niceDate(w.start)}" onclick="dropWeekAhead('${w.start}')"><span class="material-icons-round">close</span></button>` : ''}${goalId && i > 0 ? ` <button class="icon-btn" title="Draft this week" aria-label="Draft the week of ${niceDate(w.start)}" onclick="requestDraft('${esc(goalId)}','${w.start}')"${planDraftBusy ? ' disabled' : ''}><span class="material-icons-round">auto_awesome</span></button>` : ''}</span>
         </div>`).join('')}
     </details>`;
 }
@@ -2629,7 +2681,7 @@ function renderProgress() {
 const BACKUP_VERSION = 1;
 // Every store key the app writes. `chat` is in here because the coach's memory
 // of the conversation is data the user would miss, not chrome.
-const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'chat', 'deletions'];
+const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'chat', 'deletions', 'plannedWeeks'];
 
 // The three stores the app can delete from, and the reason this list is three
 // names rather than every store: `deleteSession`, `deleteMeal` and `deleteGoal`
