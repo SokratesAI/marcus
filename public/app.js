@@ -2201,7 +2201,9 @@ function homeWeekTarget(todayISO) {
 // on its Monday, for the same reason currentPhase is.
 function raceCalendar(goal, todayISO) {
   const today = dayKey(todayISO || todayStr());
-  if (!goal || !goal.targetDate || goal.targetDate < today) return [];
+  if (!goal) return [];
+  if (!goal.targetDate) return ongoingCalendar(today);
+  if (goal.targetDate < today) return [];
   const phases = (goal.milestones || []).filter(m => m && m.date).slice()
     .sort((a, b) => a.date.localeCompare(b.date));
   const last = weekStartOf(goal.targetDate);
@@ -2242,6 +2244,24 @@ function raceCalendar(goal, todayISO) {
   return weeks;
 }
 
+// An ongoing goal has no race, so there is no last week to count to -- but it
+// still has weeks he might want drafted before they arrive, and until now it
+// got no list at all and so no Draft buttons. The horizon is WEEK_BASELINE_WEEKS
+// rather than a number picked for looks: an ongoing week is sized off his
+// rolling four-week average, so a week further out than that is sized from an
+// average sharing no week with the one that will actually be current when it
+// arrives. Every row is the same -- `Ongoing`, no end date, ONGOING_VOLUME --
+// because that is exactly what weekTarget gives an ongoing goal.
+function ongoingCalendar(today) {
+  const weeks = [];
+  for (let i = 0; i <= WEEK_BASELINE_WEEKS; i++) {
+    weeks.push({ start: shiftDay(weekStartOf(today), 7 * i), phase: 'Ongoing',
+                 week: null, weeks: null, multiplier: ONGOING_VOLUME,
+                 raceWeek: false, then: null, ongoing: true });
+  }
+  return weeks;
+}
+
 // The Home card's phase multipliers (PHASE_VOLUME) as a short label.
 function volumeChangeLabel(multiplier) {
   if (multiplier == null) return 'no volume rule';
@@ -2255,12 +2275,18 @@ function volumeChangeLabel(multiplier) {
 // him and the next card.
 // Every row after this week carries a Draft button for that week (idea #209);
 // this week's row does not, because Draft my week is that button.
+// An ongoing goal has no race, so the summary cannot say "to the race" -- it
+// names the horizon instead, which is the honest description of a list that
+// stops because the baseline runs out rather than because the goal does.
 function raceCalendarBlock(weeks, goalId) {
   if (!weeks.length) return '';
   const saved = goalId ? store.get('plannedWeeks', []).map(w => w && w.start) : [];
+  const heading = weeks[0].ongoing
+    ? `The next ${weeks.length} weeks`
+    : `Every week to the race (${weeks.length})`;
   return `
     <details class="race-calendar" style="margin:8px 0"${goalId && goalId === raceCalendarOpen ? ' open' : ''}>
-      <summary>Every week to the race (${weeks.length})</summary>
+      <summary>${heading}</summary>
       ${weeks.map((w, i) => `
         <div class="exercise-line">
           <span>${niceDate(w.start)}${w.raceWeek ? ' · race week' : ''}</span>

@@ -56,6 +56,15 @@ describe("calendarWeekLine", () => {
       "Draft the week starting 2026-10-05, not the current week: in the plan for Olympic triathlon, that week is week 2 of 6 of the Build phase.");
   });
 
+  it("does not call an ongoing goal's week a phase, because it has none", () => {
+    const line = calendarWeekLine({ ...ROW, goal: "Improve overall health and fitness",
+                                    phase: "Ongoing", week: null, weeks: null, raceWeek: false });
+    expect(line).toBe(
+      "Draft the week starting 2026-10-05, not the current week: in the plan for Improve overall health and fitness, "
+      + "that week is no different from any other: his goal has no target date, so there are no phases.");
+    expect(line).not.toContain("the Ongoing phase");
+  });
+
   it("says when it is the race week", () => {
     expect(calendarWeekLine({ ...ROW, raceWeek: true })).toMatch(/, and it is the race week\.$/);
   });
