@@ -42,10 +42,10 @@ describe("phasePosition", () => {
     expect(phasePosition(TRIATHLON, "2026-10-05")).toContain("last week of Base, so let it lead into Build");
   });
 
-  it("says the target day comes after the taper rather than naming a phase that does not exist", () => {
+  it("says the taper runs up to the target day rather than naming a phase that does not exist", () => {
     const line = phasePosition(TRIATHLON, "2026-12-01");
     expect(line).toContain("Taper phase");
-    expect(line).toContain("the target day comes after it");
+    expect(line).toContain("it runs up to the target day");
     expect(line).toContain("last week before the target day");
   });
 

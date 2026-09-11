@@ -116,7 +116,7 @@ export function phasePosition(goal: DraftGoal, todayISO: string): string | null 
     lastWeek = lastWeek || week === weeks;
   }
   const next = phases[index + 1];
-  line += next ? `; ${next.label} follows until ${next.date}.` : "; the target day comes after it.";
+  line += next ? `; ${next.label} follows until ${next.date}.` : "; it runs up to the target day.";
   if (lastWeek) {
     line += next
       ? ` It is the last week of ${phase.label}, so let it lead into ${next.label}.`
