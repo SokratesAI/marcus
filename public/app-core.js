@@ -2231,6 +2231,41 @@ function validateGoal(rawText, rawDate, todayISO) {
   return { ok: true, goal: { id: uid(), text, targetDate: date, created: today, milestones: buildMilestones(today, date) } };
 }
 
+// Editing a goal is not "remove it and set it again", which was the only way to
+// fix a typo or move a race day. A goal carries the milestone ticks you have
+// already earned, and an id that a two-phone merge identifies it by
+// (`MERGE_KEYS.goals`), so re-creating it drops the ticks and leaves the other
+// phone holding a second goal beside the new one. This keeps both: same `id`,
+// same `created`, and the done flags carried across when the dates move.
+function validateGoalEdit(existing, rawText, rawDate, todayISO) {
+  if (!existing || !existing.id) return { ok: false, message: 'That goal is gone.' };
+  const result = validateGoal(rawText, rawDate, todayISO);
+  if (!result.ok) return result;
+  const goal = result.goal;
+  goal.id = existing.id;
+  // Phases are re-cut from the day the goal was SET, never from today.
+  // Re-cutting from today would make pushing a race back one week also throw
+  // away every week of base already behind you and restart the block this
+  // morning -- the date moved, the training did not.
+  const created = existing.created || goal.created;
+  goal.created = created;
+  if (String(existing.targetDate || '') === goal.targetDate) {
+    goal.milestones = Array.isArray(existing.milestones) ? existing.milestones : [];
+  } else if (goal.targetDate) {
+    goal.milestones = carryMilestonesDone(buildMilestones(created, goal.targetDate), existing.milestones);
+  }
+  return { ok: true, goal };
+}
+
+// Phases are matched by label, which is the only stable thing about them: the
+// ids are fresh on every cut and the dates are what changed. An ongoing goal
+// has no phases at all, so nothing is carried into one.
+function carryMilestonesDone(fresh, previous) {
+  const done = {};
+  (Array.isArray(previous) ? previous : []).forEach(m => { if (m && m.done) done[m.label] = true; });
+  return fresh.map(m => (done[m.label] ? Object.assign({}, m, { done: true }) : m));
+}
+
 // ---------- endurance work inside the written week ----------
 // You could always LOG a swim; the plan could never ASK for one. Every day in a
 // plan was a list of exercises with sets and reps, so a week for an endurance
