@@ -31,10 +31,20 @@ describe("phasePosition", () => {
   });
 
   it("starts a later phase the day after the one before it ends", () => {
-    // Build starts on Sunday 10-11, so on that day its first week is the one it started in.
-    expect(phasePosition(TRIATHLON, "2026-10-11")).toContain("week 1 of 6 of the Build phase");
-    // From the Monday after, that partial week no longer shows, and Build owns five.
+    // Build starts on Sunday 10-11. That day is its opening day, not a numbered
+    // week: Build owns the five Mondays from 10-12.
+    const sunday = phasePosition(TRIATHLON, "2026-10-11")!;
+    expect(sunday).toContain("opening days of the Build phase (Add intensity.), which began 2026-10-11");
+    expect(sunday).toContain("its week 1 of 5 starts 2026-10-12");
+    expect(sunday).not.toMatch(/week \d+ of \d+ of the/);
     expect(phasePosition(TRIATHLON, "2026-10-12")).toContain("week 1 of 5 of the Build phase");
+  });
+
+  it("gives the Monday after a mid-week phase start the same number on the Sunday as on the Monday", () => {
+    // Used to say week 1 of 6 on the Sunday and week 1 of 5 on the Monday, so
+    // the phase's length changed under him overnight.
+    expect(phasePosition(TRIATHLON, "2026-10-11")).toContain("of 5 starts");
+    expect(phasePosition(TRIATHLON, "2026-10-11")).not.toContain("of 6");
   });
 
   it("reads the phase you are in by the calendar, whatever order the milestones are stored in", () => {
@@ -122,7 +132,8 @@ describe("a drafted week knows where it sits in the progression", () => {
         .post("/api/plan-draft")
         .send({ goals: [TRIATHLON], today: "2026-10-11", context: {} });
       expect(res.status).toBe(200);
-      expect(calls.join("")).toContain("week 1 of 6 of the Build phase");
+      // 10-11 is Build's one opening day, so only that day produces this line.
+      expect(calls.join("")).toContain("opening days of the Build phase (Add intensity.), which began 2026-10-11");
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

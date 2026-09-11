@@ -73,8 +73,12 @@ describe("raceCalendar", () => {
     const made = app.validateGoal("Olympic triathlon", "2026-11-23", TODAY);
     expect(made.ok).toBe(true);
     const rows = app.raceCalendar(made.goal, TODAY);
+    // Set on a Wednesday, so this week is Base's opening days and carries no
+    // number; Base's week 1 is next Monday.
+    expect(rows[0].phase).toBe("Base");
+    expect(rows[0].week).toBe(null);
     const byPhase: Record<string, any[]> = {};
-    rows.forEach((r: any) => { (byPhase[r.phase] ||= []).push(r); });
+    rows.slice(1).forEach((r: any) => { (byPhase[r.phase] ||= []).push(r); });
     expect(Object.keys(byPhase)).toEqual(["Base", "Build", "Peak", "Taper"]);
     for (const list of Object.values(byPhase)) {
       expect(list.map((r: any) => r.week)).toEqual(list.map((_: any, i: number) => i + 1));
@@ -90,16 +94,45 @@ describe("raceCalendar", () => {
     const made = app.validateGoal("Olympic triathlon", "2026-11-23", TODAY);
     const nextDay = (d: string) => new Date(Date.parse(d + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
     let compared = 0;
+    let opening = 0;
     for (const g of [made.goal, goal()]) {
       for (let d = g.created; d <= g.targetDate; d = nextDay(d)) {
         const row = app.raceCalendar(g, d)[0];
-        expect(row.week).not.toBe(null);
-        expect(phasePosition(g, d)).toContain(`week ${row.week} of ${row.weeks} of the ${row.phase} phase`);
+        const line = phasePosition(g, d)!;
+        if (row.week === null) {
+          expect(line).toContain(`opening days of the ${row.phase} phase`);
+          expect(line).not.toMatch(/week \d+ of \d+ of the/);
+          opening++;
+        } else {
+          expect(line).toContain(`week ${row.week} of ${row.weeks} of the ${row.phase} phase`);
+        }
         compared++;
       }
     }
     // Both goals run from their created day to the race, so this is every day of both.
     expect(compared).toBeGreaterThan(100);
+    // Phases here start mid-week, so the unnumbered branch is exercised too.
+    expect(opening).toBeGreaterThan(0);
+  });
+
+  it("gives each calendar week one label, whichever day of the goal he looks", () => {
+    // A phase starting on a Sunday used to make the next Monday's row read
+    // "week 2 of 6" that Sunday and "week 1 of 5" from the Monday.
+    const app = loadApp();
+    const made = app.validateGoal("Olympic triathlon", "2026-11-23", TODAY);
+    const nextDay = (d: string) => new Date(Date.parse(d + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
+    const seen: Record<string, Set<string>> = {};
+    for (const g of [made.goal, goal()]) {
+      for (let d = g.created; d <= g.targetDate; d = nextDay(d)) {
+        for (const r of app.raceCalendar(g, d)) {
+          if (r.week === null) continue;
+          (seen[`${g.text} ${r.start}`] ||= new Set()).add(`${r.phase} ${r.week}/${r.weeks}`);
+        }
+      }
+    }
+    // Eleven weeks of the Olympic goal and four of the Sprint one.
+    expect(Object.keys(seen).length).toBe(15);
+    expect(Object.entries(seen).filter(([, labels]) => labels.size > 1).map(([k, s]) => `${k}: ${[...s]}`)).toEqual([]);
   });
 
   it("names a phase shorter than a week in the row it starts in", () => {
