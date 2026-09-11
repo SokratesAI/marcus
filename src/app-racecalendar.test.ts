@@ -81,6 +81,22 @@ describe("raceCalendar", () => {
     }
   });
 
+  it("names a phase shorter than a week in the row it starts in", () => {
+    // Reviewer's case: a 30-day goal, whose Taper runs Tuesday to race-day
+    // Wednesday. Every Monday is in Peak, so without this Taper is never shown.
+    const app = loadApp();
+    const made = app.validateGoal("10 km", "2026-02-04", "2026-01-05");
+    const rows = app.raceCalendar(made.goal, "2026-01-05");
+    const race = rows[rows.length - 1];
+    expect(race.raceWeek).toBe(true);
+    expect(race.phase).toBe("Peak");
+    expect(race.then.phase).toBe(app.currentPhase(made.goal, "2026-02-04").label);
+    expect(race.then.from).toBe("2026-02-03");
+    expect(app.raceCalendarBlock(rows)).toContain("Taper from");
+    // A row with no phase change inside it names none.
+    expect(rows[0].then).toBe(null);
+  });
+
   it("carries the Home card's multiplier for each phase", () => {
     const app = loadApp();
     const rows = app.raceCalendar(goal(), TODAY);

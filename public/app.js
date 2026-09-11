@@ -2041,7 +2041,14 @@ function raceCalendar(goal, todayISO) {
     const ref = k < today ? today : k;
     const index = phases.findIndex(p => p.date >= ref);
     const row = { start: k, phase: null, week: null, weeks: null, multiplier: null,
-                  raceWeek: k === last };
+                  raceWeek: k === last, then: null };
+    // A phase that begins after this row's Monday and before the next one
+    // would otherwise never be named -- a four-day Taper in the race week read
+    // "Peak" here while Home says Taper on race day -- so the row names it too.
+    const end = shiftDay(k, 6);
+    const starting = phases.find((p, i) => i > 0 && phases[i - 1].date >= ref
+      && shiftDay(phases[i - 1].date, 1) <= end && shiftDay(phases[i - 1].date, 1) <= goal.targetDate);
+    if (starting) row.then = { phase: starting.label, from: shiftDay(phases[phases.indexOf(starting) - 1].date, 1) };
     if (index >= 0) {
       const phase = phases[index];
       const from = index > 0 ? shiftDay(phases[index - 1].date, 1) : (goal.created || null);
@@ -2066,7 +2073,7 @@ function raceCalendar(goal, todayISO) {
   return weeks;
 }
 
-// The same words the Home card uses for a phase's multiplier.
+// The Home card's phase multipliers (PHASE_VOLUME) as a short label.
 function volumeChangeLabel(multiplier) {
   if (multiplier == null) return 'no volume rule';
   if (multiplier === 1) return 'volume level';
@@ -2074,8 +2081,9 @@ function volumeChangeLabel(multiplier) {
   return `volume ${multiplier > 1 ? '+' : '−'}${pct}%`;
 }
 
-// Folded by default: a goal a year out is fifty rows, and they are there when
-// he opens them rather than between him and the next card.
+// Folded by default: a goal a year out is fifty rows (ten years, the most a goal
+// may be, is 520), and they are there when he opens them rather than between
+// him and the next card.
 function raceCalendarBlock(weeks) {
   if (!weeks.length) return '';
   return `
@@ -2084,7 +2092,7 @@ function raceCalendarBlock(weeks) {
       ${weeks.map(w => `
         <div class="exercise-line">
           <span>${niceDate(w.start)}${w.raceWeek ? ' · race week' : ''}</span>
-          <span>${w.phase ? esc(w.phase) + (w.week ? ` week ${w.week} of ${w.weeks}` : '') + ' · ' + esc(volumeChangeLabel(w.multiplier)) : 'no phase'}</span>
+          <span>${w.phase ? esc(w.phase) + (w.week ? ` week ${w.week} of ${w.weeks}` : '') + ' · ' + esc(volumeChangeLabel(w.multiplier)) : 'no phase'}${w.then ? ` · ${esc(w.then.phase)} from ${niceDate(w.then.from)}` : ''}</span>
         </div>`).join('')}
     </details>`;
 }
