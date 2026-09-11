@@ -160,7 +160,7 @@ describe("raceCalendar", () => {
     expect(html).toContain("Every week to the race (4)");
     expect(html).toContain("Base week 1 of 2");
     expect(html).toContain("race week");
-    expect(String(vm.runInContext("renderPlan", app))).toContain("raceCalendarBlock(raceCalendar(g))");
+    expect(String(vm.runInContext("renderPlan", app))).toContain("raceCalendarBlock(raceCalendar(g), g.id)");
   });
 });
 

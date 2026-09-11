@@ -108,7 +108,7 @@ function renderPlan() {
             <span><button class="icon-btn" onclick="toggleMilestone('${g.id}','${m.id}')"><span class="material-icons-round">${m.done ? 'check_box' : 'check_box_outline_blank'}</span></button>${esc(m.label)} — ${esc(m.note)}</span>
             <span>${niceDate(m.date)}</span>
           </div>`).join('')}
-        ${raceCalendarBlock(raceCalendar(g))}
+        ${raceCalendarBlock(raceCalendar(g), g.id)}
         <button class="btn btn--tonal btn--block" style="margin-top:12px" onclick="deleteGoal('${g.id}')">Remove goal</button>
       </div>`).join('') : `<div class="empty">No goal yet — tell Marcus what you are training for and he will date the phases.</div>`}
 
@@ -182,7 +182,8 @@ function renderPlan() {
     renderPlan();
   });
 
-  document.getElementById('draftWeek').addEventListener('click', requestDraft);
+  // Wrapped so requestDraft gets no arguments; it also ignores a click event.
+  document.getElementById('draftWeek').addEventListener('click', () => requestDraft());
 
   document.getElementById('addPlanCardio').addEventListener('click', () => {
     const result = validatePlanCardio(
@@ -221,8 +222,37 @@ function acceptProposal(id) {
   renderPlan();
 }
 
-async function requestDraft() {
+// A later row of one goal's "every week to the race" list, with the goal's text,
+// or null. This week's row is not one: Draft my week already drafts it.
+function calendarRow(goalId, start) {
+  const goal = store.get('goals', []).find(g => g && g.id === goalId);
+  if (!goal || !start || start <= weekStartOf(todayStr())) return null;
+  const row = raceCalendar(goal).find(r => r.start === start);
+  return row ? Object.assign({ goal: goal.text }, row) : null;
+}
+
+// Pure: the Home card's target resized by a calendar row's own phase, so a
+// drafted Build week is not sized for the Base week Home is showing today. The
+// baseline is his log and belongs to no goal; only the multiplier moves.
+function calendarWeekTarget(target, row) {
+  if (!target || target.reason !== 'ok' || !row || row.multiplier == null) return null;
+  return Object.assign({}, target, {
+    phase: row.phase, phaseEnds: null, multiplier: row.multiplier,
+    volumeTarget: Math.round(target.baseline * row.multiplier),
+  });
+}
+
+function calendarRowLabel(row) {
+  return row.phase ? row.phase + (row.week ? ` week ${row.week} of ${row.weeks}` : '') : 'no phase';
+}
+
+async function requestDraft(goalId, start) {
   if (planDraftBusy) return;
+  // Only a string is a goal id; anything else (a click event) is Draft my week.
+  const fromRow = typeof goalId === 'string';
+  const row = fromRow ? calendarRow(goalId, start) : null;
+  if (fromRow && !row) { toast('That week is no longer on the calendar'); return; }
+  if (row) raceCalendarOpen = goalId;
   planDraftBusy = true;
   renderPlan();
   try {
@@ -234,7 +264,11 @@ async function requestDraft() {
         today: todayStr(),
         // The kilogram target the Home card is showing him right now, so the
         // week Marcus drafts and the number on Home cannot disagree.
-        week: homeWeekTarget(),
+        week: row ? calendarWeekTarget(homeWeekTarget(), row) : homeWeekTarget(),
+        // The row's own label rather than its date: the server counting from
+        // the date gets a phase that began mid-week this week one week short.
+        calendarWeek: row ? { goal: row.goal, start: row.start, phase: row.phase,
+                              week: row.week, weeks: row.weeks, raceWeek: row.raceWeek } : undefined,
         context: {
           plan: store.get('plan'),
           sessions: store.get('sessions', []),
@@ -246,7 +280,8 @@ async function requestDraft() {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) { toast(body.error || 'Marcus could not draft a week'); return; }
     if (!body.days || !body.days.length) { toast('Marcus did not draft a week'); return; }
-    planDraft = { days: body.days, note: body.note || '' };
+    planDraft = { days: body.days, note: body.note || '',
+                  weekOf: row ? row.start : null, label: row ? calendarRowLabel(row) : null };
   } catch {
     toast('Marcus could not be reached');
   } finally {
@@ -1788,6 +1823,9 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
 // agreed to.
 let planDraft = null;
 let planDraftBusy = false;
+// The goal whose "every week to the race" list a row's Draft button was tapped
+// in, so the re-render that shows the busy state does not fold that list shut.
+let raceCalendarOpen = null;
 
 // Pure: a plan and the coach's days in, a new plan out. A day the draft does
 // not name becomes a rest day rather than keeping last week's exercises --
@@ -1842,7 +1880,8 @@ function draftCard(plan, draft) {
   if (!draft) return '';
   return `
       <div class="card" style="display:block">
-        <div class="card__title-row"><h2>Marcus's week</h2><span class="chip chip--primary">Not applied</span></div>
+        <div class="card__title-row"><h2>Marcus's week${draft.weekOf ? ` of ${niceDate(draft.weekOf)}` : ''}</h2><span class="chip chip--primary">Not applied</span></div>
+        ${draft.label ? `<div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Drafted for ${esc(draft.label)}</div>` : ``}
         ${draft.note ? `<p class="card__note">${esc(draft.note)}</p>` : ``}
         ${draftPreview(plan, draft.days).map(d => `
           <div class="plan-day" style="margin-top:8px">
@@ -1854,7 +1893,8 @@ function draftCard(plan, draft) {
             ${d.cardio ? `<div class="exercise-line"><span>${esc(d.cardio.activity)}</span><span>${d.cardio.minutes} min &middot; ${d.cardioChange === 'drafted' ? 'new' : 'kept'}</span></div>` : ``}
             ${d.change === 'cleared' ? `<div class="exercise-line exercise-line--cleared"><span>Marcus left this day out, so what is on it now goes</span></div>` : ``}
           </div>`).join('')}
-        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> Use this week</button>
+        ${draft.weekOf ? `<p class="card__note">Marcus keeps one weekly plan, so using this replaces the week you are on now.</p>` : ``}
+        <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptDraft()"><span class="material-icons-round">check</span> ${draft.weekOf ? 'Use it as my plan now' : 'Use this week'}</button>
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="discardDraft()">Discard</button>
       </div>`;
 }
@@ -2085,15 +2125,17 @@ function volumeChangeLabel(multiplier) {
 // Folded by default: a goal a year out is fifty rows (ten years, the most a goal
 // may be, is 520), and they are there when he opens them rather than between
 // him and the next card.
-function raceCalendarBlock(weeks) {
+// Every row after this week carries a Draft button for that week (idea #209);
+// this week's row does not, because Draft my week is that button.
+function raceCalendarBlock(weeks, goalId) {
   if (!weeks.length) return '';
   return `
-    <details class="race-calendar" style="margin:8px 0">
+    <details class="race-calendar" style="margin:8px 0"${goalId && goalId === raceCalendarOpen ? ' open' : ''}>
       <summary>Every week to the race (${weeks.length})</summary>
-      ${weeks.map(w => `
+      ${weeks.map((w, i) => `
         <div class="exercise-line">
           <span>${niceDate(w.start)}${w.raceWeek ? ' · race week' : ''}</span>
-          <span>${w.phase ? esc(w.phase) + (w.week ? ` week ${w.week} of ${w.weeks}` : '') + ' · ' + esc(volumeChangeLabel(w.multiplier)) : 'no phase'}${w.then ? ` · ${esc(w.then.phase)} from ${niceDate(w.then.from)}` : ''}</span>
+          <span>${w.phase ? esc(w.phase) + (w.week ? ` week ${w.week} of ${w.weeks}` : '') + ' · ' + esc(volumeChangeLabel(w.multiplier)) : 'no phase'}${w.then ? ` · ${esc(w.then.phase)} from ${niceDate(w.then.from)}` : ''}${goalId && i > 0 ? ` <button class="icon-btn" title="Draft this week" aria-label="Draft the week of ${niceDate(w.start)}" onclick="requestDraft('${esc(goalId)}','${w.start}')"${planDraftBusy ? ' disabled' : ''}><span class="material-icons-round">auto_awesome</span></button>` : ''}</span>
         </div>`).join('')}
     </details>`;
 }
