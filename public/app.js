@@ -317,10 +317,12 @@ function discardDraft() {
 // (and `plan`), so a map would be dropped on the way back in.
 
 // Pure: the list with this draft saved under its Monday, replacing any earlier
-// draft for the same week, oldest week first.
-function saveWeekAhead(list, draft) {
+// draft for the same week, oldest week first. The id is per save, not the
+// Monday: an applied or dropped week leaves a tombstone on its id, and a
+// tombstone on the date would swallow every later draft for that week.
+function saveWeekAhead(list, draft, nowMs) {
   const rest = (list || []).filter(w => w && w.start !== draft.weekOf);
-  return rest.concat([{ id: draft.weekOf, start: draft.weekOf, days: draft.days,
+  return rest.concat([{ id: draft.weekOf + '@' + (nowMs || Date.now()), start: draft.weekOf, days: draft.days,
                         note: draft.note || '', label: draft.label || null }])
     .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 }
@@ -341,16 +343,20 @@ function takeDueWeek(list, thisMonday) {
 // app is opened in it. Applied with applyDraft, the same write Use this week
 // makes, so a saved week and a week used today cannot come out differently.
 function applyDueWeek() {
-  const { due, waiting } = takeDueWeek(store.get('plannedWeeks', []), weekStartOf(todayStr()));
+  const all = store.get('plannedWeeks', []);
+  const { due, waiting } = takeDueWeek(all, weekStartOf(todayStr()));
   if (!due) return false;
   if (!setPlan(applyDraft(store.get('plan'), due.days))) return false;
+  all.filter(w => w && waiting.indexOf(w) === -1).forEach(w => recordDeletion('plannedWeeks', w.id));
   store.set('plannedWeeks', waiting);
   toast('This week is now the one Marcus drafted for ' + niceDate(due.start));
   return true;
 }
 
 function dropWeekAhead(start) {
-  store.set('plannedWeeks', store.get('plannedWeeks', []).filter(w => w && w.start !== start));
+  const all = store.get('plannedWeeks', []);
+  all.filter(w => w && w.start === start).forEach(w => recordDeletion('plannedWeeks', w.id));
+  store.set('plannedWeeks', all.filter(w => w && w.start !== start));
   renderPlan();
 }
 
@@ -2688,7 +2694,9 @@ const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'm
 // are the only delete buttons in the app, and all three key on an id this
 // browser minted. `weights` and `chat` have no delete path at all, so they
 // carry no tombstones and nothing below touches them.
-const DELETABLE_STORES = ['sessions', 'meals', 'goals', 'photos'];
+// `plannedWeeks` is here too: a week already applied or dropped must not come
+// back from the other phone, or it would be applied over the plan a second time.
+const DELETABLE_STORES = ['sessions', 'meals', 'goals', 'photos', 'plannedWeeks'];
 
 // A deletion has to be a record of its own or it does not survive a sync. From
 // the other phone, "deleted here" and "never arrived here" are the same
@@ -2967,6 +2975,8 @@ const MERGE_KEYS = {
   measurements: { by: ['date', 'site'] },
   photos: { by: ['date', 'pose'] },
   chat: { by: ['ts', 'role', 'text'], sort: 'ts' },
+  // A week saved ahead on one phone must survive a push from the other.
+  plannedWeeks: { by: ['id'] },
   // A tombstone is a record like any other and merges like one: the union of
   // both sides is what either phone deleted, and a deletion both sides know
   // about is one deletion.

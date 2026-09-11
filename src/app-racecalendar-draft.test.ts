@@ -235,6 +235,45 @@ describe("a week drafted ahead waits for its Monday", () => {
     expect(vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app)).not.toContain(">Planned<");
   });
 
+  it("merges with the other phone's saved weeks on a conflicting push", () => {
+    const app = loadApp([]);
+    const out = run(app, `mergeBackupData(
+      { plannedWeeks: [{ id: '2026-10-12@2', start: '2026-10-12', days: [] }] },
+      { plannedWeeks: [{ id: '2026-10-05@1', start: '2026-10-05', days: [] }] }).plannedWeeks.map(w => w.start).sort()`);
+    expect(out).toEqual(["2026-10-05", "2026-10-12"]);
+  });
+
+  it("does not come back from the other phone once applied or dropped", () => {
+    const app = loadApp([]);
+    vm.runInContext(`(() => {
+      const mon = weekStartOf(todayStr());
+      store.set('plannedWeeks', [
+        { id: mon + '@1', start: mon, days: [{ day: 'Tuesday', focus: 'Swim day', exercises: [] }] },
+        { id: shiftDay(mon, 7) + '@1', start: shiftDay(mon, 7), days: [] },
+      ]);
+    })()`, app);
+    const stale = run(app, "store.get('plannedWeeks')");
+    expect(vm.runInContext("applyDueWeek()", app)).toBe(true);
+    vm.runInContext(`dropWeekAhead(shiftDay(weekStartOf(todayStr()), 7))`, app);
+    // The other phone still holds both weeks and pushes them back.
+    const merged = run(app, `mergeBackupData({ plannedWeeks: store.get('plannedWeeks'), deletions: store.get('deletions') },
+      { plannedWeeks: ${JSON.stringify(stale)} }).plannedWeeks`);
+    expect(merged).toEqual([]);
+  });
+
+  it("a week saved again after one was dropped is not swallowed by the old tombstone", async () => {
+    const app = loadApp([]);
+    const later = rows(app)[2];
+    await app.requestDraft("g1", later.start);
+    vm.runInContext("acceptDraft()", app);
+    vm.runInContext(`dropWeekAhead('${later.start}')`, app);
+    await new Promise(r => setTimeout(r, 2));
+    await app.requestDraft("g1", later.start);
+    vm.runInContext("acceptDraft()", app);
+    const merged = run(app, `mergeBackupData({ plannedWeeks: store.get('plannedWeeks'), deletions: store.get('deletions') }, {}).plannedWeeks`);
+    expect(merged.map((w: any) => w.start)).toEqual([later.start]);
+  });
+
   it("survives a backup and a restore", async () => {
     const app = loadApp([]);
     await app.requestDraft("g1", rows(app)[2].start);
