@@ -493,16 +493,18 @@ export function createApp(
     // `today` is his own calendar day as the page reads it; the server's clock
     // is UTC and would put a goal a phase early for the hour or two after his
     // midnight (one in winter, two in summer).
-    const { goal, goals, context, today } = req.body as {
+    // `week` is the Home card's weekTarget; plan-draft.ts checks its shape.
+    const { goal, goals, context, today, week } = req.body as {
       goal?: unknown;
       goals?: unknown;
       context?: unknown;
       today?: unknown;
+      week?: unknown;
     };
     const result = await draftWeek(
       (Array.isArray(goals) ? goals : goal ?? null) as Parameters<typeof draftWeek>[0],
       (context ?? {}) as Parameters<typeof draftWeek>[1],
-      { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined },
+      { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined, week },
     );
     if (result.status === "ok") {
       res.status(200).json({ days: result.days, note: result.note });

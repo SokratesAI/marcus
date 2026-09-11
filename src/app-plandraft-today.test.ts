@@ -54,4 +54,36 @@ describe("the Draft button", () => {
     expect(body.today).toBe(app.todayStr());
     expect(Array.isArray(body.goals)).toBe(true);
   });
+
+  it("sends the kilogram target the Home card is showing, so the draft is sized to it", async () => {
+    const sent: string[] = [];
+    const app = loadApp(sent);
+    // A goal in its Base phase and three completed weeks of lifting, so the
+    // card has a real target rather than "too early".
+    vm.runInContext(`(() => {
+      const t = todayStr();
+      store.set('goals', [{ text: 'Olympic triathlon', targetDate: shiftDay(t, 120), created: shiftDay(t, -30),
+        milestones: [{ label: 'Base', note: '', date: shiftDay(t, 40), done: false },
+                     { label: 'Taper', note: '', date: shiftDay(t, 120), done: false }] }]);
+      store.set('sessions', [8, 15, 22].map(n => ({ date: shiftDay(t, -n),
+        exercises: [{ name: 'Back Squat', sets: [{ reps: 5, weight: 100 }, { reps: 5, weight: 100 }] }] })));
+    })()`, app);
+    await app.requestDraft();
+    const body = JSON.parse(sent[0]);
+    const expected = vm.runInContext(
+      "weekTarget(goalsSorted()[0], store.get('plan'), store.get('sessions', []), todayStr())", app);
+    expect(expected.reason).toBe("ok");
+    expect(expected.phase).toBe("Base");
+    expect(body.week).toEqual(JSON.parse(JSON.stringify(expected)));
+  });
+
+  it("sizes the Home card and the draft through the same function", () => {
+    // Two copies of the weekTarget call are how the screens drifted apart in
+    // the first place; renderHome and requestDraft must both go through it.
+    const renderHome = String(vm.runInContext("renderHome", loadApp([])));
+    const requestDraft = String(vm.runInContext("requestDraft", loadApp([])));
+    expect(renderHome).toContain("homeWeekTarget()");
+    expect(requestDraft).toContain("homeWeekTarget()");
+    expect(renderHome + requestDraft).not.toContain("weekTarget(goalsSorted");
+  });
 });
