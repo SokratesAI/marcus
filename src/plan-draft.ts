@@ -59,18 +59,85 @@ export interface DraftDay {
 export interface DraftGoal {
   text?: unknown;
   targetDate?: unknown;
+  /** The day the goal was set; the first phase starts here. */
+  created?: unknown;
+  /** The Base/Build/Peak/Taper checkpoints the page cut from the target date,
+   * each `{label, note, date}` where `date` is the day the phase ends. */
+  milestones?: unknown;
 }
 
-function describeGoal(goal: DraftGoal): string {
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function isoDay(value: unknown): string | null {
+  return typeof value === "string" && ISO_DAY.test(value) ? value : null;
+}
+
+function daysBetween(fromISO: string, toISO: string): number {
+  return Math.round((Date.parse(toISO + "T00:00:00Z") - Date.parse(fromISO + "T00:00:00Z")) / 86400000);
+}
+
+function dayAfter(iso: string): string {
+  return new Date(Date.parse(iso + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
+}
+
+interface Phase {
+  label: string;
+  note: string;
+  date: string;
+}
+
+function phasesOf(goal: DraftGoal): Phase[] {
+  if (!Array.isArray(goal.milestones)) return [];
+  return goal.milestones
+    .filter((m) => m && typeof m.label === "string" && m.label.trim() && isoDay(m.date))
+    .map((m) => ({ label: m.label.trim(), note: typeof m.note === "string" ? m.note.trim() : "", date: m.date as string }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Idea #209's "week-by-week progression". A drafted week is one week, so the
+ * progression lives in telling the coach which week of which phase this one is
+ * -- the phase dates are the page's own arithmetic off his target date, and
+ * without them every draft is the same generic week whether the race is eight
+ * months or eight days away. The phase you are in is the first one whose end
+ * date has not passed, the same rule the page's `currentPhase` uses. */
+export function phasePosition(goal: DraftGoal, todayISO: string): string | null {
+  const phases = phasesOf(goal);
+  const index = phases.findIndex((p) => p.date >= todayISO);
+  if (index < 0) return null;
+  const phase = phases[index];
+  const start = index > 0 ? dayAfter(phases[index - 1].date) : isoDay(goal.created);
+  const about = phase.note ? ` (${phase.note})` : "";
+  let line = `This week is in the ${phase.label} phase${about}, which ends ${phase.date}`;
+  // With a start day the week count decides; without one, the calendar does.
+  let lastWeek = daysBetween(todayISO, phase.date) < 7;
+  if (start && start <= todayISO) {
+    const weeks = Math.max(1, Math.ceil((daysBetween(start, phase.date) + 1) / 7));
+    const week = Math.min(weeks, Math.floor(daysBetween(start, todayISO) / 7) + 1);
+    line = `This is week ${week} of ${weeks} of the ${phase.label} phase${about}, which ends ${phase.date}`;
+    lastWeek = week === weeks;
+  }
+  const next = phases[index + 1];
+  line += next ? `; ${next.label} follows until ${next.date}.` : "; it runs up to the target day.";
+  if (lastWeek) {
+    line += next
+      ? ` It is the last week of ${phase.label}, so let it lead into ${next.label}.`
+      : ` It is the last week before the target day.`;
+  }
+  return line;
+}
+
+function describeGoal(goal: DraftGoal, todayISO: string): string {
   const text = String(goal.text).trim();
-  return typeof goal.targetDate === "string" && goal.targetDate ? `${text} (target date ${goal.targetDate})` : text;
+  const described = typeof goal.targetDate === "string" && goal.targetDate ? `${text} (target date ${goal.targetDate})` : text;
+  const position = phasePosition(goal, todayISO);
+  return position ? `${described}. ${position}` : described;
 }
 
 /** Idea #209 asks for "one or more goals". The page used to send only the
  * nearest, so a second goal reached the model as a row in the JSON dump and
  * nothing told it the week had to serve it. Sorted here rather than trusted
  * from the caller, because the prompt says "nearest first". */
-function goalLines(goals: DraftGoal | DraftGoal[] | null, storedGoals: unknown): string {
+function goalLines(goals: DraftGoal | DraftGoal[] | null, storedGoals: unknown, todayISO: string): string {
   const list = (Array.isArray(goals) ? goals : goals ? [goals] : [])
     .filter((g) => g && typeof g.text === "string" && g.text.trim().length)
     .map((g, i) => ({ g, i, date: typeof g.targetDate === "string" && g.targetDate ? g.targetDate : "\uffff" }))
@@ -84,10 +151,10 @@ function goalLines(goals: DraftGoal | DraftGoal[] | null, storedGoals: unknown):
       ? "Every goal Edvard has written has passed its target date, so build a sensible general week and suggest in the note that he sets a new goal."
       : "Edvard has not written a goal yet, so build a sensible general week.";
   }
-  if (list.length === 1) return `Edvard is training for: ${describeGoal(list[0])}`;
+  if (list.length === 1) return `Edvard is training for: ${describeGoal(list[0], todayISO)}`;
   return [
     `Edvard is training for ${list.length} goals at once, nearest first:`,
-    ...list.map((g) => `- ${describeGoal(g)}`),
+    ...list.map((g) => `- ${describeGoal(g, todayISO)}`),
     "The week has to serve every one of them. Where they pull in different directions, favour the nearest target date, and say in the note what you traded off.",
   ].join("\n");
 }
@@ -95,10 +162,23 @@ function goalLines(goals: DraftGoal | DraftGoal[] | null, storedGoals: unknown):
 /** The prompt is built here rather than in the browser for the same reason
  * `buildPrompt` is: what reaches the model is decided in one place and is
  * testable. */
-export function buildDraftPrompt(goals: DraftGoal | DraftGoal[] | null, context: CoachContext): string {
+export function buildDraftPrompt(
+  goals: DraftGoal | DraftGoal[] | null,
+  context: CoachContext,
+  todayISO?: string,
+): string {
+  const today = isoDay(todayISO) ?? new Date().toISOString().slice(0, 10);
+  const phased = (Array.isArray(goals) ? goals : goals ? [goals] : []).some(
+    (g) => g && typeof g.text === "string" && g.text.trim() && phasePosition(g, today),
+  );
+  const progression = phased
+    ? [
+        "- The week is one step in a progression from Base through Build and Peak to Taper: shape it for the phase and the week in it named above, not for the goal in general, and name that phase and week in the note.",
+      ]
+    : [];
   return [
     "Draft one week of training for Edvard.",
-    goalLines(goals, context.goals),
+    goalLines(goals, context.goals, today),
     "TRAINING DATA (his own records, as stored by the app)",
     JSON.stringify(
       {
@@ -120,6 +200,7 @@ export function buildDraftPrompt(goals: DraftGoal | DraftGoal[] | null, context:
       `- "cardio" is optional, at most one per day: "activity" is one of ${PLAN_CARDIO_ACTIVITIES.join(", ")} and "minutes" is a whole number. Leave it out on a day with no cardio.`,
       "- Use the exercises he already logs where they fit; the week is his, not a textbook's.",
       '- "note" is one plain sentence he will read above the week.',
+      ...progression,
     ].join("\n"),
   ].join("\n\n");
 }
@@ -260,12 +341,14 @@ export async function draftWeek(
     fetch: typeof globalThis.fetch;
     readTimeoutMs?: number;
     timeoutMs?: number;
+    /** His calendar day as the page reads it; the phase counts come from it. */
+    today?: string;
   },
 ): Promise<DraftResult> {
   // No history: a draft is a single question about his records, not a turn in
   // a conversation, and re-sending the chat would put the chat's tone in it.
   const empty: ChatTurn[] = [];
-  const result = await askCoach(buildDraftPrompt(goal, context), context, empty, deps);
+  const result = await askCoach(buildDraftPrompt(goal, context, deps.today), context, empty, deps);
   if (result.status !== "ok") return result;
   const parsed = parseDraftReply(result.reply);
   if (!parsed.ok) return { status: "unusable", reason: parsed.reason };
