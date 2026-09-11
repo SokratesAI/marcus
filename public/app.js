@@ -364,12 +364,17 @@ function applyDueWeekOnVisible(doc, apply, redraw) {
   });
 }
 
-// Only Home and Plan are redrawn. Log and Food may hold a half-typed entry, so
-// they keep what is on screen until the next tab tap; the icon badge counts the
-// new plan's open sessions either way, which is what switchTab would have done.
-const PLAN_TABS = ['home', 'plan'];
+// A redraw wipes whatever is typed into a form, so only Home is always redrawn.
+// Plan is redrawn while its three typed fields are empty; Log, Food and a Plan
+// with a half-typed goal keep what is on screen until the next tab tap. The
+// icon badge counts the new plan's open sessions either way, which is what
+// switchTab would have done.
+const PLAN_TYPED_FIELDS = ['goalText', 'goalDate', 'planCardioMinutes'];
+function planHasTyping() {
+  return PLAN_TYPED_FIELDS.some(id => { const el = document.getElementById(id); return !!(el && el.value); });
+}
 function redrawPlanTab() {
-  if (PLAN_TABS.indexOf(currentTab) !== -1) switchTab(currentTab);
+  if (currentTab === 'home' || (currentTab === 'plan' && !planHasTyping())) switchTab(currentTab);
   else refreshBadge();
 }
 

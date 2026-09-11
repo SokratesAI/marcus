@@ -93,6 +93,19 @@ describe("a week that begins while the app is open", () => {
     expect(run(app, "badged")).toEqual(["log", "nutrition", "progress"]);
   });
 
+  it("leaves Plan alone while any of its three typed fields holds text", () => {
+    for (const id of ["goalText", "goalDate", "planCardioMinutes"]) {
+      const app = loadApp();
+      vm.runInContext(`globalThis.drawn = []; globalThis.badged = [];
+        switchTab = (t) => { globalThis.drawn.push(t); };
+        refreshBadge = () => { globalThis.badged.push(currentTab); };
+        document.getElementById = (el) => ({ value: el === ${JSON.stringify(id)} ? 'half-typed' : '' });
+        currentTab = 'plan'; redrawPlanTab();`, app);
+      expect(run(app, "drawn")).toEqual([]);
+      expect(run(app, "badged")).toEqual(["plan"]);
+    }
+  });
+
   it("survives a document with no addEventListener", () => {
     const app = loadApp();
     expect(() => vm.runInContext("applyDueWeekOnVisible({}, () => true, () => {})", app)).not.toThrow();
