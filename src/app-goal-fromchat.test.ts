@@ -323,3 +323,44 @@ describe("the confirm card", () => {
     expect(ctx.store.get("goals", [])).toEqual([]);
   });
 });
+
+// The submit handler is the only thing that carries the proposal from the
+// reply onto the stored message, and nothing above drives it -- deleting that
+// one line left every test here green. So this goes through the form.
+describe("the chat form stores the proposal on the bubble", () => {
+  async function submit(ctx: any, byId: any, text: string) {
+    // byId is filled on demand, and the app only asks for #chatInput inside
+    // the handler -- so the node has to be minted here before it is set.
+    ctx.document.getElementById("chatInput").value = text;
+    byId.chatForm.handlers.submit({ preventDefault() {} });
+    // askMarcus is awaited inside the handler; two microtask drains is enough
+    // for the stubbed fetch, which resolves immediately.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("puts the goal on the marcus message, ready for the card", async () => {
+    const { ctx, byId } = loadApp({
+      fetch: async () => ({ ok: true, json: async () => ({ reply: `August works.\n\n${BLOCK}` }) }),
+    });
+    await submit(ctx, byId, "I want to do Oslo Tri next August");
+    const msgs = ctx.store.get("chat", []);
+    const marcus = msgs[msgs.length - 1];
+    expect(marcus.role).toBe("marcus");
+    expect(marcus.text).toBe("August works.");
+    expect(marcus.goalProposal).toEqual({
+      text: "Olympic triathlon at Oslo Tri",
+      targetDate: "2027-08-14",
+    });
+    expect(marcus.ts).toBeTruthy();
+  });
+
+  it("leaves an ordinary reply with no proposal key at all", async () => {
+    const { ctx, byId } = loadApp({
+      fetch: async () => ({ ok: true, json: async () => ({ reply: "Squats. Go." }) }),
+    });
+    await submit(ctx, byId, "what today?");
+    const msgs = ctx.store.get("chat", []);
+    expect(msgs[msgs.length - 1]).not.toHaveProperty("goalProposal");
+  });
+});
