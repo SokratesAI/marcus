@@ -57,6 +57,31 @@ const DAYS = [
   { day: "Wednesday", focus: "Push", exercises: [{ name: "Barbell Bench Press", sets: 3, reps: 8 }] },
 ];
 
+// The requestDraft tests below go through the page's own `todayStr`, which is a
+// const and cannot be stubbed, so their fixture is cut from the real clock: a
+// goal whose four phases are ahead of today and four completed weeks of one
+// session behind it, which is what gives weekTarget a baseline to size from.
+const shift = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+const WEEKLY_LOG = [-7, -14, -21, -28].map(days => ({
+  date: shift(days),
+  exercises: [{ name: "Back Squat", sets: [{ reps: 5, weight: 80 }, { reps: 5, weight: 80 }] }],
+}));
+
+const DATED_GOAL = {
+  id: "g-race", text: "Sprint triathlon", targetDate: shift(28), created: shift(-1),
+  milestones: [
+    { label: "Base", note: "", date: shift(7), done: false },
+    { label: "Build", note: "", date: shift(14), done: false },
+    { label: "Peak", note: "", date: shift(21), done: false },
+    { label: "Taper", note: "", date: shift(28), done: false },
+  ],
+};
+
 const WEEK = {
   phase: "Base", phaseEnds: "2026-10-10", multiplier: 1.1, baseline: 2000, baselineWeeks: 4,
   volumeTarget: 2200, volumeDone: 0, sessionsPlanned: 4, sessionsDone: 0, reason: "ok", note: null,
@@ -172,6 +197,27 @@ describe("requestDraft keeps the target it sent", () => {
     expect(week).not.toBeNull();
     expect(evalIn(app, "draftCard(store.get('plan'), planDraft, store.get('sessions', []), '" + TODAY + "')"))
       .toContain("at your last weights");
+  });
+
+  it("keeps a later calendar row's own target, not this week's", async () => {
+    const sent: any[] = [];
+    const app = loadApp();
+    app.fetch = async (_url: string, init: any) => {
+      sent.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ days: DAYS, note: "" }) };
+    };
+    evalIn(app, "store.set('sessions', " + JSON.stringify(WEEKLY_LOG) + ")");
+    evalIn(app, "store.set('goals', " + JSON.stringify([DATED_GOAL]) + ")");
+    const rows = evalIn(app, "raceCalendar(store.get('goals')[0], todayStr())");
+    const later = rows.find((r: any) => r.phase === "Taper");
+    expect(later).toBeTruthy();
+    await evalIn(app, "requestDraft('" + DATED_GOAL.id + "', '" + later.start + "')");
+    const week = evalIn(app, "planDraft.week");
+    expect(week.phase).toBe("Taper");
+    expect(week.multiplier).toBe(later.multiplier);
+    // The Taper row cuts volume, so its target is not the one Home is showing.
+    expect(week.volumeTarget).not.toBe(evalIn(app, "homeWeekTarget().volumeTarget"));
+    expect(week).toEqual(sent[0].week);
   });
 });
 
