@@ -288,6 +288,44 @@ function calendarRowLabel(row) {
   return row.phase ? row.phase + (row.week ? ` week ${row.week} of ${row.weeks}` : '') : 'no phase';
 }
 
+// One drafted week from the server, for one calendar row or for this week
+// (`row` null). Held apart from requestDraft because draftPhase asks for the
+// same thing several times in a row; the two must send an identical body or a
+// week drafted in a block and the same week drafted alone would differ.
+// Returns `{days, note, week}` or `{error}` -- it never toasts and never
+// touches planDraft, so the caller decides what a failure means.
+async function fetchWeekDraft(row) {
+  // One call, held for two uses: the target sent to the coach and the target
+  // the draft card is later checked against have to be the same object, or the
+  // card can report a percentage of a number the week was never sized for.
+  const week = row ? calendarWeekTarget(homeWeekTarget(), row) : homeWeekTarget();
+  const res = await fetch('/api/plan-draft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      goals: draftGoals(),
+      today: todayStr(),
+      // The kilogram target the Home card is showing him right now, so the
+      // week Marcus drafts and the number on Home cannot disagree.
+      week,
+      // The row's own label rather than its date: the server counting from
+      // the date gets a phase that began mid-week this week one week short.
+      calendarWeek: row ? { goal: row.goal, start: row.start, phase: row.phase,
+                            week: row.week, weeks: row.weeks, raceWeek: row.raceWeek } : undefined,
+      context: {
+        plan: store.get('plan'),
+        sessions: store.get('sessions', []),
+        weights: store.get('weights', []),
+        goals: store.get('goals', []),
+      },
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { error: body.error || 'Marcus could not draft a week' };
+  if (!body.days || !body.days.length) return { error: 'Marcus did not draft a week' };
+  return { days: body.days, note: body.note || '', week };
+}
+
 async function requestDraft(goalId, start) {
   if (planDraftBusy) return;
   // Only a string is a goal id; anything else (a click event) is Draft my week.
@@ -295,46 +333,98 @@ async function requestDraft(goalId, start) {
   const row = fromRow ? calendarRow(goalId, start) : null;
   if (fromRow && !row) { toast('That week is no longer on the calendar'); return; }
   if (row) raceCalendarOpen = goalId;
-  // One call, held for two uses: the target sent to the coach and the target
-  // the draft card is later checked against have to be the same object, or the
-  // card can report a percentage of a number the week was never sized for.
-  const week = row ? calendarWeekTarget(homeWeekTarget(), row) : homeWeekTarget();
   planDraftBusy = true;
   renderPlan();
   try {
-    const res = await fetch('/api/plan-draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        goals: draftGoals(),
-        today: todayStr(),
-        // The kilogram target the Home card is showing him right now, so the
-        // week Marcus drafts and the number on Home cannot disagree.
-        week,
-        // The row's own label rather than its date: the server counting from
-        // the date gets a phase that began mid-week this week one week short.
-        calendarWeek: row ? { goal: row.goal, start: row.start, phase: row.phase,
-                              week: row.week, weeks: row.weeks, raceWeek: row.raceWeek } : undefined,
-        context: {
-          plan: store.get('plan'),
-          sessions: store.get('sessions', []),
-          weights: store.get('weights', []),
-          goals: store.get('goals', []),
-        },
-      }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) { toast(body.error || 'Marcus could not draft a week'); return; }
-    if (!body.days || !body.days.length) { toast('Marcus did not draft a week'); return; }
-    planDraft = { days: body.days, note: body.note || '',
+    const got = await fetchWeekDraft(row);
+    if (got.error) { toast(got.error); return; }
+    planDraft = { days: got.days, note: got.note,
                   weekOf: row ? row.start : null, label: row ? calendarRowLabel(row) : null,
-                  week };
+                  week: got.week };
   } catch {
     toast('Marcus could not be reached');
   } finally {
     planDraftBusy = false;
     renderPlan();
   }
+}
+
+// Idea #209 asks for a plan, and a plan is a block of weeks. Until now the only
+// way to get one was tapping Draft on every row of the race calendar in turn.
+// The block is the phase he is in -- a boundary the goal's own dates drew, not
+// a number I chose -- so this drafts every remaining week of that phase and
+// stops at the next one, where the volume rule changes anyway.
+// Pure. `weeks` is a raceCalendar list, `plannedStarts` the Mondays already
+// drafted ahead. Row 0 is this week and is never in the block: Draft my week is
+// that row's button. A week already planned is skipped rather than ending the
+// block, so a second run fills the holes a failed first run left.
+function phaseBlock(weeks, plannedStarts) {
+  const rows = weeks || [];
+  if (rows.length < 2 || !rows[0] || !rows[0].phase) return [];
+  const planned = plannedStarts || [];
+  const block = [];
+  for (let i = 1; i < rows.length; i++) {
+    // A row whose Monday is still in this phase belongs to it even when the
+    // next phase starts inside that week (`then`), which is why the phase name
+    // decides and the `then` field does not.
+    if (!rows[i] || rows[i].phase !== rows[0].phase) break;
+    if (planned.indexOf(rows[i].start) === -1) block.push(rows[i]);
+  }
+  return block;
+}
+
+// Pure: what the block button says, or '' when there is no block to cut. An
+// ongoing goal's rows are all one phase called Ongoing, so naming it would read
+// "the rest of the Ongoing phase" about a list that stops because the baseline
+// runs out -- it names the horizon instead, the same honesty raceCalendarBlock's
+// heading already uses.
+function phaseBlockLabel(weeks, block) {
+  if (!block || !block.length) return '';
+  const many = block.length === 1 ? '1 week' : block.length + ' weeks';
+  return weeks[0].ongoing ? 'Draft the next ' + many
+                          : 'Draft the rest of the ' + weeks[0].phase + ' phase (' + many + ')';
+}
+
+// Cuts the block. Every week goes straight into plannedWeeks rather than into
+// the one-at-a-time review card: a block is too many cards to tap through, and
+// nothing there touches the plan he is on -- each week waits for its own Monday
+// and keeps its own drop button, so the block is exactly as reversible as one
+// week was. A failure stops the run and the weeks already saved stay saved.
+async function draftPhase(goalId) {
+  if (planDraftBusy) return;
+  const goal = store.get('goals', []).find(g => g && g.id === goalId);
+  if (!goal) { toast('That goal is no longer here'); return; }
+  const weeks = raceCalendar(goal);
+  const block = phaseBlock(weeks, store.get('plannedWeeks', []).map(w => w && w.start));
+  if (!block.length) { toast('Every week of this phase is already drafted'); return; }
+  raceCalendarOpen = goalId;
+  planDraftBusy = true;
+  planDraftProgress = { done: 0, total: block.length };
+  renderPlan();
+  let saved = 0;
+  let failure = '';
+  try {
+    for (let i = 0; i < block.length; i++) {
+      const row = Object.assign({ goal: goal.text }, block[i]);
+      const got = await fetchWeekDraft(row);
+      if (got.error) { failure = got.error; break; }
+      const list = saveWeekAhead(store.get('plannedWeeks', []),
+        { days: got.days, note: got.note, weekOf: row.start, label: calendarRowLabel(row) });
+      if (!store.set('plannedWeeks', list)) { failure = 'There was no room to save the rest'; break; }
+      saved++;
+      planDraftProgress = { done: saved, total: block.length };
+      renderPlan();
+    }
+  } catch {
+    failure = 'Marcus could not be reached';
+  } finally {
+    planDraftBusy = false;
+    planDraftProgress = null;
+    renderPlan();
+  }
+  if (saved && failure) toast('Drafted ' + saved + ' of ' + block.length + ' weeks — ' + failure);
+  else if (saved) toast('Drafted ' + (saved === 1 ? '1 week' : saved + ' weeks') + ' of this phase');
+  else toast(failure || 'Marcus did not draft a week');
 }
 
 function acceptDraft() {
@@ -1991,6 +2081,8 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
 // agreed to.
 let planDraft = null;
 let planDraftBusy = false;
+// How far a block draft has got, or null. Only draftPhase sets it.
+let planDraftProgress = null;
 // The goal whose "every week to the race" list a row's Draft button was tapped
 // in, so the re-render that shows the busy state does not fold that list shut.
 let raceCalendarOpen = null;
@@ -2354,9 +2446,15 @@ function raceCalendarBlock(weeks, goalId) {
   const heading = weeks[0].ongoing
     ? `The next ${weeks.length} weeks`
     : `Every week to the race (${weeks.length})`;
+  // The block button, above the rows it is about. It is absent rather than
+  // disabled when there is no block, because "draft 0 weeks" is not a thing to
+  // offer -- the per-row buttons are still there for a hole he wants refilled.
+  const block = goalId ? phaseBlock(weeks, saved) : [];
+  const blockLabel = phaseBlockLabel(weeks, block);
   return `
     <details class="race-calendar" style="margin:8px 0"${goalId && goalId === raceCalendarOpen ? ' open' : ''}>
       <summary>${heading}</summary>
+      ${blockLabel ? `<button class="btn btn--tonal btn--block" style="margin:8px 0" onclick="draftPhase('${esc(goalId)}')"${planDraftBusy ? ' disabled' : ''}><span class="material-icons-round">auto_awesome</span> ${planDraftBusy && planDraftProgress ? `Marcus is writing ${planDraftProgress.done + 1} of ${planDraftProgress.total}…` : esc(blockLabel)}</button>` : ''}
       ${weeks.map((w, i) => `
         <div class="exercise-line">
           <span>${niceDate(w.start)}${w.raceWeek ? ' · race week' : ''}</span>
