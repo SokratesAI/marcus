@@ -2624,6 +2624,12 @@ const VOLUME_TREND_WEEKS = 4;
 // Tuesday it would put two days against four whole weeks and report a collapse,
 // every single week, which is the same clock mistake volumeThisWeek was
 // corrected for.
+//
+// It is deliberately NOT scoped to the goal's own `created` date, unlike
+// `trainingConsistency` above it. "Is the training going anywhere" is a question
+// about him, not about which card he is looking at, and scoping it would mean a
+// goal set last week could show nothing for two months. The consequence, taken
+// knowingly: two ongoing goals at once draw the same row twice.
 function volumeTrend(sessions, todayISO) {
   if (!Array.isArray(sessions) || !sessions.length) return null;
   const thisMonday = weekStartOf(dayKey(todayISO || todayStr()));
@@ -2649,10 +2655,20 @@ function volumeTrend(sessions, todayISO) {
     if (w >= recentStart && w < thisMonday) recent += sessionVolume(s);
     else if (w >= olderStart && w < recentStart) older += sessionVolume(s);
   });
+  // Round ONCE, and take the percentage off the rounded kilograms rather than
+  // the raw sums. A half-kilogram plate makes a fractional total ordinary, and
+  // computing the two separately lets the card print "100 kg against 101 kg"
+  // captioned "0%" -- numbers that visibly fall over a label saying they did
+  // not. Whatever it says, it says about the two figures beside it.
+  const recentKg = Math.round(recent);
+  const olderKg = Math.round(older);
   // Nothing lifted in the older window has no percentage -- the change is
   // undefined rather than infinite -- so the label says it in words instead.
-  const pct = older > 0 ? Math.round(((recent - older) / older) * 100) : null;
-  return { recent: Math.round(recent), older: Math.round(older), pct, weeks: VOLUME_TREND_WEEKS };
+  let pct = olderKg > 0 ? Math.round(((recentKg - olderKg) / olderKg) * 100) : null;
+  // A fall too small to reach one per cent rounds to -0, and String(-0) is "0"
+  // carrying a sign nothing can see. A flat month should print as a flat month.
+  if (Object.is(pct, -0)) pct = 0;
+  return { recent: recentKg, older: olderKg, pct, weeks: VOLUME_TREND_WEEKS };
 }
 
 function volumeTrendLabel(trend) {
@@ -2679,7 +2695,7 @@ function goalProgressCard(goal, todayISO, sessions) {
       ${o ? `<div class="meter-row"><span>Weeks trained</span><span>${o.trained} of ${o.weeks}</span></div>
       <div class="meter"><div class="meter__fill" style="width:${o.pct}%"></div></div>` : ''}
       ${v ? `<div class="meter-row"><span>Volume, last ${v.weeks} weeks</span><span>${esc(volumeTrendLabel(v))}</span></div>
-      <div class="exercise-line"><span>${Math.round(v.recent).toLocaleString()} kg</span><span>against ${Math.round(v.older).toLocaleString()} kg the ${v.weeks} weeks before</span></div>` : ''}
+      <div class="exercise-line"><span>${v.recent.toLocaleString()} kg</span><span>against ${v.older.toLocaleString()} kg the ${v.weeks} weeks before</span></div>` : ''}
       <div class="exercise-line"><span>No target date</span><span>set ${niceDate(goal.created)}</span></div>
     </div>`;
   }

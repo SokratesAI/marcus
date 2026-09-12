@@ -47,7 +47,8 @@ function load(): any {
 const ongoing = (created: string) => ({ id: "g1", text: "Improve overall health and fitness", targetDate: "", created, milestones: [] });
 // One session of `kg` kilograms on `date`.
 const lift = (date: string, kg: number) => ({ id: date + kg, date, exercises: [{ name: "Squat", sets: [{ reps: 1, weight: kg }] }] });
-const ride = (date: string) => ({ id: "c" + date, date, kind: "cardio", activity: "ride", minutes: 40 });
+// `activity` is a value from CARDIO_ACTIVITIES in app-core.js, not a free string.
+const ride = (date: string) => ({ id: "c" + date, date, kind: "cardio", activity: "Bike", minutes: 40 });
 
 // 2026-09-12 is a Saturday; its Monday is 2026-09-07.
 // Recent window: the four weeks beginning 2026-08-10, 08-17, 08-24, 08-31.
@@ -73,7 +74,9 @@ describe("volumeTrend", () => {
       lift("2026-08-10", 100),
     ];
     const withThisWeek = base.concat([lift("2026-09-07", 9999), lift("2026-09-12", 9999)]);
-    expect(ctx.volumeTrend(withThisWeek, TODAY).recent).toBe(ctx.volumeTrend(base, TODAY).recent);
+    expect(ctx.volumeTrend(withThisWeek, TODAY)).toMatchObject({ recent: 100, older: 200 });
+    // ...and it is the same answer the log without this week gives, on both halves.
+    expect(ctx.volumeTrend(base, TODAY)).toMatchObject({ recent: 100, older: 200 });
   });
 
   it("returns null when the log does not reach back eight completed weeks", () => {
@@ -97,6 +100,25 @@ describe("volumeTrend", () => {
     // Dividing by it is undefined, and the card says so in words.
     const sessions = [lift("2026-07-06", 100), lift("2026-08-10", 300)];
     expect(ctx.volumeTrend(sessions, TODAY)).toMatchObject({ recent: 300, older: 0, pct: null });
+  });
+
+  it("takes the percentage off the same kilograms the card prints", () => {
+    const ctx = load();
+    // A half-kilo plate makes a fractional total ordinary. Rounding the two
+    // figures and the percentage separately printed "100 kg against 101 kg"
+    // captioned "0%" -- numbers that visibly fall over a label saying they did not.
+    const sessions = [lift("2026-07-13", 100.5), lift("2026-08-10", 100)];
+    expect(ctx.volumeTrend(sessions, TODAY)).toMatchObject({ recent: 100, older: 101, pct: -1 });
+  });
+
+  it("prints a fall too small to reach one per cent as a flat zero, not a signed one", () => {
+    const ctx = load();
+    // Math.round returns -0 here, and String(-0) is "0" carrying a sign nothing
+    // can see.
+    const sessions = [lift("2026-07-13", 10000), lift("2026-08-10", 9999)];
+    const t = ctx.volumeTrend(sessions, TODAY);
+    expect(t.pct).toBe(0);
+    expect(Object.is(t.pct, -0)).toBe(false);
   });
 
   it("ignores a session dated after this week", () => {
