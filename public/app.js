@@ -2547,27 +2547,46 @@ function stalledLiftsCard(report) {
 // "did I train", and a 40-minute ride is training.
 // Returns null when there is no session list to read at all, so a caller that
 // forgot to pass one draws no meter rather than claiming 0 of 8 weeks.
-function ongoingProgress(goal, sessions, todayISO) {
+//
+// A DATED goal gets the same measurement (cycle 1442). Its two existing meters
+// are time gone -- which moves on its own whether or not he trains -- and phases
+// ticked, which is a checkbox he ticks himself. So a race card could read "50%
+// of the time gone, 2 of 4 phases ticked" while he had trained in two of the
+// last twelve weeks, and nothing on the card said so. This is the one number
+// there that only his log can move.
+function trainingConsistency(goal, sessions, todayISO) {
   if (!Array.isArray(sessions)) return null;
   const today = dayKey(todayISO || todayStr());
-  const thisWeek = weekStartOf(today);
   const since = weekStartOf(dayKey((goal && goal.created) || today));
+  // A dated goal's block ENDS on its target day. Once the race is behind him the
+  // window stops there instead of running on to today: the weeks after a race
+  // belong to whatever he does next, and counting them would make a block he
+  // trained every week of decay a little further every Monday after it finished.
+  // While the target is still ahead -- and always, for an ongoing goal -- the
+  // window ends today, because a week he has not lived yet is not a week he
+  // failed to train in. On race day itself the two readings are the same week,
+  // so whether this comparison is `<` or `<=` cannot change an answer -- no test
+  // pins it and none can.
+  const targetDay = (goal && goal.targetDate) ? dayKey(goal.targetDate) : '';
+  const lastDay = (targetDay && targetDay < today) ? targetDay : today;
+  const last = weekStartOf(lastDay);
   // A goal created in a week that has not arrived yet spans no weeks; counting
-  // it as one would report a week he has had no chance to train in.
-  if (since > thisWeek) return null;
+  // it as one would report a week he has had no chance to train in. The same
+  // check catches a dated goal whose target was before it was set.
+  if (since > last) return null;
   const weeks = Math.round(
-    (Date.parse(thisWeek + 'T00:00:00Z') - Date.parse(since + 'T00:00:00Z')) / (7 * 86400000)) + 1;
+    (Date.parse(last + 'T00:00:00Z') - Date.parse(since + 'T00:00:00Z')) / (7 * 86400000)) + 1;
   const trainedWeeks = new Set();
   sessions.forEach(s => {
     if (!s || !s.date) return;
     const w = weekStartOf(dayKey(s.date));
     // Before the goal was set belongs to a different question, and a session
-    // dated later this year is not a week he has trained.
-    if (w < since || w > thisWeek) return;
+    // dated after the window closes is not a week of this block.
+    if (w < since || w > last) return;
     trainedWeeks.add(w);
   });
   const trained = trainedWeeks.size;
-  return { weeks, trained, pct: Math.round((trained / weeks) * 100), since };
+  return { weeks, trained, pct: Math.round((trained / weeks) * 100), since, until: last };
 }
 
 function goalProgressCard(goal, todayISO, sessions) {
@@ -2576,7 +2595,7 @@ function goalProgressCard(goal, todayISO, sessions) {
   // the time gone" on a goal with no end. It gets the one honest measurement it
   // does have instead: how many of the weeks since he set it he trained in.
   if (!goal.targetDate) {
-    const o = ongoingProgress(goal, sessions, todayISO);
+    const o = trainingConsistency(goal, sessions, todayISO);
     return `
     <div class="card">
       <div class="card__title-row"><h2>${esc(goal.text)}</h2><span class="chip chip--primary">ongoing</span></div>
@@ -2590,6 +2609,10 @@ function goalProgressCard(goal, todayISO, sessions) {
              : p.daysLeft === 0 ? 'target day is today'
              : p.daysLeft === 1 ? '1 day left'
              : p.daysLeft + ' days left';
+  // The third meter is the only one on this card his log moves. Time gone moves
+  // by itself and phases ticked is a checkbox, so without this a card can look
+  // healthy on a block he barely trained in.
+  const c = trainingConsistency(goal, sessions, todayISO);
   return `
     <div class="card">
       <div class="card__title-row"><h2>${esc(goal.text)}</h2><span class="chip ${p.verdict === 'behind' ? 'chip--alert' : 'chip--primary'}">${esc(goalVerdictLabel(p))}</span></div>
@@ -2597,6 +2620,8 @@ function goalProgressCard(goal, todayISO, sessions) {
       <div class="meter"><div class="meter__fill meter__fill--time" style="width:${p.elapsedPct}%"></div></div>
       <div class="meter-row"><span>Phases ticked</span><span>${p.total ? p.doneCount + ' of ' + p.total : 'none set'}</span></div>
       <div class="meter"><div class="meter__fill" style="width:${p.donePct}%"></div></div>
+      ${c ? `<div class="meter-row"><span>Weeks trained</span><span>${c.trained} of ${c.weeks}</span></div>
+      <div class="meter"><div class="meter__fill" style="width:${c.pct}%"></div></div>` : ''}
       <div class="exercise-line"><span>Target ${niceDate(goal.targetDate)}</span><span>${esc(left)}</span></div>
     </div>`;
 }
