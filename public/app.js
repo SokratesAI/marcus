@@ -1994,7 +1994,7 @@ function draftPreview(plan, days) {
 // came to show four days of a seven-day change.
 function draftCard(plan, draft, sessions, todayISO) {
   if (!draft) return '';
-  const volume = draftVolumeLabel(draftVolume(draft.days, sessions, todayISO || todayStr()), draft.week);
+  const volume = draftVolumeLabel(draftVolume(draft.days, sessions, todayISO || todayStr()), draft.week, !!draft.weekOf);
   return `
       <div class="card" style="display:block">
         <div class="card__title-row"><h2>Marcus's week${draft.weekOf ? ` of ${niceDate(draft.weekOf)}` : ''}</h2><span class="chip chip--primary">Not applied</span></div>

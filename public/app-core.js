@@ -424,7 +424,7 @@ function draftVolume(days, sessions, asOfISO) {
 // quote different targets. It is deliberately vague about the number -- "about"
 // -- because a projection at last week's weights is not a promise about what
 // gets loaded, and a precise-looking figure would invite him to chase it.
-function draftVolumeLabel(projection, week) {
+function draftVolumeLabel(projection, week, forLaterWeek) {
   if (!projection || !projection.known) return null;
   const kg = projection.kg;
   const target = week && week.reason === 'ok' && Number.isFinite(week.volumeTarget) && week.volumeTarget > 0
@@ -432,7 +432,11 @@ function draftVolumeLabel(projection, week) {
   let out = 'About ' + kg + ' kg at your last weights';
   if (target) {
     const share = Math.round((kg / target) * 100);
-    out += ' \u2014 ' + share + '% of this week\u2019s ' + target + ' kg target';
+    // A draft taken from a later calendar row is sized by that row's phase, not
+    // by the one Home is showing -- calling its target "this week's" would name
+    // a number off a different card.
+    out += ' \u2014 ' + share + '% of ' + (forLaterWeek ? 'that week\u2019s ' : 'this week\u2019s ')
+        + target + ' kg target';
   }
   out += '.';
   if (projection.unknown) {

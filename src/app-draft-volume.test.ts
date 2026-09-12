@@ -145,6 +145,15 @@ describe("draftVolumeLabel", () => {
     expect(line).toBe("About 2800 kg at your last weights — 127% of this week’s 2200 kg target.");
   });
 
+  it("names a later week's target as that week's, not this week's", () => {
+    const app = loadApp();
+    const projection = app.draftVolume(DAYS, SESSIONS, TODAY);
+    expect(app.draftVolumeLabel(projection, WEEK, true))
+      .toBe("About 2800 kg at your last weights — 127% of that week’s 2200 kg target.");
+    expect(app.draftVolumeLabel(projection, WEEK, false))
+      .toContain("this week’s");
+  });
+
   it("still gives the projection when the week has no target to check it against", () => {
     const app = loadApp();
     const projection = app.draftVolume(DAYS, SESSIONS, TODAY);
@@ -237,7 +246,11 @@ describe("the draft card", () => {
                           { day: "Wednesday", focus: "Push", exercises: [] }] };
     const html = app.draftCard(plan, { days: DAYS, note: "", week: WEEK }, SESSIONS, TODAY);
     expect(html).toContain("About 2800 kg at your last weights");
-    expect(html).toContain("2200 kg target");
+    expect(html).toContain("this week’s 2200 kg target");
+    // A card for a later week says so, because it is not the target Home shows.
+    const later = app.draftCard(plan, { days: DAYS, note: "", week: WEEK, weekOf: "2026-10-05" },
+                                SESSIONS, TODAY);
+    expect(later).toContain("that week’s 2200 kg target");
   });
 
   it("draws no projection line when nothing in the draft can be priced", () => {
