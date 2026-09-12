@@ -295,12 +295,9 @@ function calendarRowLabel(row) {
 // The nearest drafted week wins even when the calendar week right before this
 // one was never drafted: its own date is sent, so the distance is not guessed.
 function previousDraftedWeek(saved, start) {
-  var best = null;
-  (saved || []).forEach(function (w) {
-    if (!w || typeof w.start !== 'string' || !start || w.start >= start) return;
-    if (!Array.isArray(w.days) || !w.days.length) return;
-    if (!best || w.start > best.start) best = w;
-  });
+  const before = (saved || []).filter(w => w && typeof w.start === 'string' && start && w.start < start
+                                           && Array.isArray(w.days) && w.days.length);
+  const best = before.reduce((a, b) => (!a || b.start > a.start ? b : a), null);
   return best ? { start: best.start, label: best.label || null, days: best.days } : null;
 }
 
