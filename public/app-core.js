@@ -398,33 +398,97 @@ function lastPerformanceLabel(last) {
   return parts.join(', ') + ' \u00b7 ' + niceDate(last.date);
 }
 
+// Pure: a stand-in working weight for an exercise Marcus has never seen, taken
+// from the other lifts he HAS logged in the same muscle group. `draftVolume`
+// below is the only caller, and the alternative it replaces is printing nothing.
+//
+// The median rather than the mean, because one lift in a group is routinely far
+// heavier than the rest of it -- a deadlift against the rows and pulldowns it
+// shares `Back` with -- and a mean would carry that outlier into every new
+// exercise in the group. A 0 kg row is bodyweight: a real answer for the lift
+// that logged it, and no evidence at all about what a loaded lift weighs, so it
+// is left out here and a group holding nothing else yields no estimate rather
+// than an estimate of zero. Each exercise votes once, at its own last working
+// weight, so a lift logged every week does not outweigh one logged twice.
+function groupTypicalWeight(sessions, name, asOfISO) {
+  const group = muscleGroupFor(name);
+  if (!group) return null;
+  const key = exerciseKey(name);
+  const weightByExercise = Object.create(null);
+  (sessions || []).forEach(function (session) {
+    (((session && session.exercises) || [])).forEach(function (ex) {
+      const other = ex && exerciseKey(ex.name);
+      // The `in` check is a cost guard and not a rule: the map is keyed by
+      // exercise, so a second row for a lift already priced would write the
+      // same number again. Mutating it away leaves every test green, which is
+      // correct rather than a gap.
+      if (!other || other === key || other in weightByExercise) return;
+      if (muscleGroupFor(ex.name) !== group) return;
+      // `lastPerformance` is what decides whether this exercise counts: it
+      // already skips cardio sessions and anything logged after `asOfISO`, so
+      // the loop above only has to produce candidate NAMES. Repeating those
+      // two filters here would be a second copy of a rule applied one line
+      // down, and it could not change the answer -- I wrote them, mutated them
+      // away, and every test still passed.
+      const last = lastPerformance(sessions, ex.name, asOfISO);
+      if (!last || !(last.weight > 0)) return;
+      weightByExercise[other] = last.weight;
+    });
+  });
+  const weights = Object.keys(weightByExercise)
+    .map(function (k) { return weightByExercise[k]; })
+    .sort(function (a, b) { return a - b; });
+  if (!weights.length) return null;
+  const mid = Math.floor(weights.length / 2);
+  return weights.length % 2 ? weights[mid] : (weights[mid - 1] + weights[mid]) / 2;
+}
+
 // Pure: the kilograms a drafted week would actually produce, projected at the
 // last working weight logged for each exercise. A draft carries sets and reps
 // and never a weight -- the coach is not asked for one -- so the Home card can
 // ask for 8800 kg and the card that answers it has no number at all to check
 // against. Same arithmetic as `sessionVolume`: sets x reps x kilograms.
 //
-// An exercise with nothing logged is counted as `unknown` rather than as zero.
-// Zero would read as "this week is light" when the truth is "Marcus has never
-// seen you do this", and the two lead to opposite decisions. A bodyweight row
-// is not that case: it logs 0 kg deliberately, so it is known and adds zero,
-// which is exactly what the logged week it is compared against does.
+// An exercise with nothing logged is never counted as zero. Zero would read as
+// "this week is light" when the truth is "Marcus has never seen you do this",
+// and the two lead to opposite decisions. A bodyweight row is not that case: it
+// logs 0 kg deliberately, so it is known and adds zero, which is exactly what
+// the logged week it is compared against does.
+//
+// It is priced from the rest of its muscle group instead, and counted as
+// `estimated` rather than as `known` so the label can say so. Dropping it
+// outright was the honest answer while every drafted week was made of lifts he
+// already does; a week the coach writes out of brand-new movements has nothing
+// known in it at all, and the card then goes silent, which is the same as not
+// having a card. A group with no loaded lift behind it is still `unknown` --
+// there is no evidence to estimate from, and inventing one would be worse than
+// the silence.
 function draftVolume(days, sessions, asOfISO) {
-  let kg = 0, known = 0, unknown = 0;
+  let kg = 0, known = 0, estimated = 0, unknown = 0;
   (days || []).forEach(function (d) {
     ((d && d.exercises) || []).forEach(function (e) {
       if (!e || !exerciseKey(e.name)) return;
       const sets = Number(e.sets), reps = Number(e.reps);
-      const last = lastPerformance(sessions, e.name, asOfISO);
-      if (!last || !Number.isFinite(sets) || !Number.isFinite(reps) || sets <= 0 || reps <= 0) {
+      if (!Number.isFinite(sets) || !Number.isFinite(reps) || sets <= 0 || reps <= 0) {
         unknown++;
         return;
       }
-      known++;
-      kg += sets * reps * last.weight;
+      const last = lastPerformance(sessions, e.name, asOfISO);
+      if (last) {
+        known++;
+        kg += sets * reps * last.weight;
+        return;
+      }
+      const typical = groupTypicalWeight(sessions, e.name, asOfISO);
+      if (typical == null) {
+        unknown++;
+        return;
+      }
+      estimated++;
+      kg += sets * reps * typical;
     });
   });
-  return { kg: Math.round(kg), known, unknown };
+  return { kg: Math.round(kg), known, estimated, unknown };
 }
 
 // The sentence under the draft card. `week` is the same week-target object the
@@ -433,11 +497,15 @@ function draftVolume(days, sessions, asOfISO) {
 // -- because a projection at last week's weights is not a promise about what
 // gets loaded, and a precise-looking figure would invite him to chase it.
 function draftVolumeLabel(projection, week, forLaterWeek) {
-  if (!projection || !projection.known) return null;
+  if (!projection || !(projection.known || projection.estimated)) return null;
   const kg = projection.kg;
   const target = week && week.reason === 'ok' && Number.isFinite(week.volumeTarget) && week.volumeTarget > 0
     ? week.volumeTarget : null;
-  let out = 'About ' + kg + ' kg at your last weights';
+  // "your last weights" would be a lie about a week made entirely of lifts he
+  // has never done, so the phrase follows what the number was actually built
+  // from.
+  let out = 'About ' + kg + ' kg at '
+      + (projection.known ? 'your last weights' : 'typical weights for those muscles');
   if (target) {
     const share = Math.round((kg / target) * 100);
     // A draft taken from a later calendar row is sized by that row's phase, not
@@ -447,9 +515,15 @@ function draftVolumeLabel(projection, week, forLaterWeek) {
         + target + ' kg target';
   }
   out += '.';
+  if (projection.estimated) {
+    out += ' ' + projection.estimated + ' exercise' + (projection.estimated === 1 ? '' : 's')
+        + ' you have never logged ' + (projection.estimated === 1 ? 'is' : 'are')
+        + ' priced at your usual weight for that muscle.';
+  }
   if (projection.unknown) {
     out += ' ' + projection.unknown + ' exercise' + (projection.unknown === 1 ? '' : 's')
-        + ' you have never logged ' + (projection.unknown === 1 ? 'is' : 'are') + ' not counted.';
+        + ' ' + (projection.unknown === 1 ? 'is' : 'are')
+        + ' not counted \u2014 nothing comparable is logged either.';
   }
   return out;
 }
