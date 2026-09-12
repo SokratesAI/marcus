@@ -40,9 +40,13 @@ function loadApp(): any {
 
 const TODAY = "2026-09-09";
 
-// A log with one working weight per exercise. lastPerformance takes the TOP set
-// of the newest matching session, so the 80 kg on 09-02 is what a squat is
-// projected at, not the 60 kg warm-up beside it.
+// A log with one working weight per exercise. lastPerformance reduces to the
+// heaviest set WITHIN one `exercises[]` entry, so the 80 kg on 09-02 is what a
+// squat is projected at and not the 60 kg beside it. It does NOT pick the
+// heaviest across two separate entries for the same exercise in one session (a
+// top set and a back-off set logged as two rows) -- there it takes whichever
+// was entered last. That is lastPerformance's behaviour, it predates this
+// projection, and it is filed rather than changed here.
 const SESSIONS = [
   { date: "2026-08-26", exercises: [{ name: "Back Squat", sets: [{ reps: 5, weight: 70 }] }] },
   { date: "2026-09-02", exercises: [
@@ -61,10 +65,16 @@ const DAYS = [
 // const and cannot be stubbed, so their fixture is cut from the real clock: a
 // goal whose four phases are ahead of today and four completed weeks of one
 // session behind it, which is what gives weekTarget a baseline to size from.
+// Local calendar fields, never `toISOString`: the page's own `todayStr` is
+// built from getFullYear/getMonth/getDate, and app-core.js says in as many
+// words why. A UTC fixture agrees with it only on a CI box running UTC, and
+// disagrees by a day every evening in Oslo -- which silently moves a session
+// out of the week bucket `weekTarget` buckets it into.
 const shift = (days: number) => {
   const d = new Date();
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")
+       + "-" + String(d.getDate()).padStart(2, "0");
 };
 
 const WEEKLY_LOG = [-7, -14, -21, -28].map(days => ({
@@ -254,11 +264,19 @@ describe("the draft card", () => {
   });
 
   it("draws no projection line when nothing in the draft can be priced", () => {
+    // A bare "the line is absent" assertion passes against a build with the
+    // whole feature deleted, because the old two-argument draftCard ignores the
+    // extra arguments and draws no line for any input. The priceable card below
+    // is what makes the absent one mean something: same card, same call, one
+    // exercise swapped, and only the unpriceable one goes quiet.
     const app = loadApp();
     const plan = { days: [{ day: "Monday", focus: "Legs", exercises: [] }] };
-    const days = [{ day: "Monday", focus: "Legs", exercises: [{ name: "Sled Push", sets: 3, reps: 10 }] }];
-    const html = app.draftCard(plan, { days, note: "", week: WEEK }, SESSIONS, TODAY);
-    expect(html).not.toContain("at your last weights");
-    expect(html).toContain("Sled Push");
+    const unpriceable = [{ day: "Monday", focus: "Legs", exercises: [{ name: "Sled Push", sets: 3, reps: 10 }] }];
+    const priceable = [{ day: "Monday", focus: "Legs", exercises: [{ name: "Back Squat", sets: 3, reps: 10 }] }];
+    const quiet = app.draftCard(plan, { days: unpriceable, note: "", week: WEEK }, SESSIONS, TODAY);
+    const loud = app.draftCard(plan, { days: priceable, note: "", week: WEEK }, SESSIONS, TODAY);
+    expect(loud).toContain("at your last weights");
+    expect(quiet).not.toContain("at your last weights");
+    expect(quiet).toContain("Sled Push");
   });
 });
