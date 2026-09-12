@@ -2538,14 +2538,50 @@ function stalledLiftsCard(report) {
 // serve them. Drawn in plain CSS, not Chart.js: the library is loaded async so
 // a stalled CDN can leave it absent, and the one thing on this tab that
 // answers "am I on track" should not be the thing that disappears.
-function goalProgressCard(goal, todayISO) {
+// An ongoing goal has no target date, so both meters a dated goal draws -- time
+// gone and phases ticked -- would be invented. What it does have is the day it
+// was set and a log, and the thing an open-ended fitness goal is actually about
+// is showing up: how many of the weeks since you set it have a session in them.
+// A cardio-only week counts here and deliberately does NOT count in
+// `volumeThisWeek`: that one answers "how much did I lift", this one answers
+// "did I train", and a 40-minute ride is training.
+// Returns null when there is no session list to read at all, so a caller that
+// forgot to pass one draws no meter rather than claiming 0 of 8 weeks.
+function ongoingProgress(goal, sessions, todayISO) {
+  if (!Array.isArray(sessions)) return null;
+  const today = dayKey(todayISO || todayStr());
+  const thisWeek = weekStartOf(today);
+  const since = weekStartOf(dayKey((goal && goal.created) || today));
+  // A goal created in a week that has not arrived yet spans no weeks; counting
+  // it as one would report a week he has had no chance to train in.
+  if (since > thisWeek) return null;
+  const weeks = Math.round(
+    (Date.parse(thisWeek + 'T00:00:00Z') - Date.parse(since + 'T00:00:00Z')) / (7 * 86400000)) + 1;
+  const trainedWeeks = new Set();
+  sessions.forEach(s => {
+    if (!s || !s.date) return;
+    const w = weekStartOf(dayKey(s.date));
+    // Before the goal was set belongs to a different question, and a session
+    // dated later this year is not a week he has trained.
+    if (w < since || w > thisWeek) return;
+    trainedWeeks.add(w);
+  });
+  const trained = trainedWeeks.size;
+  return { weeks, trained, pct: Math.round((trained / weeks) * 100), since };
+}
+
+function goalProgressCard(goal, todayISO, sessions) {
   // An ongoing goal has no window to measure time against and no phases to
-  // tick, so both meters would be made up -- "100% of the time gone" on a goal
-  // with no end. It says what it is instead.
+  // tick, so neither of the two meters below can be drawn for it -- "100% of
+  // the time gone" on a goal with no end. It gets the one honest measurement it
+  // does have instead: how many of the weeks since he set it he trained in.
   if (!goal.targetDate) {
+    const o = ongoingProgress(goal, sessions, todayISO);
     return `
     <div class="card">
       <div class="card__title-row"><h2>${esc(goal.text)}</h2><span class="chip chip--primary">ongoing</span></div>
+      ${o ? `<div class="meter-row"><span>Weeks trained</span><span>${o.trained} of ${o.weeks}</span></div>
+      <div class="meter"><div class="meter__fill" style="width:${o.pct}%"></div></div>` : ''}
       <div class="exercise-line"><span>No target date</span><span>set ${niceDate(goal.created)}</span></div>
     </div>`;
   }
@@ -2646,7 +2682,7 @@ function renderProgress() {
   const goals = goalsSorted();
 
   view.innerHTML = `
-    ${goals.length ? `<div class="section-title">Goal progress</div>` + goals.map(g => goalProgressCard(g)).join('') : ''}
+    ${goals.length ? `<div class="section-title">Goal progress</div>` + goals.map(g => goalProgressCard(g, todayStr(), store.get('sessions', []))).join('') : ''}
     <div class="section-title">Where you stand</div>
     ${trainingLoadCard(trainingLoad(store.get('sessions', [])))}
     ${personalBestsCard(personalBests(store.get('sessions', [])))}
