@@ -122,11 +122,18 @@ describe("the Draft button", () => {
 
   it("sizes the Home card and the draft through the same function", () => {
     // Two copies of the weekTarget call are how the screens drifted apart in
-    // the first place; renderHome and requestDraft must both go through it.
+    // the first place; renderHome and the draft request must both go through
+    // it. The draft's half moved into fetchWeekDraft when draftPhase started
+    // asking for several weeks in a row -- one body builder, two callers, so
+    // requestDraft must not have grown a copy of its own either.
     const renderHome = String(vm.runInContext("renderHome", loadApp([])));
+    const fetchWeekDraft = String(vm.runInContext("fetchWeekDraft", loadApp([])));
     const requestDraft = String(vm.runInContext("requestDraft", loadApp([])));
     expect(renderHome).toContain("homeWeekTarget()");
-    expect(requestDraft).toContain("homeWeekTarget()");
-    expect(renderHome + requestDraft).not.toContain("weekTarget(goalsSorted");
+    expect(fetchWeekDraft).toContain("homeWeekTarget()");
+    expect(requestDraft).not.toContain("homeWeekTarget()");
+    expect(requestDraft).toContain("fetchWeekDraft(");
+    expect(String(vm.runInContext("draftPhase", loadApp([])))).toContain("fetchWeekDraft(");
+    expect(renderHome + fetchWeekDraft + requestDraft).not.toContain("weekTarget(goalsSorted");
   });
 });
