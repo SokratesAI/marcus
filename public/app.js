@@ -253,6 +253,10 @@ function calendarWeekTarget(target, row) {
   return Object.assign({}, target, {
     phase: row.phase, phaseEnds: null, multiplier: row.multiplier,
     volumeTarget: Math.round(target.baseline * row.multiplier),
+    // The row's own position, carried so the sentence under the draft card can
+    // name the week it is describing. `weekOf` is also what tells that sentence
+    // it is about a future week rather than the one Home is showing.
+    week: row.week, weeks: row.weeks, weekOf: row.start,
   });
 }
 
@@ -2019,12 +2023,18 @@ function draftPreview(plan, days) {
 function draftCard(plan, draft, sessions, todayISO) {
   if (!draft) return '';
   const volume = draftVolumeLabel(draftVolume(draft.days, sessions, todayISO || todayStr()), draft.week, !!draft.weekOf);
+  // Where that week's kilogram target came from. Only for a week drafted ahead:
+  // for this week the Home card is already showing the same sentence, and
+  // printing it twice on one screen is noise. Without it the volume line quotes
+  // a target ("95% of that week's 8,800 kg") that appears on no card he can see.
+  const sizing = draft.weekOf ? weekTargetLabel(draft.week) : '';
   return `
       <div class="card" style="display:block">
         <div class="card__title-row"><h2>Marcus's week${draft.weekOf ? ` of ${niceDate(draft.weekOf)}` : ''}</h2><span class="chip chip--primary">Not applied</span></div>
         ${draft.label ? `<div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Drafted for ${esc(draft.label)}</div>` : ``}
         ${draft.note ? `<p class="card__note">${esc(draft.note)}</p>` : ``}
         ${volume ? `<p class="card__note">${esc(volume)}</p>` : ``}
+        ${sizing ? `<p class="card__note">${esc(sizing)}</p>` : ``}
         ${draftPreview(plan, draft.days).map(d => `
           <div class="plan-day" style="margin-top:8px">
             <div style="display:flex;justify-content:space-between;align-items:center">
@@ -2130,6 +2140,11 @@ const PHASE_VOLUME = { Base: 1.10, Build: 1.00, Peak: 0.90, Taper: 0.60 };
 // own recent average is a consistency floor, not a plateau -- it rises when he
 // does more, and it does not keep rising on its own.
 const ONGOING_VOLUME = 1.00;
+// The phase name weekTarget gives a goal with no target date. One declaration,
+// because three things now agree on this exact string: weekTarget writes it,
+// ongoingCalendar writes it, and weekTargetLabel reads it to decide which
+// sentence describes the sizing.
+const ONGOING_PHASE = 'Ongoing';
 const WEEK_BASELINE_WEEKS = 4;
 // Below this, the average is one week wearing a plural. Say so instead.
 const WEEK_MIN_BASELINE_WEEKS = 2;
@@ -2179,7 +2194,7 @@ function weekTarget(goal, plan, sessions, todayISO) {
   }
   const multiplier = ongoing ? ONGOING_VOLUME : PHASE_VOLUME[phase.label];
   Object.assign(base, {
-    phase: ongoing ? 'Ongoing' : phase.label,
+    phase: ongoing ? ONGOING_PHASE : phase.label,
     phaseEnds: ongoing ? null : phase.date,
     multiplier: multiplier == null ? null : multiplier,
   });
@@ -2286,7 +2301,7 @@ function raceCalendar(goal, todayISO) {
 function ongoingCalendar(today) {
   const weeks = [];
   for (let i = 0; i <= WEEK_BASELINE_WEEKS; i++) {
-    weeks.push({ start: shiftDay(weekStartOf(today), 7 * i), phase: 'Ongoing',
+    weeks.push({ start: shiftDay(weekStartOf(today), 7 * i), phase: ONGOING_PHASE,
                  week: null, weeks: null, multiplier: ONGOING_VOLUME,
                  raceWeek: false, then: null, ongoing: true });
   }
@@ -2334,13 +2349,20 @@ function weekTargetLabel(week) {
   const pct = Math.round(Math.abs(week.multiplier - 1) * 100);
   const direction = week.multiplier > 1 ? pct + '% above' : week.multiplier < 1 ? pct + '% below' : 'level with';
   // Always plural: a baseline under WEEK_MIN_BASELINE_WEEKS never reaches here.
-  // An ongoing goal has no end date to print, so it names itself instead of a
-  // phase window. Everything after the dash is the same sentence either way.
-  const where = week.phaseEnds
-    ? week.phase + ' phase through ' + niceDate(week.phaseEnds)
-    : 'That goal has no target date, so every week is sized the same way';
+  // Which opening this takes is decided by the PHASE NAME -- the same rule the
+  // server's `weekTargetLine` uses -- and deliberately not by the absence of an
+  // end date. `calendarWeekTarget` nulls `phaseEnds` on a later calendar week
+  // of a DATED goal, because that row knows its phase but not when the phase
+  // ends, and the old code read that null as "no target date" and would have
+  // told him a race goal was open-ended.
+  const where = week.phase === ONGOING_PHASE
+    ? 'That goal has no target date, so every week is sized the same way'
+    : week.phaseEnds
+      ? week.phase + ' phase through ' + niceDate(week.phaseEnds)
+      : week.phase + ' phase' + (week.week ? ', week ' + week.week + ' of ' + week.weeks : '');
   return where + ' — your last '
-    + week.baselineWeeks + ' weeks averaged ' + week.baseline + ' kg, so this week aims '
+    + week.baselineWeeks + ' weeks averaged ' + week.baseline + ' kg, so '
+    + (week.weekOf ? 'that week aims ' : 'this week aims ')
     + direction + ' that.';
 }
 
