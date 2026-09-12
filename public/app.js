@@ -2872,6 +2872,12 @@ function renderProgress() {
       <button class="btn btn--tonal btn--block" id="loadServerCopy" style="margin-top:10px"><span class="material-icons-round">cloud_download</span> Load the server copy</button>
       <div id="restorePreview"></div>
     </div>
+    <div class="card">
+      <h2>Clear the training log</h2>
+      <p class="card__note">Marcus fills a new browser with demo sessions, bodyweights and meals so the app has something to show. This deletes all of it &mdash; and anything real logged since &mdash; and leaves your plan and this chat alone. Save a backup file first if you are unsure.</p>
+      <button class="btn btn--tonal btn--block" id="clearLog"><span class="material-icons-round">delete_sweep</span> Clear the training log</button>
+      <div id="clearLogPreview"></div>
+    </div>
   `;
 
   document.getElementById('addWeight').addEventListener('click', () => {
@@ -3123,6 +3129,53 @@ function forgetDeletionsOf(data) {
   return store.set('deletions', kept);
 }
 
+// The stores that hold what Edvard actually did, as opposed to what the app
+// plans or says. Clearing is offered over exactly these: `plan` is a template
+// rather than a log, and `chat` is the conversation, so neither is his record
+// of a workout.
+//
+// `plan` is also left alone for a mechanical reason worth writing down: `seed()`
+// rewrites it on the next boot whenever `store.get('plan')` is falsy, so
+// clearing it would put the demo block straight back. An empty array is truthy,
+// so the stores below stay cleared.
+const LOGGED_STORES = ['sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'plannedWeeks'];
+
+// Counts what clearing would actually remove, so the confirm step can say it
+// out loud -- the same contract as `backupSummary` and for the same reason: the
+// user confirms against a count, never against the word "clear".
+function clearableSummary() {
+  return LOGGED_STORES.map(k => ({ key: k, count: (store.get(k, []) || []).length }))
+    .filter(s => s.count > 0);
+}
+
+// Every new browser is seeded with sixteen demo sessions, a run of bodyweights
+// and a week of meals, and until now nothing could take them out again. Edvard
+// told Marcus so himself on 2026-09-07 -- "dataen som er her er bare demo data,
+// ikke noe jeg faktisk har gjort" -- and the app had no answer, so every card
+// that reads the log has been drawing his progress out of numbers he never
+// lifted.
+//
+// Deleting record by record is not an answer either: that is 48 rows behind
+// three confirm dialogs on a phone.
+//
+// Tombstones are written for the stores that carry them, so the other phone
+// does not merge the cleared records straight back on the next sync. `weights`
+// and `measurements` have no id and therefore no tombstone -- `recordDeletion`
+// keys on one -- so a second device that still holds them will bring those two
+// back. That is a real limit and not a case this can silently pretend to cover.
+function clearTrainingLog() {
+  const cleared = [];
+  const failed = [];
+  LOGGED_STORES.forEach(k => {
+    const rows = store.get(k, []);
+    if (!Array.isArray(rows) || !rows.length) return;
+    rows.forEach(r => recordDeletion(k, r && r.id));
+    if (store.set(k, [])) cleared.push({ key: k, count: rows.length });
+    else failed.push(k);
+  });
+  return { cleared, failed };
+}
+
 // A restore is destructive, so the file is parsed and described before
 // anything is written -- the user confirms against a count of what is in the
 // file, not against the word "restore".
@@ -3190,7 +3243,49 @@ function wireBackup() {
     reader.readAsText(file);
   });
   renderRestorePreview();
+  wireClearLog();
   wireServerCopy();
+}
+
+// Two steps on purpose, and the preview is the first one: clearing is
+// irreversible in this browser, so what disappears is counted on screen before
+// there is a button that does it.
+let clearLogArmed = false;
+
+function renderClearLogPreview() {
+  const host = document.getElementById('clearLogPreview');
+  if (!host) return;
+  if (!clearLogArmed) { host.innerHTML = ''; return; }
+  const rows = clearableSummary();
+  if (!rows.length) {
+    host.innerHTML = '<div class="card__note" style="margin-top:14px">There is nothing logged to clear.</div>';
+    return;
+  }
+  const lines = rows
+    .map(s => '<div class="exercise-line"><span>' + esc(s.key) + '</span><span>' + s.count + '</span></div>')
+    .join('');
+  host.innerHTML = '<div class="card__note" style="margin-top:14px">This deletes the following from this browser and from the server copy:</div>' + lines +
+    '<button class="btn btn--filled btn--block" id="confirmClearLog" style="margin-top:10px">Delete all of it</button>' +
+    '<button class="btn btn--tonal btn--block" id="cancelClearLog" style="margin-top:8px">Cancel</button>';
+  document.getElementById('confirmClearLog')?.addEventListener('click', () => {
+    const result = clearTrainingLog();
+    clearLogArmed = false;
+    const total = result.cleared.reduce((n, s) => n + s.count, 0);
+    if (result.failed.length) toast('Cleared ' + total + ' record(s) -- this browser refused ' + result.failed.length + ' section(s).');
+    else toast('Cleared. ' + total + ' record(s) deleted.');
+    renderClearLogPreview();
+    renderProgress();
+  });
+  document.getElementById('cancelClearLog')?.addEventListener('click', () => { clearLogArmed = false; renderClearLogPreview(); });
+}
+
+function wireClearLog() {
+  clearLogArmed = false;
+  document.getElementById('clearLog')?.addEventListener('click', () => {
+    clearLogArmed = true;
+    renderClearLogPreview();
+  });
+  renderClearLogPreview();
 }
 
 // Every write to a store key the backup carries pushes the whole copy up, once
