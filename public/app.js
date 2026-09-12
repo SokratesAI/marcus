@@ -55,6 +55,8 @@ function renderHome() {
   // passed, so a null here means zero goals, not "nothing coming up".
   const nextGoal = homeGoal();
   const nextPhase = nextGoal && nextGoal.milestones.find(m => !m.done);
+  // A goal whose day has gone is not a goal Home should be counting down to.
+  const behind = goalIsBehind(nextGoal);
   const week = homeWeekTarget();
 
   view.innerHTML = `
@@ -73,7 +75,14 @@ function renderHome() {
       <div class="stat"><div class="stat__value">${delta}</div><div class="stat__label">${bodyweightChangeLabel(change)}</div></div>
     </div>
 
-    ${nextGoal ? `
+    ${nextGoal && behind ? `
+    <div class="section-title">Your last goal</div>
+    <div class="card">
+      <div class="card__title-row"><h2>${esc(nextGoal.text)}</h2><span class="chip">${behind.daysAgo === 1 ? 'was yesterday' : `was ${behind.daysAgo} days ago`}</span></div>
+      <p class="card__note">That day has been and gone, so Marcus has nothing ahead to plan against — no phases, no weeks to the race. What is next?</p>
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="openChat()"><span class="material-icons-round">chat</span> Tell Marcus</button>
+      <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="switchTab('plan')">Or type it in yourself</button>
+    </div>` : nextGoal ? `
     <div class="section-title">Next goal</div>
     <div class="card">
       <div class="card__title-row"><h2>${esc(nextGoal.text)}</h2><span class="chip chip--primary">${esc(goalCountdown(nextGoal.targetDate))}</span></div>

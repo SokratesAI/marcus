@@ -2583,6 +2583,23 @@ function homeGoal(todayISO) {
   return draftGoals(todayISO)[0] || all[all.length - 1];
 }
 
+// Idea #209: the goal flow had no end. Once a race is behind him `homeGoal()`
+// deliberately keeps handing back the last goal, so Home still says "Next goal"
+// about a day that has gone, while everything the goal fed goes quiet at the
+// same moment -- `raceCalendar` returns no weeks, `phasePosition` returns null,
+// the volume trend and the Progress card have nothing ahead to measure. Nothing
+// anywhere asks what is next. This is the one fact Home needs to ask.
+//
+// Only a DATED goal can be behind him. An ongoing goal has no day to pass, and
+// `draftGoals` keeps it in front forever, so `homeGoal()` never falls back past
+// one -- a null here means "there is still something ahead", not "no goal".
+function goalIsBehind(goal, todayISO) {
+  const today = todayISO || todayStr();
+  const target = goal && goal.targetDate;
+  if (!target || target >= today) return null;
+  return { daysAgo: daysBetween(target, today) };
+}
+
 function goalCountdown(targetISO, todayISO) {
   if (!targetISO) return 'ongoing';
   const days = daysBetween(todayISO || todayStr(), targetISO);
