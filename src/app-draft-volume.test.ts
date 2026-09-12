@@ -100,7 +100,8 @@ const WEEK = {
 describe("draftVolume", () => {
   it("projects sets x reps x the last weight logged for that exercise", () => {
     // 4x5 at 80 = 1600, 3x8 at 50 = 1200.
-    expect(loadApp().draftVolume(DAYS, SESSIONS, TODAY)).toEqual({ kg: 2800, known: 2, unknown: 0 });
+    expect(loadApp().draftVolume(DAYS, SESSIONS, TODAY))
+      .toEqual({ kg: 2800, known: 2, estimated: 0, unknown: 0 });
   });
 
   it("is the same arithmetic as a logged week, so the two are comparable", () => {
@@ -119,16 +120,84 @@ describe("draftVolume", () => {
     expect(loadApp().draftVolume(days, sessions, TODAY).kg).toBe(1733);
   });
 
-  it("counts an exercise never logged as unknown, not as zero kilograms", () => {
+  // Never zero, and no longer dropped either. Romanian Deadlift is a Legs lift
+  // he has never logged; the only loaded Legs weight in SESSIONS is the 80 kg
+  // squat, so 3 x 10 of it prices at 2400 and the projection says it estimated
+  // one of the three. Zero remains the one answer this must never give -- it
+  // reads as "this week is light" when the truth is the opposite.
+  it("prices an exercise never logged from the rest of its muscle group", () => {
     const withNew = DAYS.concat([{ day: "Friday", focus: "Pull",
       exercises: [{ name: "Romanian Deadlift", sets: 3, reps: 10 }] }]);
     expect(loadApp().draftVolume(withNew, SESSIONS, TODAY))
-      .toEqual({ kg: 2800, known: 2, unknown: 1 });
+      .toEqual({ kg: 5200, known: 2, estimated: 1, unknown: 0 });
+  });
+
+  // The group has to have a loaded lift in it. Back in SESSIONS is one pull-up
+  // row at 0 kg, which is a real answer about the pull-up and says nothing
+  // about what a pulldown weighs -- so this stays unknown rather than becoming
+  // an estimate of zero, which is the exact reading the whole rule exists to
+  // avoid.
+  it("leaves an exercise unknown when its group holds nothing but bodyweight", () => {
+    const days = [{ day: "Monday", focus: "Pull",
+      exercises: [{ name: "Lat Pulldown", sets: 3, reps: 10 }] }];
+    expect(loadApp().draftVolume(days, SESSIONS, TODAY))
+      .toEqual({ kg: 0, known: 0, estimated: 0, unknown: 1 });
+  });
+
+  it("leaves an exercise unknown when nothing says which muscle it is", () => {
+    const days = [{ day: "Monday", focus: "Odd",
+      exercises: [{ name: "Sled Push", sets: 3, reps: 10 }] }];
+    expect(loadApp().draftVolume(days, SESSIONS, TODAY))
+      .toEqual({ kg: 0, known: 0, estimated: 0, unknown: 1 });
+  });
+
+  // The median, not the mean, and this fixture separates them. Back holds a
+  // 180 kg deadlift beside a 60 kg row and a 50 kg pulldown: the median is 60
+  // and the mean is 96.67, so a mean would price every new back exercise off
+  // the one lift in the group that is nothing like the others. 3 x 10 at 60 is
+  // 1800; at the mean it would have been 2900.
+  it("takes the median of the group, so one heavy lift does not set the price", () => {
+    const sessions = [{ date: "2026-09-02", exercises: [
+      { name: "Deadlift", sets: [{ reps: 3, weight: 180 }] },
+      { name: "Barbell Row", sets: [{ reps: 8, weight: 60 }] },
+      { name: "Lat Pulldown", sets: [{ reps: 10, weight: 50 }] },
+    ] }];
+    const days = [{ day: "Monday", focus: "Pull",
+      exercises: [{ name: "Face Pull", sets: 3, reps: 10 }] }];
+    expect(loadApp().draftVolume(days, sessions, TODAY).kg).toBe(1800);
+  });
+
+  // Each exercise votes once, at its own last working weight. The squat here is
+  // logged three weeks running and the other two lifts once each, so the
+  // distinct weights are 50, 100 and 120 and the median is 100. Counting every
+  // logged row instead would make the median 50 and let the lift he happens to
+  // repeat most often set the price for the whole group.
+  it("weights the median by exercise, not by how often each was logged", () => {
+    const squat = (date: string) => ({ date,
+      exercises: [{ name: "Back Squat", sets: [{ reps: 5, weight: 50 }] }] });
+    const sessions = [squat("2026-08-19"), squat("2026-08-26"),
+      { date: "2026-09-02", exercises: [
+        { name: "Leg Press", sets: [{ reps: 10, weight: 100 }] },
+        { name: "Calf Raise", sets: [{ reps: 12, weight: 120 }] },
+      ] }];
+    const days = [{ day: "Monday", focus: "Legs",
+      exercises: [{ name: "Romanian Deadlift", sets: 2, reps: 5 }] }];
+    expect(loadApp().draftVolume(days, sessions, TODAY).kg).toBe(1000);
+  });
+
+  it("does not price an estimate off a session logged after the day it is asked about", () => {
+    const days = [{ day: "Monday", focus: "Legs",
+      exercises: [{ name: "Romanian Deadlift", sets: 3, reps: 10 }] }];
+    const later = SESSIONS.concat([{ date: "2026-09-20",
+      exercises: [{ name: "Leg Press", sets: [{ reps: 10, weight: 200 }] }] }]);
+    // 09-20 is after TODAY, so Legs is still just the 80 kg squat.
+    expect(loadApp().draftVolume(days, later, TODAY).kg).toBe(2400);
   });
 
   it("counts a bodyweight row as known and adds nothing, the way the log does", () => {
     const days = [{ day: "Monday", focus: "Pull", exercises: [{ name: "Pull-up", sets: 3, reps: 6 }] }];
-    expect(loadApp().draftVolume(days, SESSIONS, TODAY)).toEqual({ kg: 0, known: 1, unknown: 0 });
+    expect(loadApp().draftVolume(days, SESSIONS, TODAY))
+      .toEqual({ kg: 0, known: 1, estimated: 0, unknown: 0 });
   });
 
   it("does not see a session logged after the day it is asked about", () => {
@@ -156,12 +225,13 @@ describe("draftVolume", () => {
 
   it("reads an empty or malformed draft as nothing to project rather than throwing", () => {
     const app = loadApp();
-    expect(app.draftVolume(null, SESSIONS, TODAY)).toEqual({ kg: 0, known: 0, unknown: 0 });
-    expect(app.draftVolume([{ day: "Monday" }], SESSIONS, TODAY)).toEqual({ kg: 0, known: 0, unknown: 0 });
+    const none = { kg: 0, known: 0, estimated: 0, unknown: 0 };
+    expect(app.draftVolume(null, SESSIONS, TODAY)).toEqual(none);
+    expect(app.draftVolume([{ day: "Monday" }], SESSIONS, TODAY)).toEqual(none);
     expect(app.draftVolume([{ day: "Monday", exercises: [{ name: "  " }] }], SESSIONS, TODAY))
-      .toEqual({ kg: 0, known: 0, unknown: 0 });
+      .toEqual(none);
     expect(app.draftVolume([{ day: "Monday", exercises: [{ name: "Back Squat", sets: 0, reps: 5 }] }],
-      SESSIONS, TODAY)).toEqual({ kg: 0, known: 0, unknown: 1 });
+      SESSIONS, TODAY)).toEqual({ kg: 0, known: 0, estimated: 0, unknown: 1 });
   });
 });
 
@@ -204,15 +274,38 @@ describe("draftVolumeLabel", () => {
 
   it("says how many exercises it could not price, singular and plural", () => {
     const app = loadApp();
-    expect(app.draftVolumeLabel({ kg: 2800, known: 2, unknown: 1 }, null))
-      .toContain("1 exercise you have never logged is not counted.");
-    expect(app.draftVolumeLabel({ kg: 2800, known: 2, unknown: 2 }, null))
-      .toContain("2 exercises you have never logged are not counted.");
+    expect(app.draftVolumeLabel({ kg: 2800, known: 2, estimated: 0, unknown: 1 }, null))
+      .toContain("1 exercise is not counted \u2014 nothing comparable is logged either.");
+    expect(app.draftVolumeLabel({ kg: 2800, known: 2, estimated: 0, unknown: 2 }, null))
+      .toContain("2 exercises are not counted \u2014 nothing comparable is logged either.");
+  });
+
+  // An estimate is a weaker number than a logged one and the card has to say so
+  // -- the whole reason `estimated` is a separate count from `known` is that it
+  // reaches this sentence.
+  it("says how many exercises were priced from their muscle group", () => {
+    const app = loadApp();
+    expect(app.draftVolumeLabel({ kg: 5200, known: 2, estimated: 1, unknown: 0 }, null))
+      .toBe("About 5200 kg at your last weights."
+        + " 1 exercise you have never logged is priced at your usual weight for that muscle.");
+    expect(app.draftVolumeLabel({ kg: 5200, known: 2, estimated: 2, unknown: 0 }, null))
+      .toContain("2 exercises you have never logged are priced at your usual weight for that muscle.");
+  });
+
+  // "at your last weights" is a claim about where the number came from, and for
+  // a week made entirely of lifts he has never done it is simply false.
+  it("does not say 'your last weights' about a week it priced entirely by estimate", () => {
+    const app = loadApp();
+    const line = app.draftVolumeLabel({ kg: 1800, known: 0, estimated: 1, unknown: 0 }, WEEK);
+    expect(line).toContain("About 1800 kg at typical weights for those muscles");
+    expect(line).not.toContain("your last weights");
+    expect(app.draftVolumeLabel({ kg: 2800, known: 1, estimated: 1, unknown: 0 }, null))
+      .toContain("at your last weights");
   });
 
   it("says nothing at all when it could price no exercise, rather than 'about 0 kg'", () => {
     const app = loadApp();
-    expect(app.draftVolumeLabel({ kg: 0, known: 0, unknown: 3 }, WEEK)).toBeNull();
+    expect(app.draftVolumeLabel({ kg: 0, known: 0, estimated: 0, unknown: 3 }, WEEK)).toBeNull();
     expect(app.draftVolumeLabel(null, WEEK)).toBeNull();
   });
 });
