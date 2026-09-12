@@ -2611,6 +2611,56 @@ function trainingConsistency(goal, sessions, todayISO) {
   return { weeks, trained, pct: Math.round((trained / weeks) * 100), since, until: last };
 }
 
+// How many completed weeks make up each half of the volume comparison.
+const VOLUME_TREND_WEEKS = 4;
+
+// "Weeks trained" says he showed up. It cannot say whether the training is
+// going anywhere, and for an open-ended goal -- "improve overall health and
+// fitness" -- that is the whole question. This is the one answer his own log
+// can give: the kilograms in the last four COMPLETED weeks against the four
+// before them.
+//
+// The week in progress is deliberately left out of both halves. Read on a
+// Tuesday it would put two days against four whole weeks and report a collapse,
+// every single week, which is the same clock mistake volumeThisWeek was
+// corrected for.
+function volumeTrend(sessions, todayISO) {
+  if (!Array.isArray(sessions) || !sessions.length) return null;
+  const thisMonday = weekStartOf(dayKey(todayISO || todayStr()));
+  const recentStart = shiftDay(thisMonday, -7 * VOLUME_TREND_WEEKS);
+  const olderStart = shiftDay(thisMonday, -14 * VOLUME_TREND_WEEKS);
+  let first = null;
+  sessions.forEach(s => {
+    if (!s || !s.date) return;
+    const w = weekStartOf(dayKey(s.date));
+    if (first === null || w < first) first = w;
+  });
+  // Eight completed weeks have to exist in the log, not merely be nameable. A
+  // log that starts five weeks ago fills the older window with zeros he never
+  // had a chance to lift in, and the card would announce a doubling on his
+  // second month of using the app. An untrained week inside a log that reaches
+  // back far enough is a real zero and counts.
+  if (first === null || first > olderStart) return null;
+  let recent = 0;
+  let older = 0;
+  sessions.forEach(s => {
+    if (!s || !s.date) return;
+    const w = weekStartOf(dayKey(s.date));
+    if (w >= recentStart && w < thisMonday) recent += sessionVolume(s);
+    else if (w >= olderStart && w < recentStart) older += sessionVolume(s);
+  });
+  // Nothing lifted in the older window has no percentage -- the change is
+  // undefined rather than infinite -- so the label says it in words instead.
+  const pct = older > 0 ? Math.round(((recent - older) / older) * 100) : null;
+  return { recent: Math.round(recent), older: Math.round(older), pct, weeks: VOLUME_TREND_WEEKS };
+}
+
+function volumeTrendLabel(trend) {
+  if (!trend) return '';
+  if (trend.pct === null) return trend.recent > 0 ? 'up from nothing' : 'no lifting either month';
+  return (trend.pct > 0 ? '+' : '') + trend.pct + '%';
+}
+
 function goalProgressCard(goal, todayISO, sessions) {
   // An ongoing goal has no window to measure time against and no phases to
   // tick, so neither of the two meters below can be drawn for it -- "100% of
@@ -2618,11 +2668,18 @@ function goalProgressCard(goal, todayISO, sessions) {
   // does have instead: how many of the weeks since he set it he trained in.
   if (!goal.targetDate) {
     const o = trainingConsistency(goal, sessions, todayISO);
+    // Showing up and getting somewhere are two different questions, so they are
+    // two rows rather than one. The trend row is drawn only once eight completed
+    // weeks of log exist to compare; before that there is no honest number and
+    // the card says nothing instead of guessing.
+    const v = volumeTrend(sessions, todayISO);
     return `
     <div class="card">
       <div class="card__title-row"><h2>${esc(goal.text)}</h2><span class="chip chip--primary">ongoing</span></div>
       ${o ? `<div class="meter-row"><span>Weeks trained</span><span>${o.trained} of ${o.weeks}</span></div>
       <div class="meter"><div class="meter__fill" style="width:${o.pct}%"></div></div>` : ''}
+      ${v ? `<div class="meter-row"><span>Volume, last ${v.weeks} weeks</span><span>${esc(volumeTrendLabel(v))}</span></div>
+      <div class="exercise-line"><span>${Math.round(v.recent).toLocaleString()} kg</span><span>against ${Math.round(v.older).toLocaleString()} kg the ${v.weeks} weeks before</span></div>` : ''}
       <div class="exercise-line"><span>No target date</span><span>set ${niceDate(goal.created)}</span></div>
     </div>`;
   }
