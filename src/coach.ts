@@ -18,6 +18,8 @@
 // -- his training data and the recent turns -- is assembled per request and
 // sent as one block. The conversation is a persona holder, nothing more.
 
+import { phasePosition, type DraftGoal } from "./goal-phase.js";
+
 export interface CoachConfig {
   baseUrl: string;
   conversationId: string;
@@ -90,6 +92,34 @@ function validDate(value: unknown): value is string {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
 
+/** The phase each dated goal is in today, as sentences the app computed.
+ *
+ * The goals go into TRAINING DATA as raw JSON, milestone dates and all, so the
+ * only way the coach could answer "what should this week look like?" was to
+ * work out from four dates which phase today falls in and how far through it
+ * is. That is arithmetic against a clock, which is the one thing the TODAY
+ * block above exists because the model got wrong. The drafted week has never
+ * had to do it -- `phasePosition` hands it the same sentence -- and the chat,
+ * which is where Edvard actually asks, did not.
+ *
+ * Same function, not a second copy: the drafted week and the chat must never
+ * disagree about which week of which phase this is. A goal with no target date
+ * has no phases and contributes no line, and a goal whose target day has passed
+ * returns null, so a finished race does not get described as current.
+ */
+function goalStandings(goals: unknown[], todayISO: string): string {
+  return (Array.isArray(goals) ? goals : [])
+    .map((goal) => {
+      if (!goal || typeof goal !== "object") return null;
+      const position = phasePosition(goal as DraftGoal, todayISO);
+      if (!position) return null;
+      const text = String((goal as { text?: unknown }).text ?? "").trim();
+      return text ? `${text}: ${position}` : position;
+    })
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
 /** The prompt is built here and not in the browser, so what reaches the model
  * is decided in one place and is testable.
  *
@@ -124,6 +154,8 @@ export function buildPrompt(
       1,
     ),
   ];
+  const standing = goalStandings(context.goals ?? [], day);
+  if (standing) parts.push("WHERE EACH GOAL STANDS TODAY", standing);
   if (recent.length) {
     parts.push(
       "EARLIER IN THIS CONVERSATION",
