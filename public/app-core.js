@@ -390,6 +390,58 @@ function lastPerformanceLabel(last) {
   return parts.join(', ') + ' \u00b7 ' + niceDate(last.date);
 }
 
+// Pure: the kilograms a drafted week would actually produce, projected at the
+// last working weight logged for each exercise. A draft carries sets and reps
+// and never a weight -- the coach is not asked for one -- so the Home card can
+// ask for 8800 kg and the card that answers it has no number at all to check
+// against. Same arithmetic as `sessionVolume`: sets x reps x kilograms.
+//
+// An exercise with nothing logged is counted as `unknown` rather than as zero.
+// Zero would read as "this week is light" when the truth is "Marcus has never
+// seen you do this", and the two lead to opposite decisions. A bodyweight row
+// is not that case: it logs 0 kg deliberately, so it is known and adds zero,
+// which is exactly what the logged week it is compared against does.
+function draftVolume(days, sessions, asOfISO) {
+  let kg = 0, known = 0, unknown = 0;
+  (days || []).forEach(function (d) {
+    ((d && d.exercises) || []).forEach(function (e) {
+      if (!e || !exerciseKey(e.name)) return;
+      const sets = Number(e.sets), reps = Number(e.reps);
+      const last = lastPerformance(sessions, e.name, asOfISO);
+      if (!last || !Number.isFinite(sets) || !Number.isFinite(reps) || sets <= 0 || reps <= 0) {
+        unknown++;
+        return;
+      }
+      known++;
+      kg += sets * reps * last.weight;
+    });
+  });
+  return { kg: Math.round(kg), known, unknown };
+}
+
+// The sentence under the draft card. `week` is the same week-target object the
+// Home card renders and the draft was sized from, so the two screens cannot
+// quote different targets. It is deliberately vague about the number -- "about"
+// -- because a projection at last week's weights is not a promise about what
+// gets loaded, and a precise-looking figure would invite him to chase it.
+function draftVolumeLabel(projection, week) {
+  if (!projection || !projection.known) return null;
+  const kg = projection.kg;
+  const target = week && week.reason === 'ok' && Number.isFinite(week.volumeTarget) && week.volumeTarget > 0
+    ? week.volumeTarget : null;
+  let out = 'About ' + kg + ' kg at your last weights';
+  if (target) {
+    const share = Math.round((kg / target) * 100);
+    out += ' \u2014 ' + share + '% of this week\u2019s ' + target + ' kg target';
+  }
+  out += '.';
+  if (projection.unknown) {
+    out += ' ' + projection.unknown + ' exercise' + (projection.unknown === 1 ? '' : 's')
+        + ' you have never logged ' + (projection.unknown === 1 ? 'is' : 'are') + ' not counted.';
+  }
+  return out;
+}
+
 // The smallest load change this app will ever propose. It is not a preference:
 // PLATES bottoms out at 1.25 kg and a barbell takes one of those on each side,
 // so 2.5 kg is the smallest jump the equipment in `plateLoad` can actually
