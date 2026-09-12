@@ -143,7 +143,7 @@ function renderPlan() {
       <p class="card__note">He reads your goal and your log and writes a full week. Nothing changes until you accept it.</p>
       <button class="btn btn--tonal btn--block" id="draftWeek"${planDraftBusy ? ' disabled' : ''}><span class="material-icons-round">auto_awesome</span> ${planDraftBusy ? 'Marcus is writing…' : 'Draft my week'}</button>
     </div>
-    ${draftCard(plan, planDraft)}
+    ${draftCard(plan, planDraft, store.get('sessions', []))}
 
     <div class="section-title">The research behind this</div>
     ${TRAINING_REFERENCES.map(r => `
@@ -267,6 +267,10 @@ async function requestDraft(goalId, start) {
   const row = fromRow ? calendarRow(goalId, start) : null;
   if (fromRow && !row) { toast('That week is no longer on the calendar'); return; }
   if (row) raceCalendarOpen = goalId;
+  // One call, held for two uses: the target sent to the coach and the target
+  // the draft card is later checked against have to be the same object, or the
+  // card can report a percentage of a number the week was never sized for.
+  const week = row ? calendarWeekTarget(homeWeekTarget(), row) : homeWeekTarget();
   planDraftBusy = true;
   renderPlan();
   try {
@@ -278,7 +282,7 @@ async function requestDraft(goalId, start) {
         today: todayStr(),
         // The kilogram target the Home card is showing him right now, so the
         // week Marcus drafts and the number on Home cannot disagree.
-        week: row ? calendarWeekTarget(homeWeekTarget(), row) : homeWeekTarget(),
+        week,
         // The row's own label rather than its date: the server counting from
         // the date gets a phase that began mid-week this week one week short.
         calendarWeek: row ? { goal: row.goal, start: row.start, phase: row.phase,
@@ -295,7 +299,8 @@ async function requestDraft(goalId, start) {
     if (!res.ok) { toast(body.error || 'Marcus could not draft a week'); return; }
     if (!body.days || !body.days.length) { toast('Marcus did not draft a week'); return; }
     planDraft = { days: body.days, note: body.note || '',
-                  weekOf: row ? row.start : null, label: row ? calendarRowLabel(row) : null };
+                  weekOf: row ? row.start : null, label: row ? calendarRowLabel(row) : null,
+                  week };
   } catch {
     toast('Marcus could not be reached');
   } finally {
@@ -1987,13 +1992,15 @@ function draftPreview(plan, days) {
 // renderPlan so a test can read the markup Edvard is shown -- there is no DOM
 // harness in this suite, and a preview nobody can assert on is how the old one
 // came to show four days of a seven-day change.
-function draftCard(plan, draft) {
+function draftCard(plan, draft, sessions, todayISO) {
   if (!draft) return '';
+  const volume = draftVolumeLabel(draftVolume(draft.days, sessions, todayISO || todayStr()), draft.week, !!draft.weekOf);
   return `
       <div class="card" style="display:block">
         <div class="card__title-row"><h2>Marcus's week${draft.weekOf ? ` of ${niceDate(draft.weekOf)}` : ''}</h2><span class="chip chip--primary">Not applied</span></div>
         ${draft.label ? `<div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:2px">Drafted for ${esc(draft.label)}</div>` : ``}
         ${draft.note ? `<p class="card__note">${esc(draft.note)}</p>` : ``}
+        ${volume ? `<p class="card__note">${esc(volume)}</p>` : ``}
         ${draftPreview(plan, draft.days).map(d => `
           <div class="plan-day" style="margin-top:8px">
             <div style="display:flex;justify-content:space-between;align-items:center">
