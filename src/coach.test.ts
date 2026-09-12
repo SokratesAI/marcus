@@ -59,6 +59,21 @@ describe("buildPrompt", () => {
     expect(buildPrompt("hi", {}, [])).not.toContain("EARLIER IN THIS CONVERSATION");
   });
 
+  // Idea #209: the coach is the place he states a goal, so the prompt has to
+  // tell him how to hand one back. The block is asked for BEFORE the message,
+  // so a message that happens to contain the word "goal" cannot read as part
+  // of the instruction.
+  it("asks for a goal block, and asks before the message", () => {
+    const p = buildPrompt("I want to do Oslo Tri next August", {}, []);
+    expect(p).toContain("WRITING A GOAL DOWN");
+    expect(p).toContain("```goal");
+    expect(p.indexOf("WRITING A GOAL DOWN")).toBeLessThan(p.indexOf("MESSAGE FROM EDVARD"));
+  });
+
+  it("tells the coach an ongoing goal takes an empty date rather than an invented one", () => {
+    expect(buildPrompt("hi", {}, [])).toContain("must not be given an invented date");
+  });
+
   // The bug this block exists for: with no date in the prompt, the newest rows
   // in the log are indistinguishable from current ones, and the coach said
   // "you put up 3,691kg of volume this week" about a week eight days gone.
