@@ -130,9 +130,36 @@ export function buildPrompt(
       recent.map((t) => `${t.role === "marcus" ? "Marcus" : "Edvard"}: ${t.text}`).join("\n"),
     );
   }
-  parts.push("MESSAGE FROM EDVARD", message);
+  parts.push(GOAL_INSTRUCTION, "MESSAGE FROM EDVARD", message);
   return parts.join("\n\n");
 }
+
+/** The one thing the coach is allowed to write back into the app.
+ *
+ * Idea #209 asks for a goal stated in natural language to become a real goal
+ * record. On 2026-09-07 Edvard did exactly that in the chat -- a sprint and
+ * maybe an Olympic triathlon at Oslo Tri next August, the rides and runs he is
+ * doing now, his doctor's cholesterol note -- and nothing turned any of it into
+ * a `goals` record, because the only way to write one was a form on the Plan
+ * tab. His synced state still has no `goals` key at all. A coach you have to
+ * leave in order to write down what you just told him is not a coach.
+ *
+ * The block is a proposal, never a write. The app strips it out of the reply,
+ * shows a card, and stores nothing until he taps Set goal -- the same contract
+ * the drafted week already has ("nothing changes until you accept it"). So the
+ * worst a wrong block can do is put a card on the screen that he declines.
+ *
+ * It is asked for in a fenced block rather than as loose JSON because a fence
+ * is the one shape a model reliably closes, and because an unfenced object in
+ * a paragraph cannot be stripped back out without guessing where it starts. */
+export const GOAL_INSTRUCTION = [
+  "WRITING A GOAL DOWN",
+  'If Edvard states something he is training for -- a race, an event, a date, or an ongoing aim like getting his cholesterol down -- end your reply with a block in exactly this shape, after your normal answer:',
+  '```goal',
+  '{"text": "Olympic triathlon at Oslo Tri", "targetDate": "2027-08-14"}',
+  "```",
+  'Rules: `text` is his goal in his own words, short enough to read on a card. `targetDate` is `YYYY-MM-DD` if he named a day or a month you can pin to one, and `""` if there is no date -- an ongoing goal is a real goal and must not be given an invented date. One block per reply, for the single clearest goal. Do not write a block for a goal already in TRAINING DATA above, and do not write one because you think he should have a goal -- only when he has actually told you one in this conversation. He has to confirm it before anything is saved, so do not claim in your reply that you have saved it; say you have written it down for him to confirm.',
+].join("\n");
 
 export type CoachResult =
   | { status: "ok"; reply: string }

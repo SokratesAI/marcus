@@ -2343,6 +2343,50 @@ function buildMilestones(startISO, targetISO) {
   });
 }
 
+// ---------- a goal the coach heard you say (idea #209) ----------
+// The coach is asked (src/coach.ts, GOAL_INSTRUCTION) to end a reply with a
+// ```goal fenced block when Edvard states something he is training for. This
+// takes that block back out: the visible reply on the left, the proposal on the
+// right. It never writes anything -- the card the app draws from it is a
+// proposal Edvard confirms, the same contract the drafted week has.
+//
+// Everything that is not a well-formed block is `goal: null` and a reply left
+// exactly as it came, because the failure to avoid is not "we missed a goal",
+// it is a card offering to save something he never said. A malformed block is
+// still stripped when the fence closes, so he never reads raw JSON.
+const COACH_GOAL_FENCE = /```goal\s*\n([\s\S]*?)```[ \t]*\n?/;
+
+function parseCoachGoal(reply) {
+  const raw = String(reply == null ? '' : reply);
+  const match = raw.match(COACH_GOAL_FENCE);
+  if (!match) return { text: raw, goal: null };
+  const text = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(match[1]);
+  } catch {
+    return { text, goal: null };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { text, goal: null };
+  const goalText = String(parsed.text == null ? '' : parsed.text).trim();
+  if (!goalText) return { text, goal: null };
+  // Only the two fields are carried through. A model that adds a `milestones`
+  // or an `id` of its own must not have them reach the store -- validateGoal
+  // mints both, and a goal is only ever built there.
+  const targetDate = String(parsed.targetDate == null ? '' : parsed.targetDate).trim();
+  return { text, goal: { text: goalText, targetDate } };
+}
+
+// A goal the coach proposes that Edvard already has is a card asking him to
+// save the same thing twice. Same text, ignoring case and surrounding spaces,
+// counts as the same goal; the date does not, because moving a race day is what
+// the edit form is for.
+function goalAlreadySet(proposal, existing) {
+  if (!proposal || !proposal.text) return false;
+  const want = proposal.text.trim().toLowerCase();
+  return (existing || []).some(g => g && String(g.text || '').trim().toLowerCase() === want);
+}
+
 function validateGoal(rawText, rawDate, todayISO) {
   const text = String(rawText == null ? '' : rawText).trim();
   if (!text) return { ok: false, message: 'Say what you are training for.' };

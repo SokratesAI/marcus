@@ -3756,9 +3756,68 @@ function renderChatMessages() {
     const note = m.role === 'marcus' && m.offline
       ? '<span class="msg__offline">built-in reply — the coach was not reachable</span>'
       : '';
-    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(m.text)}${note}</div>`;
+    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(m.text)}${note}${goalProposalHtml(m)}</div>`;
   }).join('');
   chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// The confirm card under a coach bubble that heard a goal. It is drawn from the
+// stored message rather than from the last request, for the same reason the
+// offline note is: scrolling back to a bubble from three days ago has to tell
+// the truth about what happened to that proposal, not about this session.
+//
+// `goalSaved` is set on the message when he takes it and `goalDeclined` when he
+// does not, so a proposal is offered exactly once and the answer stays on the
+// screen. A card with no timestamp is not drawable -- the handlers find the
+// message by `ts` -- so it renders as nothing rather than as a dead button.
+function goalProposalHtml(m) {
+  if (!m || m.role !== 'marcus' || !m.goalProposal || !m.ts) return '';
+  if (m.goalSaved) return '<span class="msg__offline">Saved as a goal.</span>';
+  if (m.goalDeclined) return '<span class="msg__offline">Not saved.</span>';
+  const g = m.goalProposal;
+  const when = g.targetDate ? `Target ${esc(niceDate(g.targetDate))}` : 'No target date — an ongoing goal';
+  return `<div class="chat-goal">
+      <div class="chat-goal__title">${esc(g.text)}</div>
+      <div class="chat-goal__when">${when}</div>
+      <div class="chat-goal__actions">
+        <button class="btn btn--filled" onclick="acceptCoachGoal(${Number(m.ts)})"><span class="material-icons-round">flag</span> Set goal</button>
+        <button class="btn btn--tonal" onclick="declineCoachGoal(${Number(m.ts)})">Not this</button>
+      </div>
+    </div>`;
+}
+
+/** The message carrying the proposal, or null. `ts` is `Date.now()` at the
+ * moment the bubble was stored, which is unique enough for one phone's chat. */
+function chatMessageAt(ts) {
+  return store.get('chat', []).find(m => m && m.ts === ts) || null;
+}
+
+function acceptCoachGoal(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || !m.goalProposal || m.goalSaved || m.goalDeclined) return;
+  // The same validator the form on the Plan tab uses, so a goal the coach heard
+  // and a goal Edvard typed are the same record built the same way -- including
+  // the milestone phases, which are cut here and never by the model.
+  const result = validateGoal(m.goalProposal.text, m.goalProposal.targetDate);
+  if (!result.ok) { toast(result.message); return; }
+  if (!store.set('goals', store.get('goals', []).concat([result.goal]))) return;
+  m.goalSaved = true;
+  store.set('chat', msgs);
+  renderChatMessages();
+  // Redraw whatever tab is behind the sheet, so closing it does not show a
+  // Plan tab that predates the goal he just saved.
+  switchTab(currentTab);
+  toast('Goal set.');
+}
+
+function declineCoachGoal(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || !m.goalProposal || m.goalSaved || m.goalDeclined) return;
+  m.goalDeclined = true;
+  store.set('chat', msgs);
+  renderChatMessages();
 }
 
 function openChat() {
@@ -3876,7 +3935,19 @@ async function askMarcus(text) {
     });
     if (!res.ok) return marcusReplyAfterAPause(text);
     const body = await res.json();
-    if (typeof body.reply === 'string' && body.reply.trim()) return { text: body.reply, offline: false };
+    if (typeof body.reply === 'string' && body.reply.trim()) {
+      // The coach can end a reply with a ```goal block (idea #209). It comes
+      // out here rather than at render time so the block is never stored as
+      // part of the bubble -- a stripped reply is what he reads, once.
+      const parsed = parseCoachGoal(body.reply);
+      // A goal he already has is not a question worth asking. Dropping the
+      // proposal, not the reply: the sentence around it is still an answer.
+      const goal = parsed.goal && !goalAlreadySet(parsed.goal, store.get('goals', [])) ? parsed.goal : null;
+      // A reply that was nothing but the block would otherwise be an empty
+      // bubble with a card under it.
+      const shown = parsed.text || (goal ? 'Written down — confirm it below and I will set it as your goal.' : body.reply);
+      return { text: shown, offline: false, goal };
+    }
     return marcusReplyAfterAPause(text);
   } catch {
     return marcusReplyAfterAPause(text);
@@ -3912,6 +3983,9 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
     // every one of them written before the coach existed -- are not
     // retroactively relabelled by a key they do not carry.
     if (reply.offline) msg.offline = true;
+    // Only the real coach can propose a goal; the rule-based fallback has no
+    // idea what was said to it.
+    if (reply.goal) msg.goalProposal = reply.goal;
     all.push(msg);
     store.set('chat', all);
     renderChatMessages();
