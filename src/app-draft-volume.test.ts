@@ -100,6 +100,15 @@ describe("draftVolume", () => {
     expect(app.draftVolume([DAYS[0]], SESSIONS, TODAY).kg).toBe(app.sessionVolume(logged));
   });
 
+  it("gives whole kilograms, because the plates step in halves", () => {
+    // 82.5 kg is a real bar (a 1.25 plate each side off 80), and 3 x 7 of it is
+    // 1732.5 -- a projection is not precise enough to print half a kilogram.
+    const sessions = [{ date: "2026-09-02",
+      exercises: [{ name: "Back Squat", sets: [{ reps: 5, weight: 82.5 }] }] }];
+    const days = [{ day: "Monday", focus: "Legs", exercises: [{ name: "Back Squat", sets: 3, reps: 7 }] }];
+    expect(loadApp().draftVolume(days, sessions, TODAY).kg).toBe(1733);
+  });
+
   it("counts an exercise never logged as unknown, not as zero kilograms", () => {
     const withNew = DAYS.concat([{ day: "Friday", focus: "Pull",
       exercises: [{ name: "Romanian Deadlift", sets: 3, reps: 10 }] }]);
