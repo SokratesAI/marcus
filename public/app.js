@@ -45,6 +45,14 @@ function renderHome() {
   const kcal = meals.reduce((s, m) => s + m.calories, 0);
   // The nearest goal, and the first phase of it still outstanding -- that pair is
   // what turns a far-off date into something today can be measured against.
+  //
+  // With no goal at all this section used to render nothing, and that is the gate
+  // in front of every other idea #209 feature: the phase sentence, the race
+  // calendar, the volume trend and the Progress card are all drawn from a goal,
+  // so a user without one sees none of them and is never asked for one either --
+  // the only prompt lives on the Plan tab, which is not the tab Home opens on.
+  // homeGoal() falls back to the last goal even once every target date has
+  // passed, so a null here means zero goals, not "nothing coming up".
   const nextGoal = homeGoal();
   const nextPhase = nextGoal && nextGoal.milestones.find(m => !m.done);
   const week = homeWeekTarget();
@@ -72,7 +80,14 @@ function renderHome() {
       ${nextPhase ? `<div class="exercise-line"><span>${esc(nextPhase.label)} phase</span><span>through ${niceDate(nextPhase.date)}</span></div>`
                   : !nextGoal.targetDate ? `<div class="empty">No target date, so no phases — every week works toward it.</div>`
                   : `<div class="empty">Every phase ticked off — target day is the only thing left.</div>`}
-    </div>` : ``}
+    </div>` : `
+    <div class="section-title">Next goal</div>
+    <div class="card">
+      <h2>What are you training for?</h2>
+      <p class="card__note">Marcus does not know yet, so this week is a generic one. Say it in your own words — "Olympic triathlon next August" is enough — and he writes it down and cuts the phases from the date.</p>
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="openChat()"><span class="material-icons-round">chat</span> Tell Marcus</button>
+      <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="switchTab('plan')">Or type it in yourself</button>
+    </div>`}
 
     ${week.phase ? `
     <div class="section-title">This week</div>
