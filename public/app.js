@@ -288,6 +288,22 @@ function calendarRowLabel(row) {
   return row.phase ? row.phase + (row.week ? ` week ${row.week} of ${row.weeks}` : '') : 'no phase';
 }
 
+// Pure. The week already drafted closest before `start`, in the shape the
+// server's `previousWeekLine` checks, or null. Progression is week over week,
+// so one week is what the next has to build on -- sending the whole list would
+// be every week he has ahead of him in a prompt that only needs the last one.
+// The nearest drafted week wins even when the calendar week right before this
+// one was never drafted: its own date is sent, so the distance is not guessed.
+function previousDraftedWeek(saved, start) {
+  var best = null;
+  (saved || []).forEach(function (w) {
+    if (!w || typeof w.start !== 'string' || !start || w.start >= start) return;
+    if (!Array.isArray(w.days) || !w.days.length) return;
+    if (!best || w.start > best.start) best = w;
+  });
+  return best ? { start: best.start, label: best.label || null, days: best.days } : null;
+}
+
 // One drafted week from the server, for one calendar row or for this week
 // (`row` null). Held apart from requestDraft because draftPhase asks for the
 // same thing several times in a row; the two must send an identical body or a
@@ -312,6 +328,9 @@ async function fetchWeekDraft(row) {
       // the date gets a phase that began mid-week this week one week short.
       calendarWeek: row ? { goal: row.goal, start: row.start, phase: row.phase,
                             week: row.week, weeks: row.weeks, raceWeek: row.raceWeek } : undefined,
+      // Only a later week has one: this week's previous week is his logged
+      // sessions, which TRAINING DATA already carries.
+      previousWeek: row ? previousDraftedWeek(store.get('plannedWeeks', []), row.start) : undefined,
       context: {
         plan: store.get('plan'),
         sessions: store.get('sessions', []),

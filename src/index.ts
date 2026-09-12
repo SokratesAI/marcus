@@ -495,18 +495,22 @@ export function createApp(
     // midnight (one in winter, two in summer).
     // `week` is the Home card's weekTarget; plan-draft.ts checks its shape.
     // `calendarWeek` is the Plan-tab calendar row whose Draft button was tapped.
-    const { goal, goals, context, today, week, calendarWeek } = req.body as {
+    // `previousWeek` is the week already drafted before this one, so a block of
+    // weeks is a progression rather than the same week four times.
+    const { goal, goals, context, today, week, calendarWeek, previousWeek } = req.body as {
       goal?: unknown;
       goals?: unknown;
       context?: unknown;
       today?: unknown;
       week?: unknown;
       calendarWeek?: unknown;
+      previousWeek?: unknown;
     };
     const result = await draftWeek(
       (Array.isArray(goals) ? goals : goal ?? null) as Parameters<typeof draftWeek>[0],
       (context ?? {}) as Parameters<typeof draftWeek>[1],
-      { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined, week, calendarWeek },
+      { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined, week, calendarWeek,
+        previousWeek },
     );
     if (result.status === "ok") {
       res.status(200).json({ days: result.days, note: result.note });
