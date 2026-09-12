@@ -120,6 +120,18 @@ describe("draftVolumeLabel", () => {
     }
   });
 
+  it("refuses a target from a week the page did not actually size", () => {
+    // volumeTarget is only ever written beside reason 'ok'; a draft object that
+    // arrives carrying a number under any other reason is describing a week
+    // nothing computed, and quoting a share of it would invent a target.
+    const app = loadApp();
+    const projection = app.draftVolume(DAYS, SESSIONS, TODAY);
+    for (const reason of ["too early", "unknown phase", "no goal", "phases done"]) {
+      expect(app.draftVolumeLabel(projection, { ...WEEK, reason, volumeTarget: 2200 }))
+        .toBe("About 2800 kg at your last weights.");
+    }
+  });
+
   it("says how many exercises it could not price, singular and plural", () => {
     const app = loadApp();
     expect(app.draftVolumeLabel({ kg: 2800, known: 2, unknown: 1 }, null))
@@ -132,6 +144,34 @@ describe("draftVolumeLabel", () => {
     const app = loadApp();
     expect(app.draftVolumeLabel({ kg: 0, known: 0, unknown: 3 }, WEEK)).toBeNull();
     expect(app.draftVolumeLabel(null, WEEK)).toBeNull();
+  });
+});
+
+// Driving requestDraft rather than handing draftCard a `week` by hand: the
+// field crosses the fetch boundary, and every assertion either side of it
+// passes with the draft forgetting its own target on the way through.
+describe("requestDraft keeps the target it sent", () => {
+  // `store`, `planDraft` and `requestDraft` are top-level bindings in the page,
+  // which are lexical and not properties of the vm's global object -- reading
+  // them off `ctx` gives undefined. Evaluating the name in the same context is
+  // what reaches the page's own value.
+  const evalIn = (app: any, code: string) => vm.runInContext(code, app);
+
+  it("hands the draft card the same target object it posted to the coach", async () => {
+    const sent: any[] = [];
+    const app = loadApp();
+    app.fetch = async (_url: string, init: any) => {
+      sent.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ days: DAYS, note: "" }) };
+    };
+    evalIn(app, "store.set('sessions', " + JSON.stringify(SESSIONS) + ")");
+    await evalIn(app, "requestDraft()");
+    expect(sent).toHaveLength(1);
+    const week = evalIn(app, "planDraft.week");
+    expect(week).toEqual(sent[0].week);
+    expect(week).not.toBeNull();
+    expect(evalIn(app, "draftCard(store.get('plan'), planDraft, store.get('sessions', []), '" + TODAY + "')"))
+      .toContain("at your last weights");
   });
 });
 
