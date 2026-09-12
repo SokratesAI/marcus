@@ -42,11 +42,11 @@ const TODAY = "2026-09-09";
 
 // A log with one working weight per exercise. lastPerformance reduces to the
 // heaviest set WITHIN one `exercises[]` entry, so the 80 kg on 09-02 is what a
-// squat is projected at and not the 60 kg beside it. It does NOT pick the
-// heaviest across two separate entries for the same exercise in one session (a
-// top set and a back-off set logged as two rows) -- there it takes whichever
-// was entered last. That is lastPerformance's behaviour, it predates this
-// projection, and it is filed rather than changed here.
+// squat is projected at and not the 60 kg beside it. It also takes the heavier
+// of two separate entries for the same exercise in one session -- a top set
+// and a back-off set logged as two rows -- which it did not until cycle 1437;
+// the test below the arithmetic ones holds that, because this projection
+// multiplies whatever it returns by a whole week of sets.
 const SESSIONS = [
   { date: "2026-08-26", exercises: [{ name: "Back Squat", sets: [{ reps: 5, weight: 70 }] }] },
   { date: "2026-09-02", exercises: [
@@ -135,6 +135,23 @@ describe("draftVolume", () => {
     const later = SESSIONS.concat([{ date: "2026-09-20",
       exercises: [{ name: "Back Squat", sets: [{ reps: 5, weight: 200 }] }] }]);
     expect(loadApp().draftVolume([DAYS[0]], later, TODAY).kg).toBe(1600);
+  });
+
+  // The consequence of lastPerformance's same-session tie-break, at the level
+  // where it is printed as a headline: a week of 4x5 squats projected off a
+  // 100 kg top set is 2000 kg, and off the 80 kg back-off logged beside it,
+  // 1600 -- a 400 kg gap on one exercise, which the card reads out as a share
+  // of the week's target. Both orders, because the old rule took whichever row
+  // was typed second and so was right by accident half the time.
+  it("projects a two-row session off the top set, not the back-off set", () => {
+    const app = loadApp();
+    const rows = (a: any, b: any) => [{ date: "2026-09-02", exercises: [
+      { name: "Back Squat", sets: [{ reps: a.reps, weight: a.weight }] },
+      { name: "Back Squat", sets: [{ reps: b.reps, weight: b.weight }] },
+    ] }];
+    const top = { reps: 3, weight: 100 }, backoff = { reps: 8, weight: 80 };
+    expect(app.draftVolume([DAYS[0]], rows(top, backoff), TODAY).kg).toBe(2000);
+    expect(app.draftVolume([DAYS[0]], rows(backoff, top), TODAY).kg).toBe(2000);
   });
 
   it("reads an empty or malformed draft as nothing to project rather than throwing", () => {

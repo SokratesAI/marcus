@@ -370,8 +370,16 @@ function lastPerformance(sessions, name, asOfISO) {
         rpe: ex.rpe == null ? null : ex.rpe,
       };
       // Two sessions on the same date are ordered by the order they were
-      // logged, which is the order they sit in the array.
-      if (!best || candidate.date > best.date || (candidate.date === best.date && index >= best.index)) {
+      // logged, which is the order they sit in the array. Within ONE session
+      // the same lift can be logged twice -- a top set and then a back-off
+      // set, which is what the logging form produces -- and there the later
+      // row is not the answer: the question is "what do I load the bar with",
+      // so the heavier row wins. Equal weight keeps the first, which is the
+      // one that was typed as the working set.
+      const better = !best
+        || (candidate.date !== best.date ? candidate.date > best.date
+          : (index !== best.index ? index > best.index : candidate.weight > best.weight));
+      if (better) {
         best = candidate;
         best.index = index;
       }

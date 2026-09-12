@@ -113,6 +113,41 @@ describe("lastPerformance", () => {
     expect(app.lastPerformance(sessions, "Press", "2026-09-04").weight).toBe(45);
   });
 
+  // The later of two SEPARATE sessions wins even when it is lighter. The test
+  // above it cannot show that -- its later session is also the heavier one, so
+  // it passes under a rule that just takes the biggest number anywhere. This
+  // one fails under that rule, which is what makes the pair meaningful.
+  it("still prefers the later session on the same date when it is lighter", () => {
+    const app = loadApp();
+    const sessions = [
+      strength("2026-09-04", "Press", [{ reps: 8, weight: 60 }]),
+      strength("2026-09-04", "Press", [{ reps: 8, weight: 45 }]),
+    ];
+    expect(app.lastPerformance(sessions, "Press", "2026-09-04").weight).toBe(45);
+  });
+
+  // One session, the same lift logged as two rows: a top set and then a
+  // back-off set, which is exactly what the logging form produces. "Last time"
+  // and the drafted-week projection both want the working weight, so the
+  // heavier row is the answer whichever order it was typed in.
+  it("takes the top set when one session logs the lift twice", () => {
+    const app = loadApp();
+    const session = (rows: any[]) => ({
+      id: "s", date: "2026-09-04", kind: "strength", day: "Monday",
+      exercises: rows.map(r => ({ name: "Back Squat", sets: [{ reps: r.reps, weight: r.weight }] })),
+    });
+    const topFirst = app.lastPerformance([session([{ reps: 3, weight: 100 }, { reps: 8, weight: 80 }])], "Back Squat", "2026-09-06");
+    expect(topFirst.weight).toBe(100);
+    expect(topFirst.reps).toBe(3);
+    const backoffFirst = app.lastPerformance([session([{ reps: 8, weight: 80 }, { reps: 3, weight: 100 }])], "Back Squat", "2026-09-06");
+    expect(backoffFirst.weight).toBe(100);
+    expect(backoffFirst.reps).toBe(3);
+    // Two rows at the same weight: the first is the working set and the second
+    // is the one that was dropped down to, so the first stays.
+    const tied = app.lastPerformance([session([{ reps: 5, weight: 90 }, { reps: 3, weight: 90 }])], "Back Squat", "2026-09-06");
+    expect(tied.reps).toBe(5);
+  });
+
   it("keeps 0 kg, because 0 kg is bodyweight and not a missing number", () => {
     const app = loadApp();
     const sessions = [strength("2026-09-04", "Pull-up", [{ reps: 8, weight: 0 }])];
