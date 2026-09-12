@@ -1416,6 +1416,30 @@ function weeklyVolumes() {
   return filled;
 }
 
+// `weeklyVolumes` fills zero weeks only BETWEEN the first and the last week he
+// trained, so its last element is the last week that HAS a session -- not
+// necessarily the current one. The chat reply read that element and called it
+// "this week", so eight days after his last session Marcus told him he had put
+// up that volume "this week". Same correction `bodyweightChange`'s `stale` flag
+// got, for the same reason: the arithmetic was right and the clock was missing.
+// Returns null when he has lifted nothing on or before the current week.
+function volumeThisWeek(weeks, todayISO) {
+  const monday = weekStartOf(todayISO || todayStr());
+  // Two rows have to go before the last element can be read. A week later than
+  // this one: a future-dated session would otherwise be reported as "this
+  // week". And a zero week, which `weeklyVolumes` inserts for every untrained
+  // week between two trained ones -- a real zero on the bar chart, but here it
+  // would answer "0kg this week" for the current week whenever a later session
+  // exists, and name the last week he actually lifted in whenever one does not.
+  // Same data, two different answers; the figure has to come from a week he
+  // trained either way.
+  const trained = (weeks || []).filter(w => w && w[0] <= monday && w[1] > 0);
+  if (!trained.length) return null;
+  const [weekStart, kg] = trained[trained.length - 1];
+  const days = Math.round((Date.parse(monday + 'T00:00:00Z') - Date.parse(weekStart + 'T00:00:00Z')) / 86400000);
+  return { kg, weekStart, current: weekStart === monday, weeksAgo: days / 7 };
+}
+
 // ---------- training load: fitness, fatigue, form (idea #194) ----------
 // TrainingPeaks' CTL/ATL shape, computed on the one load signal Marcus
 // actually holds: kilograms lifted per day. Two exponentially weighted
@@ -3512,15 +3536,23 @@ function marcusReply(text) {
   if (/progress|how.*doing|going well|on track/.test(t)) {
     const bw = bodyweightChange(weights, todayStr());
     const w = bw ? bw.delta.toFixed(1) : null;
-    const vol = weeklyVolumes();
-    const lastVol = vol.length ? Math.round(vol[vol.length-1][1]) : 0;
+    const vol = volumeThisWeek(weeklyVolumes(), todayStr());
     // The same correction the Home tile got: a delta whose last reading is old
     // is not a trend, so the sentence says when the scale stopped rather than
     // quoting the span as if it ran up to today.
     const bwPhrase = !bw ? ''
       : bw.stale ? `bodyweight moved ${w}kg, though you have not weighed in for ${bw.daysSinceLast} days, `
       : `bodyweight moved ${w}kg over ${bw.days} days, `;
-    return `You're trending well — ${bwPhrase}and you put up ${lastVol.toLocaleString()}kg of volume this week. Keep stacking sessions.`;
+    const volPhrase = !vol ? 'you have not logged any lifting volume yet'
+      : vol.current ? `you put up ${Math.round(vol.kg).toLocaleString()}kg of volume this week`
+      : `your last training week was ${vol.weeksAgo} week${vol.weeksAgo === 1 ? '' : 's'} ago at ${Math.round(vol.kg).toLocaleString()}kg`;
+    // "Trending well" is the same false claim as the stale volume figure was:
+    // it reads as a verdict on this week when the last session is weeks old.
+    const lead = vol && vol.current ? "You're trending well" : "Here's where you stand";
+    const close = vol && vol.current ? 'Keep stacking sessions.' : 'Get a session in and I will have this week to read.';
+    // `bwPhrase` is empty when he has never weighed in, and the old sentence
+    // then read "— and you put up", with the conjunction joining nothing.
+    return `${lead} — ${bwPhrase ? `${bwPhrase}and ` : ''}${volPhrase}. ${close}`;
   }
   if (/sore|tired|pain|hurt|exhaust/.test(t)) {
     return `Listen to that. A short easy day or extra sleep beats grinding through soreness — swap in mobility work if today's lift feels rough, and tell me if it's a specific joint.`;
