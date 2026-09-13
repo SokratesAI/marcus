@@ -319,3 +319,38 @@ describe("a tool-use marker in the reply", () => {
     expect(stripToolUseMarkers("Bench is up.\n**1 tool used**")).toBe("Bench is up.\n**1 tool used**");
   });
 });
+
+// Without this section the model has no record that it ever proposed a goal,
+// let alone that he said no to it -- the block is stripped before the reply is
+// stored and a decline is a tap, so the same statement in the history window
+// produces the same block on every turn after it.
+describe("buildPrompt and a goal he turned down", () => {
+  it("names the declined goals and tells the model to leave them alone", () => {
+    const p = buildPrompt("what should I do this week?", { declinedGoals: ["Olympic triathlon at Oslo Tri"] }, []);
+    expect(p).toContain("GOALS HE HAS ALREADY TURNED DOWN");
+    expect(p).toContain("- Olympic triathlon at Oslo Tri");
+    expect(p).toContain("Do not write a goal block for any of them again");
+  });
+
+  it("says nothing at all when he has turned nothing down", () => {
+    expect(buildPrompt("hi", {}, [])).not.toContain("GOALS HE HAS ALREADY TURNED DOWN");
+    expect(buildPrompt("hi", { declinedGoals: [] }, [])).not.toContain("GOALS HE HAS ALREADY TURNED DOWN");
+    expect(buildPrompt("hi", { declinedGoals: ["  ", ""] }, [])).not.toContain("GOALS HE HAS ALREADY TURNED DOWN");
+  });
+
+  it("sits after the goal instruction and before his message, so the exception is read last", () => {
+    const p = buildPrompt("set up the triathlon", { declinedGoals: ["Olympic triathlon at Oslo Tri"] }, []);
+    expect(p.indexOf("WRITING A GOAL DOWN")).toBeLessThan(p.indexOf("GOALS HE HAS ALREADY TURNED DOWN"));
+    expect(p.indexOf("GOALS HE HAS ALREADY TURNED DOWN")).toBeLessThan(p.indexOf("MESSAGE FROM EDVARD"));
+  });
+
+  // The app builds this list itself and it is always strings, so the only
+  // shapes worth defending are the ones an old cached `app.js` can send: the
+  // key missing entirely, and holes in the array.
+  it("survives a non-array and holes in the list", () => {
+    expect(buildPrompt("hi", { declinedGoals: "nope" as unknown as unknown[] }, [])).not.toContain("GOALS HE HAS ALREADY TURNED DOWN");
+    const p = buildPrompt("hi", { declinedGoals: [null, undefined, "Race"] }, []);
+    expect(p).toContain("- Race");
+    expect(p.match(/^- /gm)).toHaveLength(1);
+  });
+});

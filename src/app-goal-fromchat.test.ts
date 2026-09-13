@@ -171,6 +171,48 @@ describe("goalAlreadySet", () => {
   });
 });
 
+// A decline is a tap, and nothing the model can see records it -- so without
+// these it re-proposes the same goal on the very next turn, forever.
+describe("declinedGoalTexts and goalDeclinedBefore", () => {
+  const declinedChat = [
+    { role: "user", text: "maybe Oslo Tri", ts: 1 },
+    {
+      role: "marcus",
+      text: "Written down.",
+      ts: 2,
+      goalProposal: { text: " Olympic triathlon at Oslo Tri ", targetDate: "2027-08-14" },
+      goalDeclined: true,
+    },
+  ];
+
+  it("collects the text of every proposal he turned down", () => {
+    const { ctx } = loadApp();
+    expect(ctx.declinedGoalTexts(declinedChat)).toEqual(["Olympic triathlon at Oslo Tri"]);
+  });
+
+  it("ignores a proposal he saved and one still waiting on him", () => {
+    const { ctx } = loadApp();
+    expect(
+      ctx.declinedGoalTexts([
+        { role: "marcus", text: "a", ts: 1, goalProposal: { text: "Saved one" }, goalSaved: true },
+        { role: "marcus", text: "b", ts: 2, goalProposal: { text: "Open one" } },
+        { role: "user", text: "c", ts: 3 },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("matches a re-proposal on case and spacing, like goalAlreadySet", () => {
+    const { ctx } = loadApp();
+    expect(ctx.goalDeclinedBefore({ text: "olympic triathlon at OSLO tri" }, declinedChat)).toBe(true);
+  });
+
+  it("does not match a different goal, or an empty log", () => {
+    const { ctx } = loadApp();
+    expect(ctx.goalDeclinedBefore({ text: "Get my cholesterol down" }, declinedChat)).toBe(false);
+    expect(ctx.goalDeclinedBefore({ text: "Race" }, [])).toBe(false);
+  });
+});
+
 describe("askMarcus and the goal block", () => {
   const coachReturning = (reply: string) => async () => ({ ok: true, json: async () => ({ reply }) });
 
@@ -362,5 +404,60 @@ describe("the chat form stores the proposal on the bubble", () => {
     await submit(ctx, byId, "what today?");
     const msgs = ctx.store.get("chat", []);
     expect(msgs[msgs.length - 1]).not.toHaveProperty("goalProposal");
+  });
+});
+
+describe("askMarcus and a goal he already turned down", () => {
+  const coachReturning = (reply: string) => async () => ({ ok: true, json: async () => ({ reply }) });
+
+  it("drops a re-proposal of a goal he declined, and keeps the reply", async () => {
+    const { ctx } = loadApp({ fetch: coachReturning(`Still worth doing.\n\n${BLOCK}`) });
+    ctx.store.set("chat", [
+      {
+        role: "marcus",
+        text: "Written down.",
+        ts: 2,
+        goalProposal: { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" },
+        goalDeclined: true,
+      },
+    ]);
+    const out = await ctx.askMarcus("tell me about triathlon");
+    expect(out.goal).toBeNull();
+    expect(out.text).toBe("Still worth doing.");
+  });
+
+  it("still shows a proposal he has not answered yet", async () => {
+    const { ctx } = loadApp({ fetch: coachReturning(`Right.\n\n${BLOCK}`) });
+    ctx.store.set("chat", [
+      {
+        role: "marcus",
+        text: "Written down.",
+        ts: 2,
+        goalProposal: { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" },
+      },
+    ]);
+    const out = await ctx.askMarcus("tell me about triathlon");
+    expect(out.goal).toEqual({ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+  });
+
+  it("sends the declined texts up to the coach as context", async () => {
+    let sent: any = null;
+    const { ctx } = loadApp({
+      fetch: async (_url: string, init: any) => {
+        sent = JSON.parse(init.body);
+        return { ok: true, json: async () => ({ reply: "ok" }) };
+      },
+    });
+    ctx.store.set("chat", [
+      {
+        role: "marcus",
+        text: "Written down.",
+        ts: 2,
+        goalProposal: { text: "Olympic triathlon at Oslo Tri" },
+        goalDeclined: true,
+      },
+    ]);
+    await ctx.askMarcus("hi");
+    expect(sent.context.declinedGoals).toEqual(["Olympic triathlon at Oslo Tri"]);
   });
 });

@@ -4071,6 +4071,9 @@ async function askMarcus(text) {
           weights: store.get('weights', []),
           meals: store.get('meals', []),
           goals: store.get('goals', []),
+          // Not part of the store: the texts of goals he was offered and
+          // turned down, so the coach does not offer them again.
+          declinedGoals: declinedGoalTexts(store.get('chat', [])),
         },
         // The turn just typed is already in the store; it goes in as the
         // message, not a second time as history.
@@ -4084,9 +4087,14 @@ async function askMarcus(text) {
       // out here rather than at render time so the block is never stored as
       // part of the bubble -- a stripped reply is what he reads, once.
       const parsed = parseCoachGoal(body.reply);
-      // A goal he already has is not a question worth asking. Dropping the
-      // proposal, not the reply: the sentence around it is still an answer.
-      const goal = parsed.goal && !goalAlreadySet(parsed.goal, store.get('goals', [])) ? parsed.goal : null;
+      // Dropping the proposal, not the reply: the sentence around it is still
+      // an answer. A goal he already has, or one he has already turned down, is not a
+      // question worth asking twice.
+      const goal = parsed.goal
+        && !goalAlreadySet(parsed.goal, store.get('goals', []))
+        && !goalDeclinedBefore(parsed.goal, store.get('chat', []))
+        ? parsed.goal
+        : null;
       // A reply that was nothing but the block would otherwise be an empty
       // bubble with a card under it.
       const shown = parsed.text || (goal ? 'Written down — confirm it below and I will set it as your goal.' : body.reply);

@@ -46,6 +46,10 @@ export interface CoachContext {
   weights?: unknown[];
   meals?: unknown[];
   goals?: unknown[];
+  /** Not part of the store. The texts of goals the coach proposed and Edvard
+   * turned down, which nothing else in this prompt can carry -- see
+   * `declinedGoals()` below. */
+  declinedGoals?: unknown[];
 }
 
 // A cap with a danger behind it rather than a tidiness one: the whole context
@@ -120,6 +124,27 @@ function goalStandings(goals: unknown[], todayISO: string): string {
     .join("\n");
 }
 
+/** The goals he was offered and said no to.
+ *
+ * Nothing else in this prompt can carry a decline. The ```goal block is
+ * stripped out of the reply before the app stores the bubble, so the coach's
+ * own history does not show that it proposed anything, and a decline is a tap
+ * rather than a message, so Edvard's half does not show it either -- while the
+ * sentence of his that produced the block is still inside the history window.
+ * So the model re-proposes the same goal on the next turn, every turn, and he
+ * gets the same card again until the statement scrolls out of the window.
+ *
+ * The app drops a repeat proposal at the call site regardless, so this is not
+ * what stops the second card; what it stops is the reply around it -- "I have
+ * written that down for you to confirm" with nothing under it to confirm. */
+function declinedGoals(texts: unknown[]): string {
+  return (Array.isArray(texts) ? texts : [])
+    .map((t) => String(t ?? "").trim())
+    .filter(Boolean)
+    .map((t) => `- ${t}`)
+    .join("\n");
+}
+
 /** The prompt is built here and not in the browser, so what reaches the model
  * is decided in one place and is testable.
  *
@@ -162,7 +187,16 @@ export function buildPrompt(
       recent.map((t) => `${t.role === "marcus" ? "Marcus" : "Edvard"}: ${t.text}`).join("\n"),
     );
   }
-  parts.push(GOAL_INSTRUCTION, "MESSAGE FROM EDVARD", message);
+  parts.push(GOAL_INSTRUCTION);
+  const declined = declinedGoals(context.declinedGoals ?? []);
+  if (declined) {
+    parts.push(
+      "GOALS HE HAS ALREADY TURNED DOWN",
+      "He was shown a card for each of these and chose not to save it. Do not write a goal block for any of them again, and do not tell him you have written one down, unless he asks you in this message to set it up.",
+      declined,
+    );
+  }
+  parts.push("MESSAGE FROM EDVARD", message);
   return parts.join("\n\n");
 }
 
