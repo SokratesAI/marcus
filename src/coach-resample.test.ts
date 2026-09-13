@@ -62,14 +62,13 @@ describe("a structured answer that did not parse is asked for again", () => {
     expect(coach.asks).toHaveLength(2);
   });
 
-  it("draftWeek does not resample a week the coach answered that was merely wrong", async () => {
-    // A named day that is not a day is the coach being consistent, not unlucky:
-    // the first answer parsed as JSON and failed a rule, and a second sample is
-    // as likely to break the same rule. It is still one ask, because the
-    // resample only fires on a reply that did not parse... it does fire here,
-    // and that is the deliberate line: `parseDraftReply` returns the same
-    // `ok: false` for both, so both get the second chance. Pinned so a future
-    // change that splits them is a decision rather than an accident.
+  it("draftWeek resamples a reply that was valid JSON and broke a rule, not only unparseable text", async () => {
+    // "Someday" is not a day of the week: this answer was JSON, it just failed
+    // a rule. `parseDraftReply` returns the same `ok: false` for that as it
+    // does for prose, so both get the second chance -- which is the deliberate
+    // line, because a model that names a bad day once often names a good one
+    // next time. Pinned so that a future change narrowing the resample to
+    // "did not parse at all" is a decision rather than an accident.
     const coach = scriptedCoach([
       '{"days":[{"day":"Someday","focus":"Push","exercises":[]}]}',
       JSON.stringify(WEEK),
