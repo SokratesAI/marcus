@@ -112,6 +112,50 @@ describe("the block a phase implies", () => {
     expect(weeks.length).toBeGreaterThan(whole.length);
   });
 
+  it("rolls on to the next phase once every week of this one is drafted", () => {
+    const app = loadApp([]);
+    const weeks = rows(app);
+    const base = block(app);
+    expect(base[0].phase).toBe("Base");
+    // Every remaining Base week planned: the block is the Build phase now,
+    // whole, rather than nothing at all.
+    const rolled = block(app, base.map((w: any) => w.start));
+    expect(rolled.length).toBeGreaterThan(0);
+    expect(rolled.every((w: any) => w.phase === "Build")).toBe(true);
+    expect(rolled.map((w: any) => w.start))
+      .toEqual(weeks.filter((w: any) => w.phase === "Build").map((w: any) => w.start));
+    // And it keeps rolling: with Base and Build drafted the block is the last
+    // phase, and with every week drafted there is nothing left to offer.
+    const last = block(app, base.concat(rolled).map((w: any) => w.start));
+    expect(last.length).toBeGreaterThan(0);
+    expect(last.every((w: any) => w.phase === "Taper")).toBe(true);
+    expect(block(app, weeks.map((w: any) => w.start))).toHaveLength(0);
+  });
+
+  it("never mixes two phases into one block", () => {
+    const app = loadApp([]);
+    const weeks = rows(app);
+    const base = block(app);
+    // A hole left in Base keeps the block inside Base -- it rolls on only when
+    // the phase it is standing in has nothing left, never to top a short one up.
+    const holed = block(app, base.slice(1).map((w: any) => w.start));
+    expect(holed).toHaveLength(1);
+    expect(holed[0].start).toBe(base[0].start);
+    expect(weeks.some((w: any) => w.phase === "Build")).toBe(true);
+  });
+
+  it("stops at a week with no phase rather than rolling into it", () => {
+    const app = loadApp([]);
+    // A goal whose last milestone falls before its target date leaves
+    // phase-less rows at the end of the calendar. Those are not a phase and
+    // must never become a block -- the button would name `null`.
+    const weeks = [{ start: "2026-01-05", phase: "Base" }, { start: "2026-01-12", phase: "Base" },
+                   { start: "2026-01-19", phase: null }, { start: "2026-01-26", phase: null }];
+    const got = vm.runInContext(
+      `phaseBlock(${JSON.stringify(weeks)}, ["2026-01-12"])`, app) as any[];
+    expect(got).toHaveLength(0);
+  });
+
   it("is empty when this week has no phase, and when there is no calendar", () => {
     const app = loadApp([]);
     expect(vm.runInContext("phaseBlock([{ start: '2026-01-05', phase: null }, { start: '2026-01-12', phase: 'Base' }], [])", app)).toHaveLength(0);
@@ -128,6 +172,14 @@ describe("the block a phase implies", () => {
     expect(label([{ phase: "Base" }], 1)).toBe("Draft the rest of the Base phase (1 week)");
     expect(label([{ phase: "Ongoing", ongoing: true }], 4)).toBe("Draft the next 4 weeks");
     expect(label([{ phase: "Base" }], 0)).toBe("");
+    // A block that has rolled on is the whole of the phase it names, not "the
+    // rest of" the phase he is standing in.
+    expect(vm.runInContext(
+      `phaseBlockLabel([{ phase: "Base" }], [{ phase: "Build" }, { phase: "Build" }])`, app))
+      .toBe("Draft the Build phase (2 weeks)");
+    expect(vm.runInContext(
+      `phaseBlockLabel([{ phase: "Base" }], [{ phase: "Base" }])`, app))
+      .toBe("Draft the rest of the Base phase (1 week)");
   });
 });
 
@@ -201,16 +253,41 @@ describe("drafting the block", () => {
     expect(html).toContain("disabled");
   });
 
-  it("draws a block button on the calendar and drops it once the phase is drafted", async () => {
+  it("draws a block button that moves on to the next phase, and drops it at the end", async () => {
     const app = loadApp([]);
     const want = block(app);
-    const before: string = vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app);
+    const html = () => vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app) as string;
+    const before = html();
     expect(before).toContain("draftPhase('g1')");
     expect(before).toContain(`Draft the rest of the Base phase (${want.length} weeks)`);
     await vm.runInContext("draftPhase('g1')", app);
-    const after: string = vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app);
-    expect(after).not.toContain("draftPhase('g1')");
+    // Still there, and now offering the phase after it rather than nothing.
+    const after = html();
+    expect(after).toContain("draftPhase('g1')");
+    expect(after).toContain("Draft the Build phase");
+    expect(after).not.toContain("Draft the rest of the Base phase");
+    // Every phase drafted: now it is gone, because "draft 0 weeks" is not an
+    // offer. Bounded rather than `while (true)` so a block that stopped making
+    // progress fails the test instead of hanging it.
+    for (let i = 0; i < 20 && html().includes("draftPhase('g1')"); i++) {
+      await vm.runInContext("draftPhase('g1')", app);
+    }
+    expect(html()).not.toContain("draftPhase('g1')");
+    const planned = JSON.parse(vm.runInContext("JSON.stringify(store.get('plannedWeeks', []))", app));
+    expect(planned.map((w: any) => w.start))
+      .toEqual(rows(app).slice(1).map((w: any) => w.start));
     // A caller with no goal id gets no block button, same as the row buttons.
     expect(vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]))", app)).not.toContain("draftPhase(");
+  });
+
+  it("names the phase it drafted in the toast, not \"this phase\"", async () => {
+    const app = loadApp([]);
+    const base = block(app);
+    await vm.runInContext("draftPhase('g1')", app);
+    const toasts: string[] = vm.runInContext("globalThis.__toasts", app);
+    expect(toasts[toasts.length - 1]).toBe(`Drafted ${base.length} weeks of the Base phase`);
+    await vm.runInContext("draftPhase('g1')", app);
+    const next: string[] = vm.runInContext("globalThis.__toasts", app);
+    expect(next[next.length - 1]).toContain("of the Build phase");
   });
 });
