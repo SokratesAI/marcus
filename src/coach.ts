@@ -419,6 +419,12 @@ export type CoachResult =
  * wait forty seconds for a button that was probably never going to work. */
 export const SHAPE_RESAMPLES = 1;
 
+/** The budget for the second attempt at the conversation-model read, when the
+ * first one threw. Three seconds: 30 live reads of Agora's active listing on
+ * 2026-09-13 ran 0.17s to 0.88s, so this is over three times the slowest one
+ * and the retry is invisible on any request that was going to work. */
+export const READ_RETRY_TIMEOUT_MS = 3_000;
+
 /** `askCoach` for the two routes that need a shape back rather than a sentence
  * -- the drafted week and a goal's phases. It asks again when the reply does
  * not parse, and hands back the last parse either way, so each caller's own
@@ -482,10 +488,20 @@ export async function askCoach(
   // is the filtered listing (53 rows rather than 1,083); an archived coach
   // conversation is absent from it, which is the right answer here anyway,
   // because a conversation somebody archived should stop answering.
+  //
+  // This read is a preflight, not the work, and until 2026-09-13 a single
+  // stall in it threw away the whole request: the marcus pod logged
+  // `The operation was aborted due to timeout` once on 09-13 and Edvard got a
+  // 502 after ten seconds without the coach ever being asked. The listing is
+  // not slow -- 30 live calls that afternoon ran 0.17s to 0.88s, so the 10s
+  // budget is eleven times the slowest one and only expires when Agora itself
+  // hiccups. So it is asked a second time, on a shorter budget, and only when
+  // the first attempt *threw*: an HTTP status and an absent row are answers,
+  // and asking again does not change either.
   let model: unknown;
-  try {
+  const readModel = async (timeoutMs: number): Promise<CoachResult | { status: "read"; model: unknown }> => {
     const res = await deps.fetch(`${config.baseUrl}/conversations?active=true`, {
-      signal: AbortSignal.timeout(deps.readTimeoutMs ?? 10_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return { status: "upstream", detail: `conversation read returned ${res.status}` };
     const body = (await res.json()) as { conversations?: unknown } | unknown[];
@@ -494,7 +510,28 @@ export async function askCoach(
       (c) => c?.id === config.conversationId,
     );
     if (!row) return { status: "upstream", detail: "conversation not in the active listing" };
-    model = row.model;
+    return { status: "read", model: row.model };
+  };
+  try {
+    let read: Awaited<ReturnType<typeof readModel>>;
+    try {
+      read = await readModel(deps.readTimeoutMs ?? 10_000);
+    } catch (first) {
+      // The retry deliberately gets its own, shorter budget rather than the
+      // full one again. If the first attempt burned ten seconds Agora is
+      // stalled, and three seconds is still three times the slowest read
+      // measured -- so a transient stall costs him 13s instead of the draft,
+      // and a genuinely dead Agora costs him 3s more than it used to.
+      try {
+        read = await readModel(READ_RETRY_TIMEOUT_MS);
+      } catch {
+        // The first failure is the representative one and the one he waited
+        // out; the retry's is a second symptom of the same stall.
+        throw first;
+      }
+    }
+    if (read.status !== "read") return read;
+    model = read.model;
   } catch (err) {
     return { status: "upstream", detail: String((err as Error)?.message ?? err) };
   }
