@@ -127,12 +127,14 @@ describe("askMarcus", () => {
       },
     });
     seed(ctx);
-    // `goal` is null because this reply carries no ```goal block; the block
-    // and the card it draws are covered in app-goal-fromchat.test.ts.
+    // `goal` and `fact` are null because this reply carries neither a ```goal
+    // nor a ```profile block; those and the cards they draw are covered in
+    // app-goal-fromchat.test.ts and app-profile-fromchat.test.ts.
     expect(await ctx.askMarcus("what should I do today?")).toEqual({
       text: "Squats. Go.",
       offline: false,
       goal: null,
+      fact: null,
     });
     expect(sent.message).toBe("what should I do today?");
     expect(sent.context.sessions).toEqual([{ date: "2026-09-04", kind: "strength" }]);

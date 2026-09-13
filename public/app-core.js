@@ -2505,10 +2505,7 @@ function goalAlreadySet(proposal, existing) {
 // stops re-raising it; `goalDeclinedBefore` is the belt for a turn that raises
 // it anyway.
 function declinedGoalTexts(chat) {
-  return (chat || [])
-    .filter(m => m && m.goalDeclined && m.goalProposal && m.goalProposal.text)
-    .map(m => String(m.goalProposal.text).trim())
-    .filter(Boolean);
+  return declinedProposalTexts(chat, 'goalDeclined', 'goalProposal');
 }
 
 // Same normalisation as a goal he already has -- deliberately the same
@@ -2516,6 +2513,96 @@ function declinedGoalTexts(chat) {
 // depending on which way he answered.
 function goalDeclinedBefore(proposal, chat) {
   return goalAlreadySet(proposal, declinedGoalTexts(chat).map(text => ({ text })));
+}
+
+// ---------- a fact about him the coach heard (issue #157) ----------
+// The profile record exists, and until now only Edvard could write to it: he
+// typed several paragraphs of his training background into the chat on
+// 2026-09-07, and the only way any of it reached the coach's ABOUT EDVARD
+// block was for him to open another tab and retype it into a box. That is the
+// same complaint one step smaller. The coach can already propose a GOAL and he
+// taps to confirm it; this is the same mechanism for a fact.
+//
+// Deliberately the same shape as the goal block, down to the fence, because
+// the failure to avoid is the same one: a card offering to remember something
+// he never said. Anything that is not a well-formed block is `fact: null` and
+// a reply left as it came, and a malformed block is still stripped once the
+// fence closes so he never reads raw JSON.
+const COACH_FACT_FENCE = /```profile\s*\n([\s\S]*?)```[ \t]*\n?/;
+
+function parseCoachFact(reply) {
+  const raw = String(reply == null ? '' : reply);
+  const match = raw.match(COACH_FACT_FENCE);
+  if (!match) return { text: raw, fact: null };
+  const text = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(match[1]);
+  } catch {
+    return { text, fact: null };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { text, fact: null };
+  // Only `text` is carried through. The record is one free-text field and the
+  // model has no business naming a field in it.
+  const fact = String(parsed.text == null ? '' : parsed.text).trim();
+  return { text, fact: fact ? { text: fact } : null };
+}
+
+// Whitespace and case folded away, and a trailing full stop with them: the
+// model writes the same fact back with a different period or a line break
+// often enough that comparing raw strings would offer it twice.
+function normaliseFact(value) {
+  return String(value == null ? '' : value)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!]+$/, '')
+    .toLowerCase();
+}
+
+// A fact the profile already carries. Containment rather than line equality,
+// because he writes the box as prose and the coach writes a sentence: a fact
+// sitting inside a paragraph he already typed is one he already told it.
+//
+// An empty fact is never "already known" -- it is nothing to ask about, and
+// `parseCoachFact` has already dropped it.
+function factAlreadyKnown(fact, existingProfile) {
+  const want = normaliseFact(fact && fact.text);
+  if (!want) return false;
+  return normaliseFact(existingProfile).includes(want);
+}
+
+// A fact he was shown a card for and tapped Not this on. Exactly the reason
+// `declinedGoalTexts` exists: the ```profile block is stripped before the
+// bubble is stored and a decline is a tap rather than a message, so nothing
+// the model sees on the next turn carries it while the sentence that produced
+// it is still in the window. Left alone he gets the same card every turn.
+function declinedProposalTexts(chat, declinedFlag, proposalKey) {
+  return (chat || [])
+    .filter(m => m && m[declinedFlag] && m[proposalKey] && m[proposalKey].text)
+    .map(m => String(m[proposalKey].text).trim())
+    .filter(Boolean);
+}
+
+function declinedFactTexts(chat) {
+  return declinedProposalTexts(chat, 'factDeclined', 'factProposal');
+}
+
+// Same normalisation as a fact already in the profile, for the same reason
+// `goalDeclinedBefore` reuses `goalAlreadySet`: "already answered" must not
+// mean two things depending on which way he answered.
+function factDeclinedBefore(fact, chat) {
+  return declinedFactTexts(chat).some(text => factAlreadyKnown(fact, text));
+}
+
+// Appending, never replacing. One card must not be able to eat a paragraph he
+// typed himself -- that is the whole record gone for a tap he thought added a
+// line. A blank line between entries so the prose he wrote and the sentences
+// the coach added stay readable as separate thoughts.
+function appendFact(existingProfile, fact) {
+  const existing = String(existingProfile == null ? '' : existingProfile).trim();
+  const addition = String(fact == null ? '' : fact).trim();
+  if (!addition) return existing;
+  return existing ? `${existing}\n\n${addition}` : addition;
 }
 
 // Why a target date cannot be used, or '' when it can. Split out of
