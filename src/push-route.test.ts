@@ -210,3 +210,40 @@ describe("POST /api/push/status", () => {
     expect(res.body.known).toBeUndefined();
   });
 });
+
+describe("GET /api/push/subscribers", () => {
+  it("counts nothing when no device has ever subscribed", async () => {
+    const res = await request(app).get("/api/push/subscribers");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ count: 0 });
+  });
+
+  it("counts every subscribed device and follows an unsubscribe back down", async () => {
+    await subscribe("https://push.example/one");
+    await subscribe("https://push.example/two");
+
+    const two = await request(app).get("/api/push/subscribers");
+    expect(two.body).toEqual({ count: 2 });
+
+    await request(app).delete("/api/push/subscribe").send({ endpoint: "https://push.example/one" });
+
+    const one = await request(app).get("/api/push/subscribers");
+    expect(one.body).toEqual({ count: 1 });
+  });
+
+  it("answers a count and never an endpoint", async () => {
+    await subscribe("https://push.example/secret-device-url");
+    const res = await request(app).get("/api/push/subscribers");
+    expect(res.text).not.toContain("secret-device-url");
+    expect(Object.keys(res.body)).toEqual(["count"]);
+  });
+
+  it("is a 500 and not a zero when the store cannot be read", async () => {
+    // A directory where the subscription file should be: `readFile` fails with
+    // EISDIR, which is neither ENOENT nor bad JSON, so it reaches the catch.
+    await fs.mkdir(path.join(dir, "push-subscriptions.json"), { recursive: true });
+    const res = await request(app).get("/api/push/subscribers");
+    expect(res.status).toBe(500);
+    expect(res.body.count).toBeUndefined();
+  });
+});

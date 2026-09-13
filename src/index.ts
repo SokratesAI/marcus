@@ -252,6 +252,38 @@ export function createApp(
     }
   });
 
+  // Issue #227's guardrail for the Notifications and nudges milestone: the
+  // number of devices the 20:00 reminder can actually reach. Nova reads it
+  // every cycle into `marcus-kpi-push-subscribers`, and until this route
+  // existed there was no reading to take -- the KPI carried a blank `now` and
+  // a written "no instrument" instead of a number, which is a guardrail that
+  // guards nothing.
+  //
+  // Unauthenticated, and that is a narrower decision than it looks. Both
+  // halves of `/api/push/subscribe` already answer with this exact `count` to
+  // any caller that can reach the pod, so the number is disclosed today --
+  // just only to a caller willing to add or remove a subscription first. A
+  // reader that changes nothing is strictly safer than the two writers that
+  // already print it.
+  //
+  // It answers a count and never a device. The comment on `/api/push/status`
+  // above refuses to widen *that* route past the one endpoint it was handed,
+  // because its authorisation IS holding that endpoint; nothing here is bound
+  // to a device, so there is no other device for it to leak.
+  app.get("/api/push/subscribers", async (_req, res) => {
+    try {
+      const subs = await subscriptions.list();
+      res.status(200).json({ count: subs.length });
+    } catch (err) {
+      logger.error({ err }, "could not count the push subscriptions");
+      // 500 rather than `{ count: 0 }`, for the same reason `/api/push/status`
+      // refuses to answer `known: false` over a disk error: zero subscribers
+      // is a real and actionable reading, and an unreadable store must never
+      // be recorded as one.
+      res.status(500).json({ error: "could not count the subscriptions" });
+    }
+  });
+
   // Idea #217, second slice: the send itself. This is the route the 20:00
   // CronJob calls; it is not a route a phone calls, which is why it is the one
   // route here that needs a credential.
