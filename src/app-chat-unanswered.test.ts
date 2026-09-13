@@ -236,3 +236,34 @@ describe("retryUnansweredTurn", () => {
     expect(ctx.store.get("chat", [])).toHaveLength(2);
   });
 });
+
+// The card must not flash while a normal turn is out. The submit handler stores
+// his message and repaints BEFORE the reply lands, so a naive "last bubble is
+// his" card tells him the message never arrived for the whole time the coach is
+// thinking -- which is the opposite of true and reads worse than silence.
+describe("while a turn is in flight", () => {
+  it("does not offer to ask again about the message he just sent", async () => {
+    let release: (v: any) => void = () => {};
+    const pending = new Promise((r) => {
+      release = r;
+    });
+    const { ctx, byId } = loadApp({
+      fetch: async () => {
+        await pending;
+        return { ok: true, json: async () => ({ reply: "Her er svaret." }) };
+      },
+    });
+    ctx.document.getElementById("chatInput").value = "Hva bør jeg gjøre i dag?";
+    ctx.document.getElementById("chatForm").handlers.submit({ preventDefault() {} });
+
+    // His bubble is on screen and the request is still out.
+    expect(byId["chatMessages"].innerHTML).toContain("Hva bør jeg gjøre i dag?");
+    expect(byId["chatMessages"].innerHTML).not.toContain("Ask again");
+
+    release(null);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(byId["chatMessages"].innerHTML).toContain("Her er svaret.");
+    expect(byId["chatMessages"].innerHTML).not.toContain("Ask again");
+  });
+});
