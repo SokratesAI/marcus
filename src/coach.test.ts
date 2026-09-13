@@ -5,7 +5,7 @@ import path from "node:path";
 import request from "supertest";
 import { createApp } from "./index.js";
 import { StateStore } from "./state-store.js";
-import { askCoach, buildPrompt, coachConfig, earlierInHisWords, osloDate, stripToolUseMarkers, MAX_EARLIER_CHARS, MAX_HISTORY_TURNS } from "./coach.js";
+import { askCoach, buildPrompt, coachConfig, earlierInHisWords, osloDate, stripToolUseMarkers, MAX_EARLIER_CHARS, MAX_HISTORY_TURNS, READ_RETRY_TIMEOUT_MS } from "./coach.js";
 
 const CONFIG = { baseUrl: "http://agora.test:8080", conversationId: "conv-1" };
 
@@ -281,6 +281,95 @@ describe("askCoach", () => {
       new Response("nope", { status: 404 })) as unknown as typeof globalThis.fetch;
     const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl });
     expect(result).toEqual({ status: "upstream", detail: "conversation read returned 404" });
+  });
+
+  it("asks for the listing a second time when the first read throws, and goes on to ask the coach", async () => {
+    // The failure this exists for: the marcus pod logged
+    // `The operation was aborted due to timeout` on 2026-09-13 and answered
+    // 502 after ten seconds without the coach ever being asked, on a read
+    // whose 30 live samples that afternoon ran 0.17s to 0.88s.
+    const { calls, fetchImpl } = fakeAgora("claude-cli:claude-sonnet-5");
+    let reads = 0;
+    const flaky = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).endsWith("/ask")) {
+        reads += 1;
+        if (reads === 1) throw new Error("The operation was aborted due to timeout");
+      }
+      return fetchImpl(url as string, init);
+    }) as unknown as typeof globalThis.fetch;
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: flaky });
+    expect(result).toEqual({ status: "ok", reply: "Nice work on the deadlift." });
+    expect(reads).toBe(2);
+    expect(calls.some((c) => c.url.endsWith("/ask"))).toBe(true);
+  });
+
+  it("gives the retry a shorter budget than the first read", async () => {
+    const timeouts: number[] = [];
+    let reads = 0;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith("/ask")) return new Response(JSON.stringify({ reply: "ok" }), { status: 200 });
+      reads += 1;
+      // `AbortSignal.timeout(n)` does not expose n, so the budget is read off
+      // how long the signal actually takes to fire.
+      const signal = init?.signal as AbortSignal;
+      const started = Date.now();
+      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve()));
+      timeouts.push(Date.now() - started);
+      throw new Error("The operation was aborted due to timeout");
+    }) as unknown as typeof globalThis.fetch;
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl, readTimeoutMs: 60 });
+    expect(result.status).toBe("upstream");
+    expect(reads).toBe(2);
+    expect(timeouts[0]).toBeGreaterThanOrEqual(55);
+    expect(READ_RETRY_TIMEOUT_MS).toBeLessThan(10_000);
+  });
+
+  it("reports the FIRST read's failure when the retry fails too", async () => {
+    let reads = 0;
+    const fetchImpl = (async () => {
+      reads += 1;
+      throw new Error(reads === 1 ? "first stall" : "second stall");
+    }) as unknown as typeof globalThis.fetch;
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl, readTimeoutMs: 5 });
+    expect(result).toEqual({ status: "upstream", detail: "first stall" });
+    expect(reads).toBe(2);
+  });
+
+  it("does not read the listing twice when it answered with a status", async () => {
+    // A 404 is an answer, not a stall. Asking again returns the same 404 and
+    // spends another round trip to learn nothing.
+    let reads = 0;
+    const fetchImpl = (async () => {
+      reads += 1;
+      return new Response("nope", { status: 404 });
+    }) as unknown as typeof globalThis.fetch;
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl });
+    expect(result).toEqual({ status: "upstream", detail: "conversation read returned 404" });
+    expect(reads).toBe(1);
+  });
+
+  it("does not read the listing twice when the conversation is simply absent", async () => {
+    const { calls, fetchImpl } = fakeAgora("absent");
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: fetchImpl });
+    expect(result).toEqual({ status: "upstream", detail: "conversation not in the active listing" });
+    expect(calls.length).toBe(1);
+  });
+
+  it("still refuses a metered model when the retry is the read that succeeded", async () => {
+    // Rule 9: a retry must not become a second path to spending the prepaid
+    // balance. The model is read live on whichever attempt answered.
+    const { calls, fetchImpl } = fakeAgora("anthropic:claude-opus-5");
+    let reads = 0;
+    const flaky = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).endsWith("/ask")) {
+        reads += 1;
+        if (reads === 1) throw new Error("The operation was aborted due to timeout");
+      }
+      return fetchImpl(url as string, init);
+    }) as unknown as typeof globalThis.fetch;
+    const result = await askCoach("hi", {}, [], { config: CONFIG, fetch: flaky });
+    expect(result).toEqual({ status: "metered", model: "anthropic:claude-opus-5" });
+    expect(calls.some((c) => c.url.endsWith("/ask"))).toBe(false);
   });
 
   it("refuses, rather than asking, when the coach is not in the active listing", async () => {
