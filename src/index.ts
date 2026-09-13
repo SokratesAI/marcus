@@ -5,7 +5,8 @@ import express, { type Express } from "express";
 import pino from "pino";
 import { StateStore } from "./state-store.js";
 import { FoodCache, SearchCache, lookupBarcode, searchFoodsByName } from "./food-lookup.js";
-import { askCoach, coachConfig, type CoachConfig } from "./coach.js";
+import { askCoach, coachConfig, type CoachConfig, type CoachContext } from "./coach.js";
+import { coachPhases } from "./goal-plan.js";
 import { draftWeek } from "./plan-draft.js";
 import { SubscriptionStore, VapidKeyStore, validateSubscription } from "./push.js";
 import { declarativePayload, sendPush, sendToAll } from "./push-send.js";
@@ -531,6 +532,47 @@ export function createApp(
       // whether to press the button again or give up on it.
       logger.warn({ reason: result.reason }, "coach draft was not a week");
       res.status(502).json({ error: `the coach did not draft a week: ${result.reason}` });
+      return;
+    }
+    logger.warn({ detail: result.detail }, "coach did not answer");
+    res.status(502).json({ error: "the coach did not answer" });
+  });
+
+  // Idea #209's last open half. The phases under a goal were a fixed table
+  // applied to the span; this asks the coach to shape them for the goal Edvard
+  // actually wrote. Same contract as /api/plan-draft above and for the same
+  // reason: the answer is structured, it is refused when it is not, and nothing
+  // here writes to the store -- the page puts it behind an accept gate.
+  app.post("/api/goal-phases", express.json({ limit: MAX_BODY }), async (req, res) => {
+    // `goal` is the one goal whose card was tapped, with its `created` and
+    // `targetDate`; the dates are computed off those, not off this server's
+    // clock. `today` is his own calendar day, for the same UTC reason the
+    // drafted week sends it.
+    const { goal, context, today } = req.body as { goal?: unknown; context?: unknown; today?: unknown };
+    const result = await coachPhases(goal, (context ?? {}) as CoachContext, {
+      config: coach,
+      fetch: fetchImpl,
+      today: typeof today === "string" ? today : undefined,
+    });
+    if (result.status === "ok") {
+      res.status(200).json({ milestones: result.milestones, note: result.note });
+      return;
+    }
+    if (result.status === "unconfigured") {
+      res.status(503).json({ error: "the coach is not configured here" });
+      return;
+    }
+    if (result.status === "metered") {
+      logger.error({ model: result.model }, "coach conversation is not on a subscription model");
+      res.status(503).json({ error: "the coach is not on a subscription model" });
+      return;
+    }
+    if (result.status === "unusable") {
+      // 502 and not 500: the coach answered, and what it said is not a block of
+      // phases. The reason goes back because it is the only thing that tells
+      // Edvard whether to press the button again or keep the dates he has.
+      logger.warn({ reason: result.reason }, "coach phases were not a block");
+      res.status(502).json({ error: `the coach did not shape the phases: ${result.reason}` });
       return;
     }
     logger.warn({ detail: result.detail }, "coach did not answer");

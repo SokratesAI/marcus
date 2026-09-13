@@ -182,12 +182,13 @@ function renderPlan() {
     ${goals.length ? goals.map(g => `
       <div class="card" style="display:block">
         <div class="card__title-row"><h2>${esc(g.text)}</h2><span style="display:flex;align-items:center;gap:8px"><span class="chip chip--primary">${esc(goalCountdown(g.targetDate))}</span><button class="icon-btn" title="Edit this goal" aria-label="Edit the goal ${esc(g.text)}" onclick="startGoalEdit('${esc(g.id)}')"><span class="material-icons-round">edit</span></button></span></div>
-        <div style="font-size:12px;color:var(--md-on-surface-variant);margin:2px 0 8px">${g.targetDate ? `Target ${niceDate(g.targetDate)} · phases are cut from your dates, not coached yet` : `No target date · an ongoing goal, so there are no phases to cut`}</div>
+        <div style="font-size:12px;color:var(--md-on-surface-variant);margin:2px 0 8px">${goalPhaseSubtitle(g)}</div>
         ${g.milestones.map(m => `
           <div class="exercise-line">
             <span><button class="icon-btn" onclick="toggleMilestone('${g.id}','${m.id}')"><span class="material-icons-round">${m.done ? 'check_box' : 'check_box_outline_blank'}</span></button>${esc(m.label)} — ${esc(m.note)}</span>
             <span>${niceDate(m.date)}</span>
           </div>`).join('')}
+        ${goalPhaseBlock(g)}
         ${raceCalendarBlock(raceCalendar(g), g.id)}
         <button class="btn btn--tonal btn--block" style="margin-top:12px" onclick="deleteGoal('${g.id}')">Remove goal</button>
       </div>`).join('') : `<div class="empty">No goal yet — tell Marcus what you are training for and he will date the phases.</div>`}
@@ -403,6 +404,128 @@ async function fetchWeekDraft(row) {
   if (!res.ok) return { error: body.error || 'Marcus could not draft a week' };
   if (!body.days || !body.days.length) return { error: 'Marcus did not draft a week' };
   return { days: body.days, note: body.note || '', week };
+}
+
+// ---------- phases the coach shaped, not the calendar (idea #209) ----------
+// The phases under a goal were `buildMilestones`: a fixed Base/Build/Peak/Taper
+// table scaled onto the span between the day the goal was set and its target
+// day. That is arithmetic Edvard can check, which is why it is still the
+// default and still what a new goal gets -- but it says nothing about WHICH
+// goal it is, so a triathlon and a powerlifting meet were periodised
+// identically. The card said so on its face: "not coached yet".
+//
+// This asks the coach to shape the block instead. The answer is a proposal,
+// never a write: the phases he has keep working until he taps Use these.
+
+/** The line under the goal's title. Three states and they are different facts:
+ * an ongoing goal has no phases at all, a dated goal's phases are either the
+ * app's own cut or ones Marcus shaped. */
+function goalPhaseSubtitle(g) {
+  if (!g.targetDate) return 'No target date \u00b7 an ongoing goal, so there are no phases to cut';
+  return 'Target ' + niceDate(g.targetDate) + ' \u00b7 '
+    + (g.phasesCoached ? 'phases shaped by Marcus for this goal' : 'phases are cut from your dates, not coached yet');
+}
+
+/** Pure: whether there is a block worth asking the coach to shape. The same bar
+ * the server applies, so the button is not offered for a question it refuses --
+ * under four weeks `buildMilestones` writes one straight Build and there is
+ * nothing to periodise. */
+function goalPhasesAskable(g, todayISO) {
+  if (!g || !g.targetDate) return false;
+  const from = g.created || todayISO;
+  return daysBetween(from, g.targetDate) >= 28;
+}
+
+/** The button, or the proposal once one has come back for this goal. */
+function goalPhaseBlock(g) {
+  if (!goalPhasesAskable(g, todayStr())) return '';
+  if (goalPhaseDraft && goalPhaseDraft.goalId === g.id) {
+    return `<div class="card" style="display:block;margin:12px 0 0">
+      <div class="card__title-row"><h2>Marcus would shape it like this</h2><span class="chip chip--primary">Not saved yet</span></div>
+      ${goalPhaseDraft.note ? `<p class="card__note">${esc(goalPhaseDraft.note)}</p>` : ''}
+      ${goalPhaseDraft.milestones.map(m => `
+        <div class="exercise-line">
+          <span>${esc(m.label)} \u2014 ${esc(m.note)}</span>
+          <span>${niceDate(m.date)}</span>
+        </div>`).join('')}
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="acceptGoalPhases()"><span class="material-icons-round">check</span> Use these phases</button>
+      <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="declineGoalPhases()">Keep the ones I have</button>
+    </div>`;
+  }
+  const busy = goalPhaseBusy === g.id;
+  return `<button class="btn btn--tonal btn--block" style="margin-top:12px" ${busy ? 'disabled' : ''} onclick="requestGoalPhases('${esc(g.id)}')"><span class="material-icons-round">insights</span> ${busy ? 'Marcus is shaping the phases\u2026' : (g.phasesCoached ? 'Ask Marcus to shape them again' : 'Ask Marcus to shape these phases')}</button>`;
+}
+
+async function requestGoalPhases(goalId) {
+  if (goalPhaseBusy) return;
+  const goal = store.get('goals', []).find(g => g && g.id === goalId);
+  if (!goal) { toast('That goal is no longer here'); return; }
+  goalPhaseBusy = goalId;
+  // A proposal for another goal is dropped rather than left on screen: two
+  // "Not saved yet" cards at once is two accept gates and one of them is stale.
+  goalPhaseDraft = null;
+  renderPlan();
+  try {
+    const res = await fetch('/api/goal-phases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        goal,
+        today: todayStr(),
+        context: {
+          plan: store.get('plan'),
+          sessions: store.get('sessions', []),
+          weights: store.get('weights', []),
+          goals: store.get('goals', []),
+          profile: store.get('profile', ''),
+        },
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.milestones || !body.milestones.length) {
+      toast(body.error || 'Marcus could not shape the phases');
+      return;
+    }
+    goalPhaseDraft = { goalId, milestones: body.milestones, note: body.note || '' };
+  } catch {
+    toast('Marcus could not be reached');
+  } finally {
+    goalPhaseBusy = null;
+    renderPlan();
+  }
+}
+
+function acceptGoalPhases() {
+  const draft = goalPhaseDraft;
+  if (!draft) return;
+  const goals = store.get('goals', []);
+  const goal = goals.find(g => g && g.id === draft.goalId);
+  // The goal can have been deleted or re-dated on the other phone while the
+  // card sat open. Saving onto a goal whose target day has moved would date the
+  // phases to a race that is no longer there.
+  if (!goal) { goalPhaseDraft = null; toast('That goal is no longer here'); renderPlan(); return; }
+  const last = draft.milestones[draft.milestones.length - 1];
+  if (!last || last.date !== goal.targetDate) {
+    goalPhaseDraft = null;
+    toast('The target date moved \u2014 ask Marcus again');
+    renderPlan();
+    return;
+  }
+  // Ticks he has already earned are carried across by label and occurrence, the
+  // same rule `validateGoalEdit` uses when a race day moves.
+  goal.milestones = carryMilestonesDone(
+    draft.milestones.map(m => ({ id: uid(), label: m.label, note: m.note, date: m.date, done: false })),
+    goal.milestones);
+  goal.phasesCoached = true;
+  if (!store.set('goals', goals)) return;
+  goalPhaseDraft = null;
+  renderPlan();
+  toast('Phases updated.');
+}
+
+function declineGoalPhases() {
+  goalPhaseDraft = null;
+  renderPlan();
 }
 
 async function requestDraft(goalId, start) {
@@ -2252,6 +2375,11 @@ function planReview(plan, sessions, todayISO, windowDays, goal) {
 // agreed to.
 let planDraft = null;
 let planDraftBusy = false;
+// Idea #209: the coach's answer to "shape these phases", held for the accept
+// gate. Nothing is written to the goal until he taps Use these, the same
+// contract the drafted week has -- `{ goalId, milestones, note }`.
+let goalPhaseDraft = null;
+let goalPhaseBusy = null;
 // How far a block draft has got, or null. Only draftPhase sets it.
 let planDraftProgress = null;
 // The goal whose "every week to the race" list a row's Draft button was tapped
