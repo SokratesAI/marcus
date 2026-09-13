@@ -3925,6 +3925,12 @@ function goalProposalHtml(m) {
   // why instead of quietly presenting an ongoing goal he did not state.
   const g = resolveGoalProposal(m.goalProposal, todayStr());
   if (!g) return '';
+  // Asked here as well as at the offer, for the same reason the date is: the
+  // proposal is stored and the goals list moves under it. `askMarcus` drops a
+  // proposal for a goal he already has, but only against the list as it stood
+  // when the reply landed -- if he then adds that goal on the Plan tab, this
+  // card is still sitting in the chat offering to save it a second time.
+  if (goalAlreadySet(g, store.get('goals', []))) return '<span class="msg__offline">Already a goal.</span>';
   const when = g.unusableDate
     ? `${esc(g.unusableDate)} is not a date I can use, so this saves as an ongoing goal — set the day on the Plan tab`
     : g.targetDate ? `Target ${esc(niceDate(g.targetDate))}` : 'No target date — an ongoing goal';
@@ -3958,6 +3964,16 @@ function acceptCoachGoal(ts) {
   // the same resolution, so the button does what the card in front of him says.
   const proposal = resolveGoalProposal(m.goalProposal, todayStr());
   if (!proposal) return;
+  // The belt to the card's brace above: the card is drawn once and a goal can
+  // be added from the Plan tab in another tab of the same browser without this
+  // one redrawing. Two goals with one text is not a duplicate row he can tidy
+  // up -- both are cut into phases, both go up to the coach in TRAINING DATA,
+  // and it then reads one race as two.
+  if (goalAlreadySet(proposal, store.get('goals', []))) {
+    toast('You already have that goal.');
+    renderChatMessages();
+    return;
+  }
   const result = validateGoal(proposal.text, proposal.targetDate);
   if (!result.ok) { toast(result.message); return; }
   if (!store.set('goals', store.get('goals', []).concat([result.goal]))) return;
