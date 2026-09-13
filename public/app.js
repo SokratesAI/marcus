@@ -80,7 +80,7 @@ function renderHome() {
     <div class="card">
       <div class="card__title-row"><h2>${esc(nextGoal.text)}</h2><span class="chip">${behind.daysAgo === 1 ? 'was yesterday' : `was ${behind.daysAgo} days ago`}</span></div>
       <p class="card__note">That day has been and gone, so Marcus has nothing ahead to plan against — no phases, no weeks to the race. What is next?</p>
-      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="openChat()"><span class="material-icons-round">chat</span> Tell Marcus</button>
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="openChat('goal')"><span class="material-icons-round">chat</span> Tell Marcus</button>
       <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="switchTab('plan')">Or type it in yourself</button>
     </div>` : nextGoal ? `
     <div class="section-title">Next goal</div>
@@ -94,7 +94,7 @@ function renderHome() {
     <div class="card">
       <h2>What are you training for?</h2>
       <p class="card__note">Marcus does not know yet, so this week is a generic one. Say it in your own words — "Olympic triathlon next August" is enough — and he writes it down and cuts the phases from the date.</p>
-      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="openChat()"><span class="material-icons-round">chat</span> Tell Marcus</button>
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="openChat('goal')"><span class="material-icons-round">chat</span> Tell Marcus</button>
       <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="switchTab('plan')">Or type it in yourself</button>
     </div>`}
 
@@ -3995,10 +3995,27 @@ function declineCoachGoal(ts) {
   renderChatMessages();
 }
 
-function openChat() {
+// What the composer asks for, keyed by the button that opened the sheet.
+// Idea #209's chat route is reached from a Home card that says "say it in your
+// own words -- 'Olympic triathlon next August' is enough", and the sheet then
+// covers that card: the one sentence that tells him what to type is behind the
+// thing he tapped, and the box he lands in asks for nothing in particular. The
+// hint travels with the tap instead.
+const CHAT_PROMPTS = {
+  goal: 'What are you training for? e.g. "Olympic triathlon next August"',
+};
+const CHAT_PROMPT_DEFAULT = 'Message Marcus…';
+
+// `topic` is whatever the caller passed, and the chat FAB is wired straight to
+// this as a listener -- so the first argument is routinely a click Event. Only
+// a key of CHAT_PROMPTS is honoured and everything else falls back, which also
+// means a hint from one entry point cannot stick to the next open.
+function openChat(topic) {
   chatSheet.hidden = false;
   renderChatMessages();
-  document.getElementById('chatInput').focus();
+  const input = document.getElementById('chatInput');
+  input.placeholder = (typeof topic === 'string' && CHAT_PROMPTS[topic]) || CHAT_PROMPT_DEFAULT;
+  input.focus();
 }
 function closeChat() { chatSheet.hidden = true; }
 document.getElementById('chatFab').addEventListener('click', openChat);

@@ -106,9 +106,9 @@ describe("Home once the race is behind him", () => {
     const app = loadApp();
     run(app, raced("2020-08-14"));
     const html = home(app);
-    expect(html).toContain('onclick="openChat()"');
+    expect(html).toContain(`onclick="openChat('goal')"`);
     expect(html).toContain(`onclick="switchTab('plan')"`);
-    expect(html.indexOf('onclick="openChat()"')).toBeLessThan(html.indexOf(`onclick="switchTab('plan')"`));
+    expect(html.indexOf(`onclick="openChat('goal')"`)).toBeLessThan(html.indexOf(`onclick="switchTab('plan')"`));
   });
 
   it("does not draw the stale phase line the countdown card draws", () => {
