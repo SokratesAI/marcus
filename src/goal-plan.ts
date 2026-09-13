@@ -26,7 +26,7 @@
 // calendar, so the failure mode disappears rather than being validated against.
 
 import { askCoach, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
-import { isoDay, type DraftGoal } from "./goal-phase.js";
+import { isoDay, LANGUAGE_RULE, type DraftGoal } from "./goal-phase.js";
 
 /** A phase as the coach proposes it: a name, a sentence, and how long it should
  * be relative to its neighbours. No date -- see the header. */
@@ -210,6 +210,7 @@ export function buildPhasePrompt(goal: DraftGoal, todayISO: string): string {
     '{"phases": [{"label": "Base", "note": "what this phase is for, in one sentence he can act on", "weeks": 8}], "note": "one short sentence on why you shaped it this way"}',
     "",
     `Rules: between ${PHASE_MIN} and ${PHASE_MAX} phases, in order, first to last. \`label\` is the phase's name, at most ${PHASE_LABEL_MAX} characters -- use the standard names where they fit and a better one where they do not. \`note\` is one sentence, at most ${PHASE_NOTE_MAX} characters, about what he actually does in that phase. \`weeks\` is a whole number of weeks and is RELATIVE: the app scales the block onto his real dates and pins the last phase to the target day, so the ratios matter and the total does not have to hit ${Math.round(span / 7)} exactly. Do not write dates -- the app owns those. Do not repeat a label twice in a row.`,
+    LANGUAGE_RULE,
     "He confirms this before anything is saved, so do not say you have changed his plan.",
   ].join("\n");
 }
