@@ -2455,9 +2455,31 @@ function parseCoachGoal(reply, todayISO) {
   // worth saving: an ongoing goal is a real goal here, the card says the date
   // was dropped and why, and the Plan tab's edit form is where the day goes in.
   // Carrying the raw string back is what lets the card say which date it was.
-  const problem = goalDateProblem(targetDate, todayISO);
-  if (problem) return { text, goal: { text: goalText, targetDate: '', unusableDate: targetDate } };
-  return { text, goal: { text: goalText, targetDate } };
+  return { text, goal: resolveGoalProposal({ text: goalText, targetDate }, todayISO) };
+}
+
+// The same question, asked again on the day he actually answers the card.
+//
+// `parseCoachGoal` checks the model's date the moment the reply lands. The card
+// is drawn from the stored message, deliberately, so it outlives that reply --
+// and Edvard goes days at a time without opening the app. A race two days out,
+// proposed on Friday and read on Tuesday, is a date `validateGoal` refuses: the
+// card drew a target already behind him and the button could only toast. That
+// is the dead button of the paragraph above, reintroduced by nothing but the
+// calendar moving, so the check belongs at the answer and not only at the offer.
+//
+// A date already dropped stays dropped: re-resolving a proposal must never put
+// back a day `parseCoachGoal` threw out, or a `next summer` would become a
+// target again on the second render.
+function resolveGoalProposal(proposal, todayISO) {
+  if (!proposal) return null;
+  const text = String(proposal.text == null ? '' : proposal.text).trim();
+  if (!text) return null;
+  const targetDate = String(proposal.targetDate == null ? '' : proposal.targetDate).trim();
+  const dropped = String(proposal.unusableDate == null ? '' : proposal.unusableDate).trim();
+  if (!targetDate) return dropped ? { text, targetDate: '', unusableDate: dropped } : { text, targetDate: '' };
+  if (goalDateProblem(targetDate, todayISO)) return { text, targetDate: '', unusableDate: targetDate };
+  return { text, targetDate };
 }
 
 // A goal the coach proposes that Edvard already has is a card asking him to

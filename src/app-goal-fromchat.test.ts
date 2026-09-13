@@ -348,14 +348,20 @@ describe("the confirm card", () => {
     expect(ctx.store.get("goals", [])).toEqual([]);
   });
 
-  // A date the model invented in the past is refused by the same validator the
-  // form uses, and he is told why rather than getting a silent no-op.
-  it("refuses a target date in the past and says so", () => {
-    const { ctx, toasts } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+  // A target date in the past drops the date, not the goal -- the same answer
+  // `parseCoachGoal` gives a date the model invented, now given at the tap as
+  // well, so the two halves of the flow cannot disagree. This test asserted a
+  // toast and an empty store until cycle 1486; that was the last place where
+  // the button in front of him could refuse what the card had offered.
+  it("drops a target date in the past and still saves the goal", () => {
+    const { ctx, toasts, byId } = loadApp({ now: new Date("2026-09-12T22:00:00") });
     withProposal(ctx, { text: "Race", targetDate: "2020-01-01" });
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).toContain("2020-01-01 is not a date I can use");
     ctx.acceptCoachGoal(1000);
-    expect(ctx.store.get("goals", [])).toEqual([]);
-    expect(toasts.join(" ")).toContain("future");
+    expect(ctx.store.get("goals", [])).toHaveLength(1);
+    expect(ctx.store.get("goals", [])[0].targetDate).toBe("");
+    expect(toasts).toContain("Goal set.");
   });
 
   it("does nothing for a timestamp that is not in the chat", () => {
@@ -562,5 +568,74 @@ describe("goalDateProblem", () => {
       expect(problem).not.toBe("");
       expect(ctx.validateGoal("Olympic triathlon", date).message).toBe(problem);
     }
+  });
+});
+
+// A proposal that was fine when it arrived and is not fine on the day he taps
+// it. The card is drawn from the stored message, deliberately, so it outlives
+// the reply that produced it -- and Edvard goes days without opening the app.
+// A race on Monday, proposed on Friday, read on Tuesday: `validateGoal` refuses
+// a date behind him, so the card drew a target in the past and the button only
+// ever toasted. That is the same dead button cycle 1485 fixed at parse time,
+// reintroduced by nothing but the calendar moving.
+describe("a proposed date that goes stale before he answers", () => {
+  // The block arrived on 09-12 naming 09-14, which was a real future date then.
+  const PROPOSED = { text: "Sprint triathlon at Sognsvann", targetDate: "2026-09-14" };
+
+  function withStaleProposal(now: Date) {
+    const app = loadApp({ now });
+    app.ctx.store.set("chat", [
+      { role: "marcus", text: "Two days out.", ts: 1000, goalProposal: PROPOSED },
+    ]);
+    return app;
+  }
+
+  it("still saves the goal when he taps days later, as an ongoing one", () => {
+    const { ctx, toasts } = withStaleProposal(new Date("2026-09-16T07:00:00"));
+    ctx.acceptCoachGoal(1000);
+    const goals = ctx.store.get("goals", []);
+    expect(goals).toHaveLength(1);
+    expect(goals[0].text).toBe("Sprint triathlon at Sognsvann");
+    expect(goals[0].targetDate).toBe("");
+    expect(goals[0].milestones).toEqual([]);
+    expect(toasts).toContain("Goal set.");
+    expect(ctx.store.get("chat", [])[0].goalSaved).toBe(true);
+  });
+
+  it("says on the card, before he taps, that the date has gone", () => {
+    const { ctx, byId } = withStaleProposal(new Date("2026-09-16T07:00:00"));
+    ctx.renderChatMessages();
+    const html = byId.chatMessages.innerHTML;
+    expect(html).toContain("2026-09-14 is not a date I can use");
+    expect(html).toContain("Plan tab");
+    expect(html).not.toContain("Target ");
+  });
+
+  it("leaves the date alone while it is still ahead of him", () => {
+    const { ctx, byId } = withStaleProposal(new Date("2026-09-13T07:00:00"));
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).toContain("Target ");
+    ctx.acceptCoachGoal(1000);
+    expect(ctx.store.get("goals", [])[0].targetDate).toBe("2026-09-14");
+  });
+
+  // Re-asking must not resurrect a date parseCoachGoal already threw out.
+  it("keeps an already-dropped date dropped", () => {
+    const { ctx } = loadApp({ now: new Date("2026-09-16T07:00:00") });
+    const out = ctx.resolveGoalProposal(
+      { text: "Olympic triathlon at Oslo Tri", targetDate: "", unusableDate: "next summer" },
+      "2026-09-16",
+    );
+    expect(out).toEqual({
+      text: "Olympic triathlon at Oslo Tri",
+      targetDate: "",
+      unusableDate: "next summer",
+    });
+  });
+
+  it("has nothing to resolve for a proposal with no text", () => {
+    const { ctx } = loadApp({ now: new Date("2026-09-16T07:00:00") });
+    expect(ctx.resolveGoalProposal(null, "2026-09-16")).toBeNull();
+    expect(ctx.resolveGoalProposal({ text: "  ", targetDate: "2027-01-01" }, "2026-09-16")).toBeNull();
   });
 });

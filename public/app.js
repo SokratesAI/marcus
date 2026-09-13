@@ -3918,11 +3918,13 @@ function goalProposalHtml(m) {
   if (!m || m.role !== 'marcus' || !m.goalProposal || !m.ts) return '';
   if (m.goalSaved) return '<span class="msg__offline">Saved as a goal.</span>';
   if (m.goalDeclined) return '<span class="msg__offline">Not saved.</span>';
-  const g = m.goalProposal;
-  // `unusableDate` is set when the coach named a date the app cannot use -- not
-  // a real day, or one already behind him. The date is dropped rather than the
-  // goal (see `parseCoachGoal`), and the card says which date and why instead of
-  // quietly presenting an ongoing goal he did not state.
+  // Resolved against TODAY rather than read off the stored proposal, because a
+  // date that was real when the coach wrote it can be behind him by the time he
+  // scrolls back to the card. `unusableDate` is then the date that was dropped
+  // -- never a real day, or no longer one -- and the card says which date and
+  // why instead of quietly presenting an ongoing goal he did not state.
+  const g = resolveGoalProposal(m.goalProposal, todayStr());
+  if (!g) return '';
   const when = g.unusableDate
     ? `${esc(g.unusableDate)} is not a date I can use, so this saves as an ongoing goal — set the day on the Plan tab`
     : g.targetDate ? `Target ${esc(niceDate(g.targetDate))}` : 'No target date — an ongoing goal';
@@ -3949,7 +3951,14 @@ function acceptCoachGoal(ts) {
   // The same validator the form on the Plan tab uses, so a goal the coach heard
   // and a goal Edvard typed are the same record built the same way -- including
   // the milestone phases, which are cut here and never by the model.
-  const result = validateGoal(m.goalProposal.text, m.goalProposal.targetDate);
+  //
+  // Resolved first, against today: the proposal may have been sitting in his
+  // chat for days, and a target date that has passed in the meantime would make
+  // `validateGoal` refuse the whole goal. The card he just read was drawn from
+  // the same resolution, so the button does what the card in front of him says.
+  const proposal = resolveGoalProposal(m.goalProposal, todayStr());
+  if (!proposal) return;
+  const result = validateGoal(proposal.text, proposal.targetDate);
   if (!result.ok) { toast(result.message); return; }
   if (!store.set('goals', store.get('goals', []).concat([result.goal]))) return;
   m.goalSaved = true;
