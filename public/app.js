@@ -4196,9 +4196,53 @@ function renderChatMessages() {
     const note = m.role === 'marcus' && m.offline
       ? '<span class="msg__offline">built-in reply — the coach was not reachable</span>'
       : '';
-    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(m.text)}${note}${goalProposalHtml(m)}${factProposalHtml(m)}</div>`;
-  }).join('');
+    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(chatBubbleText(m))}${note}${goalProposalHtml(m)}${factProposalHtml(m)}</div>`;
+  }).join('') + unansweredHtml(msgs);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// True while ANY coach request is out, typed or retried. Not just the retry:
+// the submit handler stores his message and repaints before the reply lands,
+// so a flag that only covered Ask again would tell him "that never reached me"
+// for the whole time the coach was thinking about the turn he just sent.
+//
+// Hoisted above its first use on purpose: `renderChatMessages` runs during the
+// initial paint, and a `let` read before its own line is a TDZ throw, not a
+// falsy read.
+let coachTurnInFlight = false;
+
+// The card at the foot of a thread that ends without an answer. Drawn from the
+// stored messages every render, so it appears the moment a reply is lost and
+// goes away by itself as soon as one lands -- nothing has to remember to
+// remove it. The one flag it reads is about the request in flight right now,
+// not about whether a card is owed.
+//
+// It says which of the two failures happened, because they are different
+// things to a reader: "I never got a reply" and "the reply stopped halfway".
+function unansweredHtml(msgs) {
+  if (coachTurnInFlight) return '';
+  const pending = unansweredChatTurn(msgs);
+  if (!pending) return '';
+  const why = pending.reason === 'cut off'
+    ? 'I started that answer and got cut off partway.'
+    : 'That never reached me — no answer came back.';
+  return `<div class="chat-goal">
+      <div class="chat-goal__title">${esc(why)}</div>
+      <div class="chat-goal__when">Nothing you typed is lost. Ask me again and I will answer it properly.</div>
+      <div class="chat-goal__actions">
+        <button class="btn btn--filled" id="chatRetry" onclick="retryUnansweredTurn()"><span class="material-icons-round">refresh</span> Ask again</button>
+      </div>
+    </div>`;
+}
+
+// Re-sends the question that was never answered, without writing it into the
+// chat a second time -- it is already there, and a duplicate bubble would read
+// as him having repeated himself.
+function retryUnansweredTurn() {
+  if (coachTurnInFlight) return;
+  const pending = unansweredChatTurn(store.get('chat', []));
+  if (!pending) return;
+  return sendCoachTurn(pending.text);
 }
 
 // The confirm card under a coach bubble that heard a goal. It is drawn from the
@@ -4553,8 +4597,20 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
   msgs.push({ role: 'user', text, ts: Date.now() });
   store.set('chat', msgs);
   input.value = '';
-  renderChatMessages();
+  // His bubble reaches the screen from sendCoachTurn's own repaint, taken
+  // after it marks the turn in flight. Rendering here instead would draw the
+  // unanswered card over a request that has not been made yet.
+  sendCoachTurn(text);
+});
 
+// Ask the coach and store what comes back. Split out of the submit handler so
+// the Ask again button runs the identical path -- a retry that assembled its
+// own request is a second place for the reply to be stored differently.
+// Storing the typed turn is deliberately NOT in here: the submit handler does
+// it, and a retry must not write his question into the thread twice.
+function sendCoachTurn(text) {
+  coachTurnInFlight = true;
+  renderChatMessages();
   chatStatus.textContent = 'typing…';
   chatStatus.classList.add('is-typing');
   const typing = document.createElement('div');
@@ -4563,7 +4619,7 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
   chatMessages.appendChild(typing);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
-  askMarcus(text).then((reply) => {
+  return askMarcus(text).then((reply) => {
     typing.remove();
     chatStatus.textContent = 'online';
     chatStatus.classList.remove('is-typing');
@@ -4579,9 +4635,15 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
     if (reply.fact) msg.factProposal = reply.fact;
     all.push(msg);
     store.set('chat', all);
+  }).finally(() => {
+    // Cleared in a `finally` rather than at the end of the `then` above so a
+    // turn that throws on its way into the store cannot leave the flag stuck
+    // true -- which would hide the unanswered card for the rest of the session,
+    // exactly when it is the thing he needs.
+    coachTurnInFlight = false;
     renderChatMessages();
   });
-});
+}
 
 // ---------- reminders (idea #217, the browser half) ----------
 // The server could already mint a VAPID key, remember a device and encrypt a

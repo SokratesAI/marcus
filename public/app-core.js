@@ -2617,6 +2617,29 @@ function parseCoachFact(reply) {
   return { text, fact: fact ? { text: fact } : null };
 }
 
+// The Claude CLI writes `**1 tool use**` into a turn's text where a tool call
+// happened, and a cut-off turn arrives here with that and nothing else after
+// the preamble. `stripToolUseMarkers` in src/coach.ts holds the same rule for
+// replies the server is about to hand back; this copy is for the ones already
+// in his store, written before that strip existed, which the server will never
+// see again. Same deliberate narrowness: only a line that is the whole marker,
+// so a sentence that happens to mention tool use is untouched.
+const CHAT_TOOL_USE_MARKER = /^[ \t]*\*\*\d+ tool uses?\*\*[ \t]*$/m;
+
+// What a stored bubble should actually read as. The marker is a transcript
+// artefact, never something the coach meant to say, and leaving it on screen
+// next to a card explaining the turn was cut off is two ways of saying the
+// same thing, one of them meaningless.
+function chatBubbleText(message) {
+  const text = String(message && message.text != null ? message.text : '');
+  if (!CHAT_TOOL_USE_MARKER.test(text)) return text;
+  return text
+    .split('\n')
+    .filter(line => !CHAT_TOOL_USE_MARKER.test(line))
+    .join('\n')
+    .trim();
+}
+
 // Whitespace and case folded away, and a trailing full stop with them: the
 // model writes the same fact back with a different period or a line break
 // often enough that comparing raw strings would offer it twice.
@@ -2661,6 +2684,47 @@ function declinedFactTexts(chat) {
 // mean two things depending on which way he answered.
 function factDeclinedBefore(fact, chat) {
   return declinedFactTexts(chat).some(text => factAlreadyKnown(fact, text));
+}
+
+// A turn where the coach never actually answered, or null. Two ways that
+// happens and they need one card, because the recovery is the same: ask again.
+//
+// This is not hypothetical and it is not old. Edvard's chat on the server ends
+// on 2026-09-07 22:32 Oslo with 1,825 characters of his training background --
+// his whole athletic history, the races he wants next August, his injuries,
+// what his doctor told him -- and the entire answer he got was "Skal se om jeg
+// har notert noe om deg fra før, så jeg ikke overskriver det jeg allerede vet."
+// followed by `**1 tool use**`. Six days later that is still the last thing in
+// the thread. The cut-off itself was fixed on both the Agora and the server
+// side; what nothing fixed is that a thread which ends unanswered stays that
+// way forever, because the only way to get an answer is to type again and the
+// screen gives no sign that anything went wrong.
+//
+// The two cases:
+//   - the last bubble is his, so the reply was lost in flight -- he closed the
+//     tab, the phone slept, the request never resolved. Nothing retries it.
+//   - the last bubble is the coach's and carries a tool-use marker, which means
+//     the turn was cut off at a tool call and what is on screen is a preamble,
+//     not an answer. That is exactly his 2026-09-07 bubble.
+//
+// Returns the text to re-send -- always one of HIS messages, never the coach's
+// -- so the retry asks the question that was never answered rather than
+// paraphrasing it.
+function unansweredChatTurn(chat) {
+  const msgs = (chat || []).filter(m => m && typeof m.text === 'string');
+  const last = msgs[msgs.length - 1];
+  if (!last) return null;
+  if (last.role === 'user') {
+    return { text: last.text, reason: 'lost' };
+  }
+  if (!CHAT_TOOL_USE_MARKER.test(last.text)) return null;
+  // The question it was cut off answering. Walking back rather than taking
+  // msgs[len - 2] because a run of coach bubbles is possible and only one of
+  // them is the dud.
+  for (let i = msgs.length - 2; i >= 0; i -= 1) {
+    if (msgs[i].role === 'user') return { text: msgs[i].text, reason: 'cut off' };
+  }
+  return null;
 }
 
 // Appending, never replacing. One card must not be able to eat a paragraph he
