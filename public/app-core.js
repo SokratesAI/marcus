@@ -2422,22 +2422,42 @@ function buildMilestones(startISO, targetISO) {
 // exactly as it came, because the failure to avoid is not "we missed a goal",
 // it is a card offering to save something he never said. A malformed block is
 // still stripped when the fence closes, so he never reads raw JSON.
-const COACH_GOAL_FENCE = /```goal\s*\n([\s\S]*?)```[ \t]*\n?/;
+// Global on purpose. Idea #209's own wording is "one or more goals", and on
+// 2026-09-07 Edvard stated three things in one message -- a sprint triathlon, an
+// Olympic at Oslo Tri next August, and his doctor's cholesterol note. A
+// non-global match took the FIRST block and left the rest in the bubble as raw
+// JSON, which is the one thing the stripper exists to prevent. `replace` starts
+// at 0 and resets `lastIndex` itself, so the shared literal is safe to reuse.
+const COACH_GOAL_FENCE = /```goal\s*\n([\s\S]*?)```[ \t]*\n?/g;
 
 function parseCoachGoal(reply, todayISO) {
   const raw = String(reply == null ? '' : reply);
-  const match = raw.match(COACH_GOAL_FENCE);
-  if (!match) return { text: raw, goal: null };
-  const text = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim();
+  const bodies = [];
+  const text = raw.replace(COACH_GOAL_FENCE, (_whole, body) => { bodies.push(body); return ''; }).trim();
+  // Every block is stripped whether or not it parses, and each one is judged on
+  // its own: a second goal he stated must not be thrown away because the model
+  // wrote the first block badly.
+  const goals = [];
+  bodies.forEach((body) => {
+    const goal = goalProposalFrom(body, todayISO);
+    // Two blocks for the same goal is one card, not two. Same normalisation as
+    // `goalAlreadySet`, so "the same goal" means one thing everywhere.
+    if (goal && !goalAlreadySet(goal, goals)) goals.push(goal);
+  });
+  return { text, goals };
+}
+
+/** One ```goal block's JSON body as a proposal, or null. */
+function goalProposalFrom(body, todayISO) {
   let parsed;
   try {
-    parsed = JSON.parse(match[1]);
+    parsed = JSON.parse(body);
   } catch {
-    return { text, goal: null };
+    return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { text, goal: null };
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const goalText = String(parsed.text == null ? '' : parsed.text).trim();
-  if (!goalText) return { text, goal: null };
+  if (!goalText) return null;
   // Only the two fields are carried through. A model that adds a `milestones`
   // or an `id` of its own must not have them reach the store -- validateGoal
   // mints both, and a goal is only ever built there.
@@ -2447,7 +2467,7 @@ function parseCoachGoal(reply, todayISO) {
   // and it does not always comply, and it reasons from a training cutoff months
   // behind today -- `Oslo Tri next August` pinned to the August already behind
   // him is the ordinary case, not the exotic one.
-  return { text, goal: resolveGoalProposal({ text: goalText, targetDate }, todayISO) };
+  return resolveGoalProposal({ text: goalText, targetDate }, todayISO);
 }
 
 // A proposal's date, resolved against a day -- the day the reply landed when
@@ -2505,7 +2525,56 @@ function goalAlreadySet(proposal, existing) {
 // stops re-raising it; `goalDeclinedBefore` is the belt for a turn that raises
 // it anyway.
 function declinedGoalTexts(chat) {
-  return declinedProposalTexts(chat, 'goalDeclined', 'goalProposal');
+  const texts = [];
+  (chat || []).forEach((m) => {
+    goalProposalsOf(m).forEach((p, i) => {
+      if (goalAnswerOf(m, i) === 'declined' && p.text) texts.push(String(p.text).trim());
+    });
+  });
+  return texts.filter(Boolean);
+}
+
+// ---------- one bubble, one or more goal proposals ----------
+// A reply can now carry several goal blocks, so the proposals live in a list on
+// the message and each one carries its own answer. The single `goalProposal`
+// shape came first and messages written under it are still in his chat, so both
+// are read here and nowhere else -- the card, the two handlers and the declined
+// list all go through these three, which is what stops "answered" meaning two
+// different things depending on which shape stored it.
+//
+// The array is returned live, not copied: `markGoalAnswer` stamps the object it
+// hands back and the caller then writes the whole `chat` list.
+function goalProposalsOf(m) {
+  if (!m || m.role !== 'marcus') return [];
+  if (Array.isArray(m.goalProposals)) return m.goalProposals.filter(p => p && p.text);
+  return m.goalProposal && m.goalProposal.text ? [m.goalProposal] : [];
+}
+
+/** `'saved'`, `'declined'`, or `''` for a proposal he has not answered. */
+function goalAnswerOf(m, index) {
+  if (!m) return '';
+  if (Array.isArray(m.goalProposals)) {
+    const p = m.goalProposals[index];
+    if (!p) return '';
+    return p.saved ? 'saved' : p.declined ? 'declined' : '';
+  }
+  return m.goalSaved ? 'saved' : m.goalDeclined ? 'declined' : '';
+}
+
+/** Stamp the answer where the message's own shape keeps it. Returns false when
+ * the proposal is gone or already answered, which is every caller's guard. */
+function markGoalAnswer(m, index, answer) {
+  if (!m || (answer !== 'saved' && answer !== 'declined')) return false;
+  if (!goalProposalsOf(m).length || goalAnswerOf(m, index)) return false;
+  if (Array.isArray(m.goalProposals)) {
+    const p = m.goalProposals[index];
+    if (!p) return false;
+    p[answer] = true;
+    return true;
+  }
+  if (index !== 0) return false;
+  m[answer === 'saved' ? 'goalSaved' : 'goalDeclined'] = true;
+  return true;
 }
 
 // Same normalisation as a goal he already has -- deliberately the same

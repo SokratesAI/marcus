@@ -62,7 +62,7 @@ describe("asking the coach to note something about him", () => {
   it("is printed after the goal instruction and says which block comes first", () => {
     const p = buildPrompt("hi", {}, []);
     expect(p.indexOf("NOTING SOMETHING ABOUT HIM")).toBeGreaterThan(p.indexOf("WRITING A GOAL DOWN"));
-    expect(p).toContain("goal block first");
+    expect(p).toContain("the goal blocks first");
   });
 
   it("names what a profile block is not, so a single session does not become who he is", () => {

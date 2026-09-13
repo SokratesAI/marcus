@@ -3954,15 +3954,23 @@ function renderChatMessages() {
 // screen. A card with no timestamp is not drawable -- the handlers find the
 // message by `ts` -- so it renders as nothing rather than as a dead button.
 function goalProposalHtml(m) {
-  if (!m || m.role !== 'marcus' || !m.goalProposal || !m.ts) return '';
-  if (m.goalSaved) return '<span class="msg__offline">Saved as a goal.</span>';
-  if (m.goalDeclined) return '<span class="msg__offline">Not saved.</span>';
+  if (!m || !m.ts) return '';
+  // One card per goal he stated, in the order he said them. Each carries its own
+  // answer, so taking the race and leaving the ongoing aim answers only the one
+  // he tapped.
+  return goalProposalsOf(m).map((p, i) => goalProposalCardHtml(m, p, i)).join('');
+}
+
+function goalProposalCardHtml(m, proposal, index) {
+  const answer = goalAnswerOf(m, index);
+  if (answer === 'saved') return '<span class="msg__offline">Saved as a goal.</span>';
+  if (answer === 'declined') return '<span class="msg__offline">Not saved.</span>';
   // Resolved against TODAY rather than read off the stored proposal, because a
   // date that was real when the coach wrote it can be behind him by the time he
   // scrolls back to the card. `unusableDate` is then the date that was dropped
   // -- never a real day, or no longer one -- and the card says which date and
   // why instead of quietly presenting an ongoing goal he did not state.
-  const g = resolveGoalProposal(m.goalProposal, todayStr());
+  const g = resolveGoalProposal(proposal, todayStr());
   if (!g) return '';
   // Asked here as well as at the offer, for the same reason the date is: the
   // proposal is stored and the goals list moves under it. `askMarcus` drops a
@@ -3977,8 +3985,8 @@ function goalProposalHtml(m) {
       <div class="chat-goal__title">${esc(g.text)}</div>
       <div class="chat-goal__when">${when}</div>
       <div class="chat-goal__actions">
-        <button class="btn btn--filled" onclick="acceptCoachGoal(${Number(m.ts)})"><span class="material-icons-round">flag</span> Set goal</button>
-        <button class="btn btn--tonal" onclick="declineCoachGoal(${Number(m.ts)})">Not this</button>
+        <button class="btn btn--filled" onclick="acceptCoachGoal(${Number(m.ts)}, ${Number(index)})"><span class="material-icons-round">flag</span> Set goal</button>
+        <button class="btn btn--tonal" onclick="declineCoachGoal(${Number(m.ts)}, ${Number(index)})">Not this</button>
       </div>
     </div>`;
 }
@@ -3989,10 +3997,12 @@ function chatMessageAt(ts) {
   return store.get('chat', []).find(m => m && m.ts === ts) || null;
 }
 
-function acceptCoachGoal(ts) {
+function acceptCoachGoal(ts, index) {
   const msgs = store.get('chat', []);
   const m = msgs.find(x => x && x.ts === ts);
-  if (!m || !m.goalProposal || m.goalSaved || m.goalDeclined) return;
+  const i = Number(index) || 0;
+  const stored = goalProposalsOf(m)[i];
+  if (!stored || goalAnswerOf(m, i)) return;
   // The same validator the form on the Plan tab uses, so a goal the coach heard
   // and a goal Edvard typed are the same record built the same way -- including
   // the milestone phases, which are cut here and never by the model.
@@ -4001,7 +4011,7 @@ function acceptCoachGoal(ts) {
   // chat for days, and a target date that has passed in the meantime would make
   // `validateGoal` refuse the whole goal. The card he just read was drawn from
   // the same resolution, so the button does what the card in front of him says.
-  const proposal = resolveGoalProposal(m.goalProposal, todayStr());
+  const proposal = resolveGoalProposal(stored, todayStr());
   if (!proposal) return;
   // The belt to the card's brace above: the card is drawn once and a goal can
   // be added from the Plan tab in another tab of the same browser without this
@@ -4016,7 +4026,10 @@ function acceptCoachGoal(ts) {
   const result = validateGoal(proposal.text, proposal.targetDate);
   if (!result.ok) { toast(result.message); return; }
   if (!store.set('goals', store.get('goals', []).concat([result.goal]))) return;
-  m.goalSaved = true;
+  // The guard at the top of this function already established the proposal is
+  // there and unanswered, and nothing between them touches the message, so this
+  // is the unconditional stamp the single-proposal version was.
+  markGoalAnswer(m, i, 'saved');
   store.set('chat', msgs);
   renderChatMessages();
   // Redraw whatever tab is behind the sheet, so closing it does not show a
@@ -4025,11 +4038,10 @@ function acceptCoachGoal(ts) {
   toast('Goal set.');
 }
 
-function declineCoachGoal(ts) {
+function declineCoachGoal(ts, index) {
   const msgs = store.get('chat', []);
   const m = msgs.find(x => x && x.ts === ts);
-  if (!m || !m.goalProposal || m.goalSaved || m.goalDeclined) return;
-  m.goalDeclined = true;
+  if (!markGoalAnswer(m, Number(index) || 0, 'declined')) return;
   store.set('chat', msgs);
   renderChatMessages();
 }
@@ -4245,11 +4257,9 @@ async function askMarcus(text) {
       // Dropping the proposal, not the reply: the sentence around it is still
       // an answer. A goal he already has, or one he has already turned down, is not a
       // question worth asking twice.
-      const goal = parsed.goal
-        && !goalAlreadySet(parsed.goal, store.get('goals', []))
-        && !goalDeclinedBefore(parsed.goal, store.get('chat', []))
-        ? parsed.goal
-        : null;
+      const goals = parsed.goals.filter(g =>
+        !goalAlreadySet(g, store.get('goals', []))
+        && !goalDeclinedBefore(g, store.get('chat', [])));
       // And a ```profile block (issue #157), off the reply the goal fence was
       // already taken out of -- one reply can carry both, and each block has
       // to be stripped whether or not the other one was there.
@@ -4265,10 +4275,11 @@ async function askMarcus(text) {
       // bubble with cards under it. The goal sentence wins when both are
       // there, because the goal is the bigger thing he just said.
       const shown = heard.text
-        || (goal ? 'Written down — confirm it below and I will set it as your goal.' : '')
+        || (goals.length > 1 ? 'Written down — confirm the ones below and I will set them as your goals.' : '')
+        || (goals.length ? 'Written down — confirm it below and I will set it as your goal.' : '')
         || (fact ? 'Noted — confirm it below and I will remember it.' : '')
         || body.reply;
-      return { text: shown, offline: false, goal, fact };
+      return { text: shown, offline: false, goals, fact };
     }
     return marcusReplyAfterAPause(text);
   } catch {
@@ -4307,7 +4318,7 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
     if (reply.offline) msg.offline = true;
     // Only the real coach can propose a goal; the rule-based fallback has no
     // idea what was said to it.
-    if (reply.goal) msg.goalProposal = reply.goal;
+    if (reply.goals && reply.goals.length) msg.goalProposals = reply.goals;
     if (reply.fact) msg.factProposal = reply.fact;
     all.push(msg);
     store.set('chat', all);

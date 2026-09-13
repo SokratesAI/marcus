@@ -106,7 +106,7 @@ describe("parseCoachGoal", () => {
     const { ctx } = loadApp();
     const out = ctx.parseCoachGoal(`Great — August is realistic from here.\n\n${BLOCK}`);
     expect(out.text).toBe("Great — August is realistic from here.");
-    expect(out.goal).toEqual({ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    expect(out.goals).toEqual([{ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" }]);
   });
 
   // "Improve overall health and fitness" is half of what idea #209 asks for and
@@ -114,26 +114,26 @@ describe("parseCoachGoal", () => {
   it("carries an ongoing goal through with no date", () => {
     const { ctx } = loadApp();
     const out = ctx.parseCoachGoal('Noted.\n```goal\n{"text": "Get my cholesterol down", "targetDate": ""}\n```');
-    expect(out.goal).toEqual({ text: "Get my cholesterol down", targetDate: "" });
+    expect(out.goals).toEqual([{ text: "Get my cholesterol down", targetDate: "" }]);
   });
 
   // The failure to avoid is a card offering to save something he never said.
   it("returns no goal for an ordinary reply", () => {
     const { ctx } = loadApp();
-    expect(ctx.parseCoachGoal("Squats. Go.")).toEqual({ text: "Squats. Go.", goal: null });
+    expect(ctx.parseCoachGoal("Squats. Go.")).toEqual({ text: "Squats. Go.", goals: [] });
   });
 
   it("returns no goal when the block is not JSON, and still hides it", () => {
     const { ctx } = loadApp();
     const out = ctx.parseCoachGoal("Noted.\n```goal\nOlympic triathlon\n```");
-    expect(out.goal).toBeNull();
+    expect(out.goals).toEqual([]);
     expect(out.text).toBe("Noted.");
     expect(out.text).not.toContain("```");
   });
 
   it("returns no goal when the block carries no text", () => {
     const { ctx } = loadApp();
-    expect(ctx.parseCoachGoal('ok\n```goal\n{"targetDate": "2027-08-14"}\n```').goal).toBeNull();
+    expect(ctx.parseCoachGoal('ok\n```goal\n{"targetDate": "2027-08-14"}\n```').goals).toEqual([]);
   });
 
   // A model that adds fields of its own must not have them reach the store:
@@ -143,13 +143,13 @@ describe("parseCoachGoal", () => {
     const out = ctx.parseCoachGoal(
       'ok\n```goal\n{"text": "Race", "targetDate": "2027-08-14", "id": "abc", "milestones": [{"done": true}]}\n```',
     );
-    expect(out.goal).toEqual({ text: "Race", targetDate: "2027-08-14" });
+    expect(out.goals).toEqual([{ text: "Race", targetDate: "2027-08-14" }]);
   });
 
   it("leaves a fenced block that is not a goal block alone", () => {
     const { ctx } = loadApp();
     const reply = "Here:\n```js\nconsole.log(1)\n```";
-    expect(ctx.parseCoachGoal(reply)).toEqual({ text: reply, goal: null });
+    expect(ctx.parseCoachGoal(reply)).toEqual({ text: reply, goals: [] });
   });
 });
 
@@ -221,7 +221,7 @@ describe("askMarcus and the goal block", () => {
     const out = await ctx.askMarcus("I want to do Oslo Tri next August");
     expect(out.text).toBe("August is realistic.");
     expect(out.offline).toBe(false);
-    expect(out.goal).toEqual({ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    expect(out.goals).toEqual([{ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" }]);
   });
 
   it("never shows the raw block in the bubble", async () => {
@@ -237,7 +237,7 @@ describe("askMarcus and the goal block", () => {
       { id: "1", text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14", milestones: [] },
     ]);
     const out = await ctx.askMarcus("what am I training for?");
-    expect(out.goal).toBeNull();
+    expect(out.goals).toEqual([]);
     expect(out.text).toBe("Already on it.");
   });
 
@@ -246,7 +246,7 @@ describe("askMarcus and the goal block", () => {
     const { ctx } = loadApp({ fetch: coachReturning(BLOCK) });
     const out = await ctx.askMarcus("Oslo Tri next August");
     expect(out.text.length).toBeGreaterThan(0);
-    expect(out.goal).not.toBeNull();
+    expect(out.goals).toHaveLength(1);
   });
 
   // The rule-based fallback has no idea what was said to it, so it must never
@@ -255,7 +255,7 @@ describe("askMarcus and the goal block", () => {
     const { ctx } = loadApp({ fetch: async () => ({ ok: false, status: 503, json: async () => ({}) }) });
     const out = await ctx.askMarcus("what is my plan today?");
     expect(out.offline).toBe(true);
-    expect(out.goal).toBeUndefined();
+    expect(out.goals).toBeUndefined();
   });
 });
 
@@ -274,7 +274,7 @@ describe("the confirm card", () => {
     expect(html).toContain("Olympic triathlon at Oslo Tri");
     expect(html).toContain("Set goal");
     expect(html).toContain("Not this");
-    expect(html).toContain("acceptCoachGoal(1000)");
+    expect(html).toContain("acceptCoachGoal(1000, 0)");
   });
 
   it("says an ongoing goal has no target date", () => {
@@ -450,10 +450,10 @@ describe("the chat form stores the proposal on the bubble", () => {
     const marcus = msgs[msgs.length - 1];
     expect(marcus.role).toBe("marcus");
     expect(marcus.text).toBe("August works.");
-    expect(marcus.goalProposal).toEqual({
+    expect(marcus.goalProposals).toEqual([{
       text: "Olympic triathlon at Oslo Tri",
       targetDate: "2027-08-14",
-    });
+    }]);
     expect(marcus.ts).toBeTruthy();
   });
 
@@ -463,7 +463,7 @@ describe("the chat form stores the proposal on the bubble", () => {
     });
     await submit(ctx, byId, "what today?");
     const msgs = ctx.store.get("chat", []);
-    expect(msgs[msgs.length - 1]).not.toHaveProperty("goalProposal");
+    expect(msgs[msgs.length - 1]).not.toHaveProperty("goalProposals");
   });
 });
 
@@ -482,7 +482,7 @@ describe("askMarcus and a goal he already turned down", () => {
       },
     ]);
     const out = await ctx.askMarcus("tell me about triathlon");
-    expect(out.goal).toBeNull();
+    expect(out.goals).toEqual([]);
     expect(out.text).toBe("Still worth doing.");
   });
 
@@ -497,7 +497,7 @@ describe("askMarcus and a goal he already turned down", () => {
       },
     ]);
     const out = await ctx.askMarcus("tell me about triathlon");
-    expect(out.goal).toEqual({ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    expect(out.goals).toEqual([{ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" }]);
   });
 
   it("sends the declined texts up to the coach as context", async () => {
@@ -536,7 +536,7 @@ describe("a proposed date the app cannot use", () => {
     const { ctx } = loadApp({ now });
     return ctx.parseCoachGoal(
       `Noted.\n\`\`\`goal\n{"text": "Olympic triathlon at Oslo Tri", "targetDate": "${date}"}\n\`\`\``,
-    ).goal;
+    ).goals[0] ?? null;
   }
 
   it("drops a date already behind him and keeps the goal", () => {
@@ -691,5 +691,142 @@ describe("a proposed date that goes stale before he answers", () => {
     const { ctx } = loadApp({ now: new Date("2026-09-16T07:00:00") });
     expect(ctx.resolveGoalProposal(null, "2026-09-16")).toBeNull();
     expect(ctx.resolveGoalProposal({ text: "  ", targetDate: "2027-01-01" }, "2026-09-16")).toBeNull();
+  });
+});
+
+// Idea #209 asks for "one or more goals", and on 2026-09-07 Edvard stated three
+// things in one message: a sprint triathlon, an Olympic at Oslo Tri next August,
+// and his doctor's cholesterol note. A single-match parser took the first block
+// and left the rest of them in the bubble as raw JSON, so the two failures these
+// drive are both real: a goal he stated silently dropped, and the thing the
+// stripper exists to prevent happening to the ones after the first.
+const SECOND_BLOCK = '```goal\n{"text": "Get my cholesterol down", "targetDate": ""}\n```';
+
+describe("more than one goal in one reply", () => {
+  it("returns every goal and leaves no block in the bubble", () => {
+    const { ctx } = loadApp();
+    const out = ctx.parseCoachGoal(`Both of those are real goals.\n\n${BLOCK}\n${SECOND_BLOCK}`);
+    expect(out.text).toBe("Both of those are real goals.");
+    expect(out.text).not.toContain("```");
+    expect(out.text).not.toContain("cholesterol");
+    expect(out.goals).toEqual([
+      { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" },
+      { text: "Get my cholesterol down", targetDate: "" },
+    ]);
+  });
+
+  // The blocks are judged one at a time: a model that writes the first one badly
+  // must not take the second goal down with it.
+  it("keeps a good second block when the first one is not JSON", () => {
+    const { ctx } = loadApp();
+    const out = ctx.parseCoachGoal(`Noted.\n\n\`\`\`goal\nOlympic triathlon\n\`\`\`\n${SECOND_BLOCK}`);
+    expect(out.goals).toEqual([{ text: "Get my cholesterol down", targetDate: "" }]);
+    expect(out.text).toBe("Noted.");
+    expect(out.text).not.toContain("```");
+  });
+
+  it("collapses two blocks for the same goal into one card", () => {
+    const { ctx } = loadApp();
+    const out = ctx.parseCoachGoal(`Yes.\n\n${BLOCK}\n${BLOCK}`);
+    expect(out.goals).toHaveLength(1);
+  });
+
+  it("draws a card per goal, each with its own index", () => {
+    const { ctx, byId } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+    ctx.store.set("chat", [{
+      role: "marcus",
+      text: "Both of those are real goals.",
+      ts: 1000,
+      goalProposals: [
+        { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" },
+        { text: "Get my cholesterol down", targetDate: "" },
+      ],
+    }]);
+    ctx.renderChatMessages();
+    const html = byId.chatMessages.innerHTML;
+    expect(html).toContain("Olympic triathlon at Oslo Tri");
+    expect(html).toContain("Get my cholesterol down");
+    expect(html).toContain("acceptCoachGoal(1000, 0)");
+    expect(html).toContain("acceptCoachGoal(1000, 1)");
+    expect(html).toContain("declineCoachGoal(1000, 1)");
+  });
+
+  // The separating case for per-proposal answers: taking the second goal must
+  // save that one and leave the first still offered. A message-level flag saved
+  // whichever goal was first and closed the card on the other.
+  it("saves only the goal he tapped and leaves the other answerable", () => {
+    const { ctx, byId } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+    ctx.store.set("chat", [{
+      role: "marcus",
+      text: "Both.",
+      ts: 1000,
+      goalProposals: [
+        { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" },
+        { text: "Get my cholesterol down", targetDate: "" },
+      ],
+    }]);
+    ctx.acceptCoachGoal(1000, 1);
+    const goals = ctx.store.get("goals", []);
+    expect(goals.map((g: any) => g.text)).toEqual(["Get my cholesterol down"]);
+    const stored = ctx.store.get("chat", [])[0];
+    expect(stored.goalProposals[1].saved).toBe(true);
+    expect(stored.goalProposals[0].saved).toBeUndefined();
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).toContain("acceptCoachGoal(1000, 0)");
+  });
+
+  it("answers a proposal exactly once", () => {
+    const { ctx } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+    ctx.store.set("chat", [{
+      role: "marcus",
+      text: "Both.",
+      ts: 1000,
+      goalProposals: [
+        { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" },
+        { text: "Get my cholesterol down", targetDate: "" },
+      ],
+    }]);
+    ctx.acceptCoachGoal(1000, 0);
+    ctx.acceptCoachGoal(1000, 0);
+    expect(ctx.store.get("goals", [])).toHaveLength(1);
+    ctx.declineCoachGoal(1000, 0);
+    expect(ctx.store.get("chat", [])[0].goalProposals[0].declined).toBeUndefined();
+  });
+
+  // What goes up to the coach so it stops re-raising a card he said no to. Only
+  // the one he declined, never the one sitting beside it unanswered.
+  it("reports only the declined proposal to the coach", () => {
+    const { ctx } = loadApp();
+    const chat = [{
+      role: "marcus",
+      text: "Both.",
+      ts: 1000,
+      goalProposals: [
+        { text: " Olympic triathlon at Oslo Tri ", targetDate: "2027-08-14", declined: true },
+        { text: "Get my cholesterol down", targetDate: "" },
+      ],
+    }];
+    expect(ctx.declinedGoalTexts(chat)).toEqual(["Olympic triathlon at Oslo Tri"]);
+    expect(ctx.goalDeclinedBefore({ text: "olympic triathlon at OSLO tri" }, chat)).toBe(true);
+    expect(ctx.goalDeclinedBefore({ text: "Get my cholesterol down" }, chat)).toBe(false);
+  });
+
+  it("drops only the goal he already has and keeps the other", async () => {
+    const { ctx } = loadApp({
+      fetch: async () => ({ ok: true, json: async () => ({ reply: `Both.\n\n${BLOCK}\n${SECOND_BLOCK}` }) }),
+    });
+    ctx.store.set("goals", [
+      { id: "1", text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14", milestones: [] },
+    ]);
+    const out = await ctx.askMarcus("what am I training for?");
+    expect(out.goals).toEqual([{ text: "Get my cholesterol down", targetDate: "" }]);
+  });
+
+  it("says so in the plural when the reply was nothing but two blocks", async () => {
+    const { ctx } = loadApp({
+      fetch: async () => ({ ok: true, json: async () => ({ reply: `${BLOCK}\n${SECOND_BLOCK}` }) }),
+    });
+    const out = await ctx.askMarcus("Oslo Tri next August, and my cholesterol");
+    expect(out.text).toContain("them as your goals");
   });
 });
