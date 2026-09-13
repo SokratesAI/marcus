@@ -2442,23 +2442,24 @@ function parseCoachGoal(reply, todayISO) {
   // or an `id` of its own must not have them reach the store -- validateGoal
   // mints both, and a goal is only ever built there.
   const targetDate = String(parsed.targetDate == null ? '' : parsed.targetDate).trim();
-  // The date the model wrote is checked HERE, not when he taps Set goal.
-  // `acceptCoachGoal` runs the proposal through `validateGoal`, so a date that
-  // is not a real day, or is not in the future, made the card's own button
-  // impossible: tap, toast, tap again, same toast, and the goal he had just
-  // stated in the chat was never savable at all. The instruction asks the model
-  // for `YYYY-MM-DD` and it does not always comply, and it is working from a
-  // training cutoff months behind today -- `Oslo Tri next August` pinned to the
-  // August that has already passed is the ordinary case, not the exotic one.
-  //
-  // So an unusable date becomes no date. The goal itself is still his and still
-  // worth saving: an ongoing goal is a real goal here, the card says the date
-  // was dropped and why, and the Plan tab's edit form is where the day goes in.
-  // Carrying the raw string back is what lets the card say which date it was.
+  // The date the model wrote is checked HERE as well as when he taps Set goal,
+  // by the one function below. The instruction asks the model for `YYYY-MM-DD`
+  // and it does not always comply, and it reasons from a training cutoff months
+  // behind today -- `Oslo Tri next August` pinned to the August already behind
+  // him is the ordinary case, not the exotic one.
   return { text, goal: resolveGoalProposal({ text: goalText, targetDate }, todayISO) };
 }
 
-// The same question, asked again on the day he actually answers the card.
+// A proposal's date, resolved against a day -- the day the reply landed when
+// `parseCoachGoal` asks, and the day he taps when the card asks.
+//
+// An unusable date becomes no date, never a refused goal. `acceptCoachGoal`
+// runs the proposal through `validateGoal`, so a date that is not a real day or
+// is not in the future made the card's own button impossible: tap, toast, tap
+// again, same toast, and the goal he had just stated in the chat had no way
+// into the store at all. The goal is still his and still worth saving -- an
+// ongoing goal is a real goal here -- and the raw string comes back as
+// `unusableDate` so the card can say which date it lost and where the day goes.
 //
 // `parseCoachGoal` checks the model's date the moment the reply lands. The card
 // is drawn from the stored message, deliberately, so it outlives that reply --
