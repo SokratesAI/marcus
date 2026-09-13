@@ -46,6 +46,10 @@ export interface CoachContext {
   weights?: unknown[];
   meals?: unknown[];
   goals?: unknown[];
+  /** Free text Edvard wrote about himself: age, history, injuries, how active
+   * he is. Stored by the app under `profile` and synced like the rest, so it
+   * follows him to another phone the way his chat history does not. */
+  profile?: unknown;
   /** Not part of the store. The texts of goals the coach proposed and Edvard
    * turned down, which nothing else in this prompt can carry -- see
    * `declinedGoals()` below. */
@@ -187,6 +191,27 @@ function declinedGoals(texts: unknown[]): string {
     .join("\n");
 }
 
+// A cap with a danger behind it rather than a tidiness one, same as the two
+// above: this block is re-sent on every turn. 2,000 characters is a long
+// paragraph about a person and about five hundred tokens; what it protects
+// against is a box somebody pastes a document into.
+export const MAX_PROFILE_CHARS = 2000;
+
+/** What Edvard has written about himself, trimmed and capped.
+ *
+ * Anything that is not a non-empty string comes back as `""` -- the caller
+ * decides whether to print a section at all, so an empty profile adds no
+ * heading rather than a heading with nothing under it. Over-long text is cut
+ * at the cap and the cut is stated in the prompt rather than hidden, because a
+ * model reading half a sentence with no warning will finish it itself. */
+export function aboutHim(profile: unknown, budget: number = MAX_PROFILE_CHARS): { text: string; truncated: boolean } {
+  if (typeof profile !== "string") return { text: "", truncated: false };
+  const trimmed = profile.trim();
+  if (trimmed === "") return { text: "", truncated: false };
+  if (trimmed.length <= budget) return { text: trimmed, truncated: false };
+  return { text: trimmed.slice(0, budget).trimEnd(), truncated: true };
+}
+
 /** The prompt is built here and not in the browser, so what reaches the model
  * is decided in one place and is testable.
  *
@@ -221,6 +246,21 @@ export function buildPrompt(
       1,
     ),
   ];
+  // Above the goal standings and the history on purpose: this is who he is,
+  // and everything below it is what he has been doing.
+  const about = aboutHim(context.profile);
+  if (about.text) {
+    parts.push(
+      "ABOUT EDVARD",
+      [
+        "What he has told the app about himself. Treat it as established fact he does not have to repeat, and do not ask him for anything it already answers.",
+        about.truncated ? "It is longer than this and has been cut off here." : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      about.text,
+    );
+  }
   const standing = goalStandings(context.goals ?? [], day);
   if (standing) parts.push("WHERE EACH GOAL STANDS TODAY", standing);
   const earlier = earlierInHisWords(history);

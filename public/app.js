@@ -115,6 +115,28 @@ function renderHome() {
 }
 
 // ---------- plan ----------
+// On 2026-09-07 Edvard typed several paragraphs of his training background into
+// the chat -- semi-active, born 1994, a 2020 covid history -- and Marcus
+// answered "Skal se om jeg har notert noe om deg fra for, sa jeg ikke
+// overskriver det jeg allerede vet." There was nowhere to note it. His chat
+// history is browser-local and the coach's window over it is capped, so the one
+// thing that should never age out was the thing with the shortest life. This is
+// the place it lives now: one free-text record, synced with everything else.
+//
+// It is stamped rather than a bare string so two phones editing it merge by
+// time instead of by whichever synced last -- `mergeBackupData` keys on that.
+function profileText() {
+  const p = store.get('profile', null);
+  if (typeof p === 'string') return p;          // an older browser's shape
+  if (p && typeof p === 'object' && typeof p.text === 'string') return p.text;
+  return '';
+}
+
+function saveProfile(text, nowISO) {
+  const t = String(text == null ? '' : text).trim();
+  return store.set('profile', { text: t, updatedAt: Date.parse(nowISO || new Date().toISOString()) });
+}
+
 // Goals sit above the week because the week is supposed to serve them. The
 // phases under a goal are arithmetic on the dates the user typed -- Marcus says
 // so on the card rather than passing them off as coaching.
@@ -147,6 +169,13 @@ function renderPlan() {
       <div class="field"><label>Target date (leave empty for an ongoing goal)</label><input id="goalDate" type="date" value="${editing ? esc(editing.targetDate || '') : ''}"></div>
       <button class="btn btn--filled btn--block" id="addGoal"><span class="material-icons-round">flag</span> ${editing ? 'Save changes' : 'Set goal'}</button>
       ${editing ? `<button class="btn btn--tonal btn--block" style="margin-top:8px" id="cancelGoalEdit">Cancel</button>` : ``}
+    </div>
+
+    <div class="section-title">About you</div>
+    <div class="card">
+      <p class="card__note">Marcus reads this on every message. Age, injuries, illnesses, how active you are, anything you would otherwise have to repeat.</p>
+      <div class="field"><label>What Marcus should know about you</label><textarea id="profileText" rows="5" placeholder="e.g. Born 1994, semi-active. Had covid in 2020 and my endurance never fully came back.">${esc(profileText())}</textarea></div>
+      <button class="btn btn--tonal btn--block" id="saveProfile"><span class="material-icons-round">person</span> Save</button>
     </div>
 
     <div class="section-title">Marcus suggests</div>
@@ -216,6 +245,11 @@ function renderPlan() {
     if (!store.set('goals', next)) return;
     goalEditId = null;
     renderPlan();
+  });
+
+  document.getElementById('saveProfile').addEventListener('click', () => {
+    if (!saveProfile(document.getElementById('profileText').value)) return;
+    toast('Marcus will read that from now on.');
   });
 
   if (editing) document.getElementById('cancelGoalEdit').addEventListener('click', () => { goalEditId = null; renderPlan(); });
@@ -3136,7 +3170,7 @@ function renderProgress() {
 const BACKUP_VERSION = 1;
 // Every store key the app writes. `chat` is in here because the coach's memory
 // of the conversation is data the user would miss, not chrome.
-const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'chat', 'deletions', 'plannedWeeks'];
+const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'chat', 'deletions', 'plannedWeeks', 'profile'];
 
 // The three stores the app can delete from, and the reason this list is three
 // names rather than every store: `deleteSession`, `deleteMeal` and `deleteGoal`
@@ -3613,6 +3647,11 @@ function mergeBackupData(mine, theirs) {
       return;
     }
     if (k === 'plan' && k in a && k in b) { out[k] = newerPlan(a[k], b[k]); return; }
+    // Same rule as `plan` and for the same reason: `profile` is one record two
+    // phones can both edit, so "this browser wins" would silently drop whatever
+    // he typed on the other one. It carries its own `updatedAt`, so the newer
+    // text wins instead.
+    if (k === 'profile' && k in a && k in b) { out[k] = newerPlan(a[k], b[k]); return; }
     if (k in a) out[k] = a[k];
     else if (k in b) out[k] = b[k];
   });
@@ -4119,6 +4158,10 @@ async function askMarcus(text) {
           weights: store.get('weights', []),
           meals: store.get('meals', []),
           goals: store.get('goals', []),
+          // What he wrote about himself on the Plan tab. Sent as the text, not
+          // the stamped record -- the stamp is a sync detail the coach has no
+          // use for.
+          profile: profileText(),
           // Not part of the store: the texts of goals he was offered and
           // turned down, so the coach does not offer them again.
           declinedGoals: declinedGoalTexts(store.get('chat', [])),
