@@ -60,7 +60,8 @@ const niceDate = (iso, todayISO) => {
   // passing something that is not a date at all. Three chart axes reached
   // this as `.map(niceDate)`, which hands the array INDEX to the second
   // parameter -- `new Date('0T00:00')` is Invalid Date, `getFullYear()` is
-  // NaN, and NaN never equals anything, so every label printed a year. The
+  // NaN, and NaN never equals anything, so every label after the first one
+  // printed a year -- index 0 is falsy and was accidentally spared. The
   // call sites pass one argument now; this is the second line of defence.
   const now = typeof todayISO === 'string' && todayISO ? new Date(todayISO + 'T00:00') : new Date();
   const opts = { weekday: 'short', month: 'short', day: 'numeric' };
