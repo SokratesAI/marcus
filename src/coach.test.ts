@@ -5,7 +5,7 @@ import path from "node:path";
 import request from "supertest";
 import { createApp } from "./index.js";
 import { StateStore } from "./state-store.js";
-import { askCoach, buildPrompt, coachConfig, osloDate, MAX_HISTORY_TURNS } from "./coach.js";
+import { askCoach, buildPrompt, coachConfig, osloDate, stripToolUseMarkers, MAX_HISTORY_TURNS } from "./coach.js";
 
 const CONFIG = { baseUrl: "http://agora.test:8080", conversationId: "conv-1" };
 
@@ -284,5 +284,38 @@ describe("POST /api/chat", () => {
     const app = createApp(store, undefined, { fetchImpl, coach: CONFIG });
     const res = await request(app).post("/api/chat").send({ message: "hi" });
     expect(res.status).toBe(502);
+  });
+});
+
+// Measured on Edvard's own synced chat log (GET /api/state, 2026-09-13): the
+// last coach turn he ever received, on 2026-09-07T20:32Z, was one sentence
+// followed by `**1 tool use**` and nothing else. The marker is the Claude
+// CLI's transcript placeholder for a tool call, not something the coach said.
+describe("a tool-use marker in the reply", () => {
+  it("is stripped off, leaving the sentence the coach actually wrote", async () => {
+    const { fetchImpl } = fakeAgora(
+      "claude-cli:claude-sonnet-5",
+      "Skal se om jeg har notert noe om deg fra før.\n\n**1 tool use**",
+    );
+    const result = await askCoach("Bakgrunnen min er at jeg er semi-aktiv.", {}, [], {
+      config: CONFIG,
+      fetch: fetchImpl,
+    });
+    expect(result).toEqual({ status: "ok", reply: "Skal se om jeg har notert noe om deg fra før." });
+  });
+
+  it("counts as no reply at all when the marker is the whole turn", async () => {
+    const { fetchImpl } = fakeAgora("claude-cli:claude-sonnet-5", "**2 tool uses**\n");
+    const result = await askCoach("Hva skal jeg gjøre i dag?", {}, [], {
+      config: CONFIG,
+      fetch: fetchImpl,
+    });
+    expect(result).toEqual({ status: "upstream", detail: "ask returned only a tool-use marker" });
+  });
+
+  it("leaves a sentence that merely talks about tool use alone", () => {
+    const spoken = "I made 1 tool use to check your log, and **1 tool use** is all it took.";
+    expect(stripToolUseMarkers(spoken)).toBe(spoken);
+    expect(stripToolUseMarkers("Bench is up.\n**1 tool used**")).toBe("Bench is up.\n**1 tool used**");
   });
 });
