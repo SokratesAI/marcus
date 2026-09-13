@@ -71,6 +71,13 @@ function renderHome() {
   // Home still drew a bench-press day for a man who had told Marcus he runs and
   // rides. So the card stands on the plan alone, not only on the row counts.
   const planDemo = planIsDemo();
+  const planEmpty = planIsEmpty();
+  // Only a goal that is still ahead can be drafted from: `draftGoals` is the
+  // exact list `fetchWeekDraft` sends, and `homeGoal` deliberately falls back to
+  // a goal whose day has gone so Home can ask what is next. Offering to draft a
+  // week from a race that has been and gone would send the coach an empty goal
+  // list and get back the generic week he just cleared.
+  const canDraft = planEmpty && !!draftGoals().length;
 
   view.innerHTML = `
     ${demo.length || planDemo ? demoNoticeCard(demo, planDemo) : ``}
@@ -82,6 +89,14 @@ function renderHome() {
       ${doneToday ? `<div class="exercise-line exercise-line--done"><span><span class="material-icons-round">check_circle</span> Logged today</span><span>${esc(doneToday.label)}</span></div>` : ``}
       <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="switchTab('log')"><span class="material-icons-round">add</span> ${doneToday ? 'Log another session' : 'Log this session'}</button>
     </div>
+
+    ${canDraft ? `
+    <div class="card">
+      <div class="card__title-row"><h2>Your week is empty</h2><span class="chip">nothing planned</span></div>
+      <p class="card__note">Marcus can write a full week from ${esc(nextGoal.text)} and your own log. Nothing changes until you accept it.</p>
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="draftFromHome()"><span class="material-icons-round">auto_awesome</span> Draft my week</button>
+      <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="switchTab('plan')">Or write it yourself</button>
+    </div>` : ``}
 
     <div class="stat-grid">
       <div class="stat"><div class="stat__value">${weekSessions().length}</div><div class="stat__label">sessions this wk</div></div>
@@ -107,7 +122,7 @@ function renderHome() {
     <div class="section-title">Next goal</div>
     <div class="card">
       <h2>What are you training for?</h2>
-      <p class="card__note">Marcus does not know yet, so this week is a generic one. Say it in your own words — "Olympic triathlon next August" is enough — and he writes it down and cuts the phases from the date.</p>
+      <p class="card__note">${planEmpty ? 'Marcus does not know yet, and your week is empty.' : 'Marcus does not know yet, so this week is a generic one.'} Say it in your own words — "Olympic triathlon next August" is enough — and he writes it down and cuts the phases from the date.</p>
       <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="openChat('goal')"><span class="material-icons-round">chat</span> Tell Marcus</button>
       <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="switchTab('plan')">Or type it in yourself</button>
     </div>`}
@@ -3459,6 +3474,27 @@ function planIsDemo() {
   const plan = store.get('plan', null);
   return !!plan && JSON.stringify(plan) === JSON.stringify(demoPlanTemplate());
 }
+
+// Is the week on screen empty? This is the state clearing the demo data leaves
+// him in: `emptyPlanTemplate` writes seven Open days with nothing in them, and
+// the one button that fills them again -- Draft my week -- lives on the Plan
+// tab under the suggestions and the research block. He has twice failed to find
+// a button one tab away (the full clear on Progress, Cycles 1493 and 1494), so
+// Home has to carry this one.
+// Empty means no day holds any work at all. One exercise anywhere makes it his
+// week, however thin, and nothing should offer to write over it. A browser with
+// no plan is not empty either -- `seedShell` rewrites a missing plan on the next
+// boot, so that case never reaches him.
+function planIsEmpty() {
+  const days = (store.get('plan', null) || {}).days;
+  if (!Array.isArray(days) || !days.length) return false;
+  return days.every(d => !(d.exercises || []).length && !d.cardio);
+}
+
+// Draft my week paints its result on the Plan tab -- `requestDraft` calls
+// `renderPlan` directly -- so the tab has to change before the request goes out,
+// or the draft card is painted over Home and the busy state never shows.
+function draftFromHome() { switchTab('plan'); requestDraft(); }
 
 // Armed, not persisted: a confirm is about the tap that is happening now, so a
 // reload should land back on the question rather than on the answer.
