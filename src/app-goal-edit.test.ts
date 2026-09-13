@@ -90,8 +90,9 @@ describe("editing a goal", () => {
     const app = loadApp();
     const r = run(app, `validateGoalEdit(${DATED}, 'Olympic triathlon', '2027-07-05', '2026-09-12')`);
     expect(r.ok).toBe(true);
-    expect(r.goal.milestones.map((m: any) => m.label)).toEqual(["Base", "Build", "Peak", "Taper"]);
-    // Cut from 2026-09-01, so Base ends 40% of the way through a 307-day span.
+    expect(r.goal.milestones.map((m: any) => m.label)).toEqual(["Base", "Build", "Base", "Build", "Peak", "Taper"]);
+    // Cut from 2026-09-01, so Base ends 40% of what is left of a 307-day span
+    // once Peak and Taper have taken their ceilings.
     // Cut from today instead and Base would end later than this, because the
     // window would start eleven days further on.
     const fromCreated = run(app, "buildMilestones('2026-09-01', '2027-07-05')");
@@ -100,6 +101,9 @@ describe("editing a goal", () => {
     expect(r.goal.milestones[0].date).not.toBe(fromToday[0].date);
     // The ticks survive the re-cut, matched by phase label.
     expect(r.goal.milestones.filter((m: any) => m.done).map((m: any) => m.label)).toEqual(["Base", "Build"]);
+    // And they land on the FIRST Base and Build, not on both of each: the two
+    // ticked phases were the only two the goal had before the re-cut.
+    expect(r.goal.milestones.map((m: any) => m.done)).toEqual([true, true, false, false, false, false]);
   });
 
   it("drops the phases when the goal becomes ongoing, and rebuilds them when a date comes back", () => {

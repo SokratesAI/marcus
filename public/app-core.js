@@ -1888,6 +1888,24 @@ const GOAL_PHASES = [
   { label: 'Taper', share: 0.08, note: 'Cut volume, keep intensity, arrive fresh.' }
 ];
 
+// Peak and Taper are windows, not fractions. Sharpening and arriving fresh take
+// about the same number of weeks whether the race is four months away or eleven,
+// so a share of the whole horizon stretches them past anything a coach would
+// write: at eleven months the shares above give an 8-week Peak and a 4-week
+// Taper, and four weeks of cut volume is detraining, not a taper. These are the
+// ceilings; under them the shares still decide, which is why a 12-week or a
+// 6-month goal comes out with the phase lengths it had before.
+const PEAK_MAX_DAYS = 42;
+const TAPER_MAX_DAYS = 21;
+// The ceiling on one Base or Build block. Past it a block stops being something
+// you can steer by -- nothing changes for five months and every week reads the
+// same. So a long horizon repeats the Base-then-Build pair instead of stretching
+// one of each: eleven months becomes Base, Build, Base, Build, Peak, Taper at
+// about ten weeks a block, rather than a 19-week Base followed by a 17-week
+// Build. The labels stay the four PHASE_VOLUME knows -- the repeat is said in
+// the note, because a fifth label would be a phase multiplier nothing defines.
+const PHASE_MAX_DAYS = 84;
+
 // ---------- training-science references (idea #214) ----------
 // Edvard asked for recent Norwegian endurance-science research behind the plan
 // proposals. Marcus has no model behind it, so these are written down rather
@@ -2342,9 +2360,39 @@ function overlapsAny(spans, start, end) {
   return spans.some(function (s) { return start < s.end && s.start < end; });
 }
 
-// Phase ends are cumulative shares of the whole window rather than per-phase
-// lengths added up, so the last one lands exactly on the target date instead of
-// four roundings away from it.
+// The four phases in order, as a share each, with Peak and Taper held under
+// their ceilings and the Base/Build pair repeated as many times as the space
+// left needs. Shares within a repeat keep the 40:35 ratio the constants give.
+function phasePlanFor(span) {
+  const [base, build, sharpen, arrive] = GOAL_PHASES;
+  const peak = Math.min(Math.round(span * sharpen.share), PEAK_MAX_DAYS);
+  const taper = Math.min(Math.round(span * arrive.share), TAPER_MAX_DAYS);
+  const rest = span - peak - taper;
+  // Renormalised, so the pair splits what is left in the same 40:35 the table
+  // gives rather than in a second copy of those numbers written out here.
+  const pair = base.share + build.share;
+  const baseShare = base.share / pair, buildShare = build.share / pair;
+  // Base is the longer half of the pair, so it is the one that decides how many
+  // pairs the space needs. Dividing the whole remainder by two blocks instead
+  // would let Base run past the ceiling -- at two years that is an 89-day Base
+  // under an 84-day cap, which is a cap that does not cap.
+  const blocks = Math.max(1, Math.ceil((rest * baseShare) / PHASE_MAX_DAYS));
+  const out = [];
+  for (let b = 0; b < blocks; b++) {
+    const of = blocks > 1 ? ' (block ' + (b + 1) + ' of ' + blocks + ')' : '';
+    out.push({ label: base.label, days: (rest / blocks) * baseShare, note: base.note + of });
+    out.push({ label: build.label, days: (rest / blocks) * buildShare, note: build.note + of });
+  }
+  out.push({ label: sharpen.label, days: peak, note: sharpen.note });
+  out.push({ label: arrive.label, days: taper, note: arrive.note });
+  return out;
+}
+
+// Phase ends are cumulative rather than per-phase lengths added up, so the last
+// one lands exactly on the target date instead of several roundings away from it.
+// That is why there is no special case for the final phase: the lengths
+// phasePlanFor hands back sum to the span, so the running total reaches it on
+// its own and rounding only ever removes float dust.
 function buildMilestones(startISO, targetISO) {
   const span = daysBetween(startISO, targetISO);
   if (!Number.isFinite(span) || span < 1) return [];
@@ -2352,10 +2400,11 @@ function buildMilestones(startISO, targetISO) {
     return [{ id: uid(), label: 'Build', note: 'Too short to periodise — one straight run at it.', date: targetISO, done: false }];
   }
   const start = new Date(startISO + 'T00:00');
+  const plan = phasePlanFor(span);
   let cumulative = 0;
-  return GOAL_PHASES.map((phase, i) => {
-    cumulative += phase.share;
-    const offset = i === GOAL_PHASES.length - 1 ? span : Math.round(span * cumulative);
+  return plan.map((phase) => {
+    cumulative += phase.days;
+    const offset = Math.round(cumulative);
     const end = new Date(start);
     end.setDate(end.getDate() + offset);
     return { id: uid(), label: phase.label, note: phase.note, date: fmtDate(end), done: false };
@@ -2458,13 +2507,20 @@ function validateGoalEdit(existing, rawText, rawDate, todayISO) {
   return { ok: true, goal };
 }
 
-// Phases are matched by label, which is the only stable thing about them: the
-// ids are fresh on every cut and the dates are what changed. An ongoing goal
-// has no phases at all, so nothing is carried into one.
+// Phases are matched by label and by which one of that label it is, which is
+// the only stable thing about them: the ids are fresh on every cut and the
+// dates are what changed. The occurrence is what stops a ticked first Base
+// ticking the second one too on a long goal, where the Base/Build pair repeats.
+// An ongoing goal has no phases at all, so nothing is carried into one.
 function carryMilestonesDone(fresh, previous) {
-  const done = {};
-  (Array.isArray(previous) ? previous : []).forEach(m => { if (m && m.done) done[m.label] = true; });
-  return fresh.map(m => (done[m.label] ? Object.assign({}, m, { done: true }) : m));
+  const seen = {}, done = {};
+  const key = m => {
+    const n = (seen[m.label] = (seen[m.label] || 0) + 1);
+    return m.label + '#' + n;
+  };
+  (Array.isArray(previous) ? previous : []).forEach(m => { if (m) { const k = key(m); if (m.done) done[k] = true; } });
+  Object.keys(seen).forEach(l => { delete seen[l]; });
+  return fresh.map(m => (done[key(m)] ? Object.assign({}, m, { done: true }) : m));
 }
 
 // ---------- endurance work inside the written week ----------
