@@ -251,6 +251,17 @@ export async function coachPhases(
   // day.
   const start = isoDay(g.created) ?? isoDay(deps.today) ?? target;
   const todayISO = isoDay(deps.today) ?? start;
+  // A race day that has gone is not a short span, it is no span at all. The
+  // card still renders such a goal -- `goalsSorted` shows every goal and
+  // `homeGoal` deliberately keeps handing one back so Home can ask what is
+  // next -- so without this the button spends a model call and gets back four
+  // phases that all ended before today. `phaseDates` accepts them (their last
+  // one is pinned onto the target, which is what the accept gate checks), the
+  // goal then reads "phases shaped by Marcus", and `currentPhase`,
+  // `phasePosition` and `raceCalendar` all find nothing in them.
+  if (target < todayISO) {
+    return { status: "unusable", reason: "that goal's target date has passed" };
+  }
   if (daysBetween(start, target) < PHASE_MIN_SPAN_DAYS) {
     return { status: "unusable", reason: "this goal is too close to periodise" };
   }

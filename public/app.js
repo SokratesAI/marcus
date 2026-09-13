@@ -432,6 +432,10 @@ function goalPhaseSubtitle(g) {
  * nothing to periodise. */
 function goalPhasesAskable(g, todayISO) {
   if (!g || !g.targetDate) return false;
+  // The card is drawn for every goal, including ones whose race day has gone,
+  // so the span alone is not enough: a goal set in January for a race in
+  // August is 200-odd days wide and entirely behind him.
+  if (g.targetDate < todayISO) return false;
   const from = g.created || todayISO;
   return daysBetween(from, g.targetDate) >= 28;
 }

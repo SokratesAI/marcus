@@ -198,6 +198,27 @@ describe("coachPhases refuses before it spends a model call", () => {
     expect(result).toEqual({ status: "unusable", reason: "this goal is too close to periodise" });
   });
 
+  it("refuses a goal whose race day has already gone, without asking", async () => {
+    // Wide enough to clear the four-week bar twice over, and entirely behind
+    // him: the span check alone lets this through and the phases it would get
+    // back all end before today.
+    let asked = false;
+    const result = await coachPhases({ text: "Spring marathon", targetDate: "2026-08-01", created: "2026-01-01" }, {}, {
+      config: { baseUrl: "http://agora", conversationId: "c1" },
+      fetch: (() => { asked = true; throw new Error("should not be called"); }) as unknown as typeof globalThis.fetch,
+      today: "2026-09-13",
+    });
+    expect(result).toEqual({ status: "unusable", reason: "that goal's target date has passed" });
+    expect(asked).toBe(false);
+  });
+
+  it("still shapes a goal whose target day is today", async () => {
+    // The boundary is "passed", not "not ahead": a block can end this morning.
+    const result = await coachPhases({ text: "Race today", targetDate: "2026-09-13", created: "2026-01-01" }, {}, DEPS(
+      '{"phases":[{"label":"Base","note":"Easy miles.","weeks":8},{"label":"Peak","note":"Sharpen.","weeks":4}],"note":"ok"}'));
+    expect(result.status).toBe("ok");
+  });
+
   it("refuses a body that is not a goal", async () => {
     expect(await coachPhases(null, {}, DEPS(""))).toEqual({ status: "unusable", reason: "that is not a goal" });
   });
