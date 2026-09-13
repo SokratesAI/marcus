@@ -441,12 +441,23 @@ function phaseBlock(weeks, plannedStarts) {
   const rows = weeks || [];
   if (rows.length < 2 || !rows[0] || !rows[0].phase) return [];
   const planned = plannedStarts || [];
+  // The phases after this week, in order, until one of them has an undrafted
+  // week in it. Stopping at the end of THIS phase made the button vanish the
+  // moment the phase was fully drafted, and the next phase's weeks were then
+  // reachable only one per-row tap at a time -- which is the opposite of
+  // cutting the plan as a block. A block is never mixed: it rolls on only
+  // while it is still empty, so what he taps is always one whole phase.
   const block = [];
+  let phase = rows[0].phase;
   for (let i = 1; i < rows.length; i++) {
     // A row whose Monday is still in this phase belongs to it even when the
     // next phase starts inside that week (`then`), which is why the phase name
     // decides and the `then` field does not.
-    if (!rows[i] || rows[i].phase !== rows[0].phase) break;
+    if (!rows[i] || !rows[i].phase) break;
+    if (rows[i].phase !== phase) {
+      if (block.length) break;
+      phase = rows[i].phase;
+    }
     if (planned.indexOf(rows[i].start) === -1) block.push(rows[i]);
   }
   return block;
@@ -460,8 +471,14 @@ function phaseBlock(weeks, plannedStarts) {
 function phaseBlockLabel(weeks, block) {
   if (!block || !block.length) return '';
   const many = block.length === 1 ? '1 week' : block.length + ' weeks';
-  return weeks[0].ongoing ? 'Draft the next ' + many
-                          : 'Draft the rest of the ' + weeks[0].phase + ' phase (' + many + ')';
+  if (weeks[0].ongoing) return 'Draft the next ' + many;
+  // "the rest of" is only true while the block is the phase he is standing in.
+  // Once this phase is drafted the block rolls on to the next one, and that is
+  // the whole of it, so the button has to say which phase it would write.
+  const phase = block[0].phase || weeks[0].phase;
+  return phase === weeks[0].phase
+    ? 'Draft the rest of the ' + phase + ' phase (' + many + ')'
+    : 'Draft the ' + phase + ' phase (' + many + ')';
 }
 
 // Cuts the block. Every week goes straight into plannedWeeks rather than into
@@ -508,7 +525,10 @@ async function draftPhase(goalId) {
   // is the last thing he will see -- every path through this run ends in
   // exactly one toast, and it is this one.
   if (saved && failure) toast('Drafted ' + saved + ' of ' + block.length + ' weeks. ' + failure);
-  else if (saved) toast('Drafted ' + (saved === 1 ? '1 week' : saved + ' weeks') + ' of this phase');
+  // Names the phase rather than saying "this phase": the block is not always
+  // the one he is standing in any more.
+  else if (saved) toast('Drafted ' + (saved === 1 ? '1 week' : saved + ' weeks')
+    + (weeks[0] && weeks[0].ongoing ? '' : ' of the ' + block[0].phase + ' phase'));
   else toast(failure || 'Marcus did not draft a week');
 }
 
