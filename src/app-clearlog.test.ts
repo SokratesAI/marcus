@@ -191,3 +191,110 @@ describe("the clear button", () => {
     expect(toasts.join(" ")).toContain(String(total));
   });
 });
+
+// Edvard deleted all sixteen demo sessions by hand on 2026-09-13 between
+// 08:03:16 and 08:03:36 and left the demo bodyweights and demo meals behind:
+// those two are charts, not lists, so there was no row to tap and the only
+// control that could take them sits at the bottom of the same tab. These cover
+// the per-section clear that now sits under each chart.
+describe("clearing one section", () => {
+  it("clears only the section it was asked for", () => {
+    const { ctx } = loadApp();
+    const mealsBefore = ctx.store.get("meals", []).length;
+    const sessionsBefore = ctx.store.get("sessions", []).length;
+    expect(ctx.store.get("weights", []).length).toBeGreaterThan(0);
+
+    const result = ctx.clearTrainingLog(["weights"]);
+
+    expect(ctx.store.get("weights", null)).toEqual([]);
+    expect(result.cleared.map((c: any) => c.key)).toEqual(["weights"]);
+    expect(ctx.store.get("meals", []).length).toBe(mealsBefore);
+    expect(ctx.store.get("sessions", []).length).toBe(sessionsBefore);
+  });
+
+  it("counts only the section it was asked about", () => {
+    const { ctx } = loadApp();
+    const rows = ctx.clearableSummary(["meals"]);
+    expect(rows.map((r: any) => r.key)).toEqual(["meals"]);
+    expect(rows[0].count).toBe(ctx.store.get("meals", []).length);
+  });
+
+  it("does not delete anything until the second confirm", () => {
+    const { ctx, byId } = loadApp();
+    ctx.wireSectionClear("weights");
+    const before = ctx.store.get("weights", []).length;
+
+    byId["clearWeights"].handlers.click();
+
+    expect(ctx.store.get("weights", []).length).toBe(before);
+    expect(byId["clearWeightsPreview"].innerHTML).toContain("Are you sure?");
+    expect(byId["clearWeightsPreview"].innerHTML).toContain(String(before));
+    expect(byId["clearWeightsPreview"].innerHTML).toContain("bodyweight");
+  });
+
+  it("the second confirm clears that section and says how many went", () => {
+    const { ctx, byId, toasts } = loadApp();
+    ctx.wireSectionClear("meals");
+    const before = ctx.store.get("meals", []).length;
+    const weightsBefore = ctx.store.get("weights", []).length;
+
+    byId["clearMeals"].handlers.click();
+    byId["confirmClearMeals"].handlers.click();
+
+    expect(ctx.store.get("meals", null)).toEqual([]);
+    expect(ctx.store.get("weights", []).length).toBe(weightsBefore);
+    expect(toasts.join(" ")).toContain(String(before));
+  });
+
+  it("keeping it leaves the section intact and closes the confirm", () => {
+    const { ctx, byId } = loadApp();
+    ctx.wireSectionClear("weights");
+    const before = ctx.store.get("weights", []).length;
+
+    byId["clearWeights"].handlers.click();
+    byId["cancelClearWeights"].handlers.click();
+
+    expect(ctx.store.get("weights", []).length).toBe(before);
+    expect(byId["clearWeightsPreview"].innerHTML).toBe("");
+  });
+
+  // Both sections are wired on the same render, so arming the second has to
+  // close the first -- otherwise two live "Delete all of it" buttons sit on
+  // one screen and neither says which chart it belongs to.
+  it("arming one section closes the other", () => {
+    const { ctx, byId } = loadApp();
+    ctx.wireSectionClear("weights");
+    ctx.wireSectionClear("meals");
+
+    byId["clearWeights"].handlers.click();
+    expect(byId["clearWeightsPreview"].innerHTML).toContain("Are you sure?");
+
+    byId["clearMeals"].handlers.click();
+    expect(byId["clearMealsPreview"].innerHTML).toContain("Are you sure?");
+    expect(byId["clearWeightsPreview"].innerHTML).toBe("");
+  });
+
+  // Leaving the tab and coming back rebuilds the markup, so an armed confirm
+  // from the previous visit has no button behind it any more.
+  it("a re-render of the tab closes an armed confirm", () => {
+    const { ctx, byId } = loadApp();
+    ctx.wireSectionClear("weights");
+    byId["clearWeights"].handlers.click();
+    expect(byId["clearWeightsPreview"].innerHTML).toContain("Are you sure?");
+
+    ctx.wireSectionClear("weights");
+
+    expect(byId["clearWeightsPreview"].innerHTML).toBe("");
+  });
+
+  it("says so rather than offering a delete when the section is already empty", () => {
+    const { ctx, byId } = loadApp();
+    ctx.clearTrainingLog(["meals"]);
+    ctx.wireSectionClear("meals");
+
+    byId["clearMeals"].handlers.click();
+
+    expect(byId["clearMealsPreview"].innerHTML).toContain("nothing here to clear");
+    expect(byId["clearMealsPreview"].innerHTML).not.toContain("Delete all of it");
+  });
+});

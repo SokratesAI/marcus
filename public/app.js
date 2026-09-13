@@ -3061,6 +3061,8 @@ function renderProgress() {
         </div>
       </div>
       <div class="chart-wrap"><canvas id="weightChart"></canvas></div>
+      ${weights.length ? `<button class="btn btn--tonal btn--block" id="clearWeights" style="margin-top:10px"><span class="material-icons-round">delete_sweep</span> Clear the bodyweight log</button>` : ''}
+      <div id="clearWeightsPreview"></div>
     </div>
     <div class="card">
       <h2>Body measurements</h2>
@@ -3096,6 +3098,8 @@ function renderProgress() {
     <div class="card">
       <h2>Daily calories</h2>
       <div class="chart-wrap"><canvas id="calChart"></canvas></div>
+      ${meals.length ? `<button class="btn btn--tonal btn--block" id="clearMeals" style="margin-top:10px"><span class="material-icons-round">delete_sweep</span> Clear the meal log</button>` : ''}
+      <div id="clearMealsPreview"></div>
     </div>
     <div class="section-title">Reminders</div>
     <div class="card">
@@ -3387,8 +3391,8 @@ const LOGGED_STORES = ['sessions', 'weights', 'measurements', 'photos', 'meals',
 // Counts what clearing would actually remove, so the confirm step can say it
 // out loud -- the same contract as `backupSummary` and for the same reason: the
 // user confirms against a count, never against the word "clear".
-function clearableSummary() {
-  return LOGGED_STORES.map(k => ({ key: k, count: (store.get(k, []) || []).length }))
+function clearableSummary(keys) {
+  return (keys || LOGGED_STORES).map(k => ({ key: k, count: (store.get(k, []) || []).length }))
     .filter(s => s.count > 0);
 }
 
@@ -3407,10 +3411,10 @@ function clearableSummary() {
 // and `measurements` have no id and therefore no tombstone -- `recordDeletion`
 // keys on one -- so a second device that still holds them will bring those two
 // back. That is a real limit and not a case this can silently pretend to cover.
-function clearTrainingLog() {
+function clearTrainingLog(keys) {
   const cleared = [];
   const failed = [];
-  LOGGED_STORES.forEach(k => {
+  (keys || LOGGED_STORES).forEach(k => {
     const rows = store.get(k, []);
     if (!Array.isArray(rows) || !rows.length) return;
     rows.forEach(r => recordDeletion(k, r && r.id));
@@ -3488,6 +3492,8 @@ function wireBackup() {
   });
   renderRestorePreview();
   wireClearLog();
+  wireSectionClear('weights');
+  wireSectionClear('meals');
   wireServerCopy();
 }
 
@@ -3521,6 +3527,81 @@ function renderClearLogPreview() {
     renderProgress();
   });
   document.getElementById('cancelClearLog')?.addEventListener('click', () => { clearLogArmed = false; renderClearLogPreview(); });
+}
+
+// The Clear-the-training-log button above takes all three seeded stores at
+// once, and it is the last card on this tab -- below the charts, the reminders
+// and the backup card. Edvard did not find it. On 2026-09-13 he deleted all
+// sixteen demo sessions by hand, one bin tap at a time, between 08:03:16 and
+// 08:03:36 (measured off the deletion tombstones in his synced copy), and left
+// the fourteen demo bodyweights and eighteen demo meals in place. Those two are
+// drawn as charts rather than lists, so there is no row to tap at all: the
+// Bodyweight chart and the Daily calories chart on this tab are still plotting
+// numbers he never produced.
+//
+// So the offer goes where the fake numbers are drawn, and it clears one section
+// rather than everything. Same two-step as the full clear and as the session
+// bin: arm, read the count, then confirm.
+const SECTION_LABELS = { weights: 'bodyweight', meals: 'meal' };
+
+// One key at a time, declared beside the other clear state, so arming the
+// second section closes the first rather than leaving two live confirms.
+let sectionClearArmed = null;
+
+function sectionClearIds(key) {
+  const cap = key.charAt(0).toUpperCase() + key.slice(1);
+  return {
+    button: 'clear' + cap,
+    preview: 'clear' + cap + 'Preview',
+    confirm: 'confirmClear' + cap,
+    cancel: 'cancelClear' + cap,
+  };
+}
+
+function renderSectionClear(key) {
+  const ids = sectionClearIds(key);
+  const host = document.getElementById(ids.preview);
+  if (!host) return;
+  if (sectionClearArmed !== key) { host.innerHTML = ''; return; }
+  const count = (store.get(key, []) || []).length;
+  if (!count) {
+    host.innerHTML = '<div class="card__note" style="margin-top:10px">There is nothing here to clear.</div>';
+    return;
+  }
+  host.innerHTML = '<div class="card__note" style="margin-top:10px">Are you sure? This deletes ' + count + ' ' +
+    esc(SECTION_LABELS[key] || key) + ' record(s) from this browser and from the server copy, and cannot be undone.</div>' +
+    '<button class="btn btn--filled btn--block" id="' + ids.confirm + '" style="margin-top:10px">Delete all of it</button>' +
+    '<button class="btn btn--tonal btn--block" id="' + ids.cancel + '" style="margin-top:8px">Keep it</button>';
+  document.getElementById(ids.confirm)?.addEventListener('click', () => {
+    const result = clearTrainingLog([key]);
+    sectionClearArmed = null;
+    const total = result.cleared.reduce((n, s) => n + s.count, 0);
+    if (result.failed.length) toast('This browser refused to clear the ' + (SECTION_LABELS[key] || key) + ' log.');
+    else toast('Cleared. ' + total + ' record(s) deleted.');
+    renderProgress();
+  });
+  document.getElementById(ids.cancel)?.addEventListener('click', () => {
+    sectionClearArmed = null;
+    renderSectionClear(key);
+  });
+}
+
+function wireSectionClear(key) {
+  // The tab was just rebuilt, so an armed confirm from a previous visit has no
+  // button on screen any more -- same reason `renderLog` clears the armed
+  // session card on every render.
+  sectionClearArmed = null;
+  const ids = sectionClearIds(key);
+  document.getElementById(ids.button)?.addEventListener('click', () => {
+    // One variable holds the armed key, so arming this one disarms the other --
+    // but the other section's host still has the old markup painted into it and
+    // only its own render clears that, so repaint it here.
+    const previous = sectionClearArmed;
+    sectionClearArmed = key;
+    if (previous && previous !== key) renderSectionClear(previous);
+    renderSectionClear(key);
+  });
+  renderSectionClear(key);
 }
 
 function wireClearLog() {
