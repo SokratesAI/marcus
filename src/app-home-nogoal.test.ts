@@ -75,9 +75,9 @@ describe("Home when Marcus has no goal", () => {
     // openChat() is the chat sheet; switchTab('plan') is the typed form. Both
     // are reachable, and the chat is the filled button because a form he has to
     // find is not a flow that listens.
-    expect(html).toContain('onclick="openChat()"');
+    expect(html).toContain(`onclick="openChat('goal')"`);
     expect(html).toContain(`onclick="switchTab('plan')"`);
-    expect(html.indexOf('onclick="openChat()"')).toBeLessThan(html.indexOf(`onclick="switchTab('plan')"`));
+    expect(html.indexOf(`onclick="openChat('goal')"`)).toBeLessThan(html.indexOf(`onclick="switchTab('plan')"`));
     // Both are real globals in the page, not names that only look like calls.
     expect(run(app, "typeof openChat")).toBe("function");
     expect(run(app, "typeof switchTab")).toBe("function");
@@ -89,7 +89,7 @@ describe("Home when Marcus has no goal", () => {
     const html = home(app);
     expect(html).toContain("Oslo Triathlon");
     expect(html).not.toContain("What are you training for?");
-    expect(html).not.toContain('onclick="openChat()"');
+    expect(html).not.toContain(`onclick="openChat('goal')"`);
   });
 
   it("still says nothing of the sort when the goal's target date has passed", () => {
