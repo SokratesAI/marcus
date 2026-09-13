@@ -44,3 +44,63 @@ describe("what Marcus knows about Edvard", () => {
     expect(buildPrompt("hei", { profile: "short" }, [], "2026-09-13")).not.toContain("cut off here");
   });
 });
+
+// The other half of the record, added the cycle after it existed: the coach
+// can now propose a fact about him the same way it proposes a goal, so he does
+// not have to open another tab and retype what he just said in the chat.
+describe("asking the coach to note something about him", () => {
+  it("tells the model the fence, the shape and that nothing is saved without him", () => {
+    const p = buildPrompt("I was born in 1994 and I am semi-active", {}, []);
+    expect(p).toContain("NOTING SOMETHING ABOUT HIM");
+    expect(p).toContain("```profile");
+    expect(p).toContain('{"text":');
+    expect(p).toContain("He has to confirm it before anything is saved");
+  });
+
+  // The app strips the goal fence first and then the profile fence off what is
+  // left, so the order it is told to write them in is the order it is parsed.
+  it("is printed after the goal instruction and says which block comes first", () => {
+    const p = buildPrompt("hi", {}, []);
+    expect(p.indexOf("NOTING SOMETHING ABOUT HIM")).toBeGreaterThan(p.indexOf("WRITING A GOAL DOWN"));
+    expect(p).toContain("goal block first");
+  });
+
+  it("names what a profile block is not, so a single session does not become who he is", () => {
+    expect(buildPrompt("hi", {}, [])).toContain("that is training data, not who he is");
+  });
+
+  // Pointing the model at a heading that is not in its prompt is how it starts
+  // inventing what was under it -- and an empty profile is the state where
+  // every fact he says is worth a card.
+  it("only tells it not to repeat ABOUT EDVARD when that section is there", () => {
+    expect(buildPrompt("hi", { profile: "Born 1994." }, [])).toContain(
+      "Do not write a block for anything already in ABOUT EDVARD above.",
+    );
+    expect(buildPrompt("hi", {}, [])).not.toContain("ABOUT EDVARD");
+  });
+});
+
+describe("buildPrompt and a fact about him he turned down", () => {
+  it("lists it and says not to raise it again", () => {
+    const p = buildPrompt("hi", { declinedFacts: ["Born 1994."] }, []);
+    expect(p).toContain("THINGS ABOUT HIM HE HAS ALREADY TURNED DOWN");
+    expect(p).toContain("- Born 1994.");
+    expect(p).toContain("do not treat them as established fact");
+  });
+
+  // A heading with nothing under it is worse than no heading -- it tells the
+  // model he has refused something and does not say what.
+  it("prints no heading when nothing was turned down", () => {
+    expect(buildPrompt("hi", {}, [])).not.toContain("THINGS ABOUT HIM HE HAS ALREADY TURNED DOWN");
+    expect(buildPrompt("hi", { declinedFacts: ["", "  "] }, [])).not.toContain("THINGS ABOUT HIM HE HAS ALREADY TURNED DOWN");
+  });
+
+  // The two lists are separate on purpose: a goal he refused and a fact he
+  // refused mean different things to the model.
+  it("does not mix them with the declined goals", () => {
+    const p = buildPrompt("hi", { declinedGoals: ["Oslo Tri"], declinedFacts: ["Born 1994."] }, []);
+    expect(p.indexOf("- Oslo Tri")).toBeLessThan(p.indexOf("- Born 1994."));
+    expect(p).toContain("GOALS HE HAS ALREADY TURNED DOWN");
+    expect(p).toContain("THINGS ABOUT HIM HE HAS ALREADY TURNED DOWN");
+  });
+});

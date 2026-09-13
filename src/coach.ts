@@ -54,6 +54,11 @@ export interface CoachContext {
    * turned down, which nothing else in this prompt can carry -- see
    * `declinedGoals()` below. */
   declinedGoals?: unknown[];
+  /** Not part of the store either. The texts of facts about him the coach
+   * proposed and Edvard turned down -- the same problem as `declinedGoals`,
+   * for the same reason: the block is stripped before the bubble is stored, so
+   * nothing else in this prompt carries the refusal. */
+  declinedFacts?: unknown[];
 }
 
 // A cap with a danger behind it rather than a tidiness one: the whole context
@@ -286,12 +291,24 @@ export function buildPrompt(
     );
   }
   parts.push(GOAL_INSTRUCTION);
+  parts.push(profileInstruction(Boolean(about.text)));
   const declined = declinedGoals(context.declinedGoals ?? []);
   if (declined) {
     parts.push(
       "GOALS HE HAS ALREADY TURNED DOWN",
       "He was shown a card for each of these and chose not to save it. Do not write a goal block for any of them again, and do not tell him you have written one down, unless he asks you in this message to set it up.",
       declined,
+    );
+  }
+  // Same list shape as the goals above -- `declinedGoals` is a bullet list and
+  // nothing about it is goal-specific, so a second formatter here would be a
+  // second thing to keep in step.
+  const refused = declinedGoals(context.declinedFacts ?? []);
+  if (refused) {
+    parts.push(
+      "THINGS ABOUT HIM HE HAS ALREADY TURNED DOWN",
+      "He was shown a card for each of these and chose not to have it noted. Do not write a profile block for any of them again, and do not treat them as established fact.",
+      refused,
     );
   }
   parts.push("MESSAGE FROM EDVARD", message);
@@ -324,6 +341,41 @@ export const GOAL_INSTRUCTION = [
   "```",
   'Rules: `text` is his goal in his own words, short enough to read on a card. `targetDate` is `YYYY-MM-DD` if he named a day or a month you can pin to one, and `""` if there is no date -- an ongoing goal is a real goal and must not be given an invented date. One block per reply, for the single clearest goal. Do not write a block for a goal already in TRAINING DATA above, and do not write one because you think he should have a goal -- only when he has actually told you one in this conversation. He has to confirm it before anything is saved, so do not claim in your reply that you have saved it; say you have written it down for him to confirm.',
 ].join("\n");
+
+/** The other half of the profile record (issue #157).
+ *
+ * `ABOUT EDVARD` above is read-only from the model's side: he had to open the
+ * Plan tab and retype into a box what he had just typed into the chat. This
+ * asks for the same confirm-card contract the goal block has -- the model
+ * proposes, he taps, the app writes. Nothing here saves anything.
+ *
+ * The fence is `profile` rather than `fact` because it names the record it
+ * lands in, and the shape is deliberately the goal block's so one stripper
+ * pattern covers both. */
+export function profileInstruction(hasAbout: boolean): string {
+  return [
+    "NOTING SOMETHING ABOUT HIM",
+    "If Edvard tells you something lasting about himself -- his age, his training background, how active he is, an illness or injury and how it left him, something a coach would want to know months from now -- end your reply with a block in exactly this shape:",
+    "```profile",
+    '{"text": "Born 1994. Semi-active. Had covid in 2020 and his endurance never fully came back."}',
+    "```",
+    [
+      "Rules: `text` is the fact in plain words, a sentence or two, written about him in the third person so it reads as a note.",
+      "One block per reply, for the single most useful thing he just told you.",
+      // Only when that section was actually printed. Pointing a model at a
+      // heading that is not in its prompt is how it starts inventing what was
+      // under it -- and an empty profile is exactly the state where every fact
+      // he says is worth a card, so a rule telling it not to repeat one is
+      // worse than useless there.
+      hasAbout ? "Do not write a block for anything already in ABOUT EDVARD above." : "",
+      "Do not write one for how a single session went or how he feels today -- that is training data, not who he is.",
+      "He has to confirm it before anything is saved, so do not claim you have saved it; say you have noted it down for him to confirm.",
+      "This block and a goal block can both appear in one reply, goal block first.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  ].join("\n");
+}
 
 // The Claude CLI writes `**1 tool use**` into a turn's text where a tool call
 // happened, and that marker reaches this function verbatim: `/ask` hands back

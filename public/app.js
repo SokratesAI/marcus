@@ -3939,7 +3939,7 @@ function renderChatMessages() {
     const note = m.role === 'marcus' && m.offline
       ? '<span class="msg__offline">built-in reply — the coach was not reachable</span>'
       : '';
-    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(m.text)}${note}${goalProposalHtml(m)}</div>`;
+    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(m.text)}${note}${goalProposalHtml(m)}${factProposalHtml(m)}</div>`;
   }).join('');
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -4030,6 +4030,68 @@ function declineCoachGoal(ts) {
   const m = msgs.find(x => x && x.ts === ts);
   if (!m || !m.goalProposal || m.goalSaved || m.goalDeclined) return;
   m.goalDeclined = true;
+  store.set('chat', msgs);
+  renderChatMessages();
+}
+
+// The confirm card under a coach bubble that heard a fact about him (issue
+// #157). Same contract as the goal card above and drawn the same way, from the
+// stored message rather than the last request, so scrolling back to a bubble
+// from three days ago says what happened to that proposal.
+//
+// `factSaved` and `factDeclined` are separate flags from the goal ones on
+// purpose: one reply can carry both blocks, and answering one of them must not
+// silently answer the other.
+function factProposalHtml(m) {
+  if (!m || m.role !== 'marcus' || !m.factProposal || !m.factProposal.text || !m.ts) return '';
+  if (m.factSaved) return '<span class="msg__offline">Added to what I know about you.</span>';
+  if (m.factDeclined) return '<span class="msg__offline">Not saved.</span>';
+  // Asked here as well as at the offer, for the same reason the goal card asks
+  // twice: the proposal is stored and the profile moves under it. He can type
+  // the same sentence into the Plan tab in another tab of the same browser,
+  // and this card would still be sitting in the chat offering to add it again.
+  if (factAlreadyKnown(m.factProposal, profileText())) {
+    return '<span class="msg__offline">Already noted about you.</span>';
+  }
+  return `<div class="chat-goal">
+      <div class="chat-goal__title">${esc(m.factProposal.text)}</div>
+      <div class="chat-goal__when">Add this to what Marcus knows about you — it stays on the Plan tab, under About you</div>
+      <div class="chat-goal__actions">
+        <button class="btn btn--filled" onclick="acceptCoachFact(${Number(m.ts)})"><span class="material-icons-round">person</span> Remember this</button>
+        <button class="btn btn--tonal" onclick="declineCoachFact(${Number(m.ts)})">Not this</button>
+      </div>
+    </div>`;
+}
+
+function acceptCoachFact(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || !m.factProposal || !m.factProposal.text || m.factSaved || m.factDeclined) return;
+  // The belt to the card's brace above. Appending a fact he already has is not
+  // a duplicate row he can tidy up -- the profile is one free-text field that
+  // goes up whole on every turn, so the same sentence twice is the coach being
+  // told the same thing twice, forever.
+  const existing = profileText();
+  if (factAlreadyKnown(m.factProposal, existing)) {
+    toast('I already have that noted.');
+    renderChatMessages();
+    return;
+  }
+  if (!saveProfile(appendFact(existing, m.factProposal.text))) return;
+  m.factSaved = true;
+  store.set('chat', msgs);
+  renderChatMessages();
+  // Redraw whatever tab is behind the sheet, so closing it does not show a
+  // Plan tab whose About you box predates what he just added.
+  switchTab(currentTab);
+  toast('Noted.');
+}
+
+function declineCoachFact(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || !m.factProposal || m.factSaved || m.factDeclined) return;
+  m.factDeclined = true;
   store.set('chat', msgs);
   renderChatMessages();
 }
@@ -4165,6 +4227,8 @@ async function askMarcus(text) {
           // Not part of the store: the texts of goals he was offered and
           // turned down, so the coach does not offer them again.
           declinedGoals: declinedGoalTexts(store.get('chat', [])),
+          // Same, for facts about him he was offered and said no to.
+          declinedFacts: declinedFactTexts(store.get('chat', [])),
         },
         // The turn just typed is already in the store; it goes in as the
         // message, not a second time as history.
@@ -4186,10 +4250,25 @@ async function askMarcus(text) {
         && !goalDeclinedBefore(parsed.goal, store.get('chat', []))
         ? parsed.goal
         : null;
-      // A reply that was nothing but the block would otherwise be an empty
-      // bubble with a card under it.
-      const shown = parsed.text || (goal ? 'Written down — confirm it below and I will set it as your goal.' : body.reply);
-      return { text: shown, offline: false, goal };
+      // And a ```profile block (issue #157), off the reply the goal fence was
+      // already taken out of -- one reply can carry both, and each block has
+      // to be stripped whether or not the other one was there.
+      const heard = parseCoachFact(parsed.text);
+      // Same rule as the goal: a fact the profile already carries, or one he
+      // has already turned down, is not worth a card.
+      const fact = heard.fact
+        && !factAlreadyKnown(heard.fact, profileText())
+        && !factDeclinedBefore(heard.fact, store.get('chat', []))
+        ? heard.fact
+        : null;
+      // A reply that was nothing but the block(s) would otherwise be an empty
+      // bubble with cards under it. The goal sentence wins when both are
+      // there, because the goal is the bigger thing he just said.
+      const shown = heard.text
+        || (goal ? 'Written down — confirm it below and I will set it as your goal.' : '')
+        || (fact ? 'Noted — confirm it below and I will remember it.' : '')
+        || body.reply;
+      return { text: shown, offline: false, goal, fact };
     }
     return marcusReplyAfterAPause(text);
   } catch {
@@ -4229,6 +4308,7 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
     // Only the real coach can propose a goal; the rule-based fallback has no
     // idea what was said to it.
     if (reply.goal) msg.goalProposal = reply.goal;
+    if (reply.fact) msg.factProposal = reply.fact;
     all.push(msg);
     store.set('chat', all);
     renderChatMessages();
