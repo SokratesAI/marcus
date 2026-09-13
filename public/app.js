@@ -3436,13 +3436,60 @@ const LOGGED_STORES = ['sessions', 'weights', 'measurements', 'photos', 'meals',
 // take it out is on the same card as the sentence that explains what it is.
 const DEMO_LABELS = { sessions: 'session', weights: 'bodyweight', meals: 'meal' };
 
+// Is every row in this store one `seedDemoLog` wrote? Recognised by content,
+// the same way `planIsDemo` recognises the made-up training week, and for the
+// same reason: `DEMO_SEEDED_KEY` is written at seed time, so a browser seeded
+// before that key existed carries no claim and the notice can never fire in it.
+// Edvard's phone is exactly that browser -- his synced state was seeded on or
+// before 2026-08-31 and still held 14 demo bodyweights and 18 demo meals when I
+// read it on 2026-09-13, while the key that names them shipped that morning.
+//
+// Every recogniser here is an all-or-nothing match on the whole store, so one
+// row he logged himself makes the store his and takes it out of the notice.
+// That is the safe direction: under-claiming leaves demo rows unnamed, which is
+// where the app already was; over-claiming would offer to delete his own work.
+const DEMO_RECOGNISERS = {
+  sessions: (rows) => rows.every(r => {
+    const list = r && DEMO_SESSION_EXERCISES[r.day];
+    const ex = (r && r.exercises) || [];
+    return Array.isArray(list) && ex.length === list.length
+      && ex.every((e, i) => e && e.name === list[i] && Array.isArray(e.sets) && e.sets.length === 3);
+  }),
+  meals: (rows) => rows.every(r => r && DEMO_MEALS.some(([name, cal, p, c, f]) =>
+    r.name === name && r.calories === cal && r.protein === p && r.carbs === c && r.fat === f)),
+  // A descending run on a two-day grid, starting one step below 84.5. A logged
+  // weight lands on today and breaks the grid, the descent, or both.
+  weights: (rows) => {
+    const first = rows[0];
+    if (!first || !(first.kg === DEMO_WEIGHT_START - 0.1 || first.kg === DEMO_WEIGHT_START - 0.2)) return false;
+    return rows.every((r, i) => {
+      if (!r || typeof r.kg !== 'number' || typeof r.date !== 'string') return false;
+      if (!i) return true;
+      const prev = rows[i - 1];
+      const step = Math.round((prev.kg - r.kg) * 10) / 10;
+      const days = Math.round((Date.parse(r.date + 'T00:00:00Z') - Date.parse(prev.date + 'T00:00:00Z')) / 86400000);
+      return days === DEMO_WEIGHT_STEP_DAYS && (step === 0.1 || step === 0.2);
+    });
+  },
+};
+
 // The seeded stores that still hold something. A store he has already emptied
 // drops out, so the notice goes away on its own once all of them are gone --
 // which is what makes this safe to leave standing rather than one-shot.
+//
+// Two sources, unioned: the claim `seedDemoLog` wrote in this browser, and the
+// content check above for a browser that predates it. `demoPlanKept` answers
+// both -- "keep it, it is mine now" has to stick, and with recognition by
+// content there is no marker left to clear.
 function demoSeededSummary() {
-  const keys = store.get(DEMO_SEEDED_KEY, null);
-  if (!Array.isArray(keys) || !keys.length) return [];
-  return clearableSummary(keys.filter(k => DEMO_LABELS[k]));
+  if (store.get(DEMO_PLAN_KEPT_KEY, false)) return [];
+  const claimed = store.get(DEMO_SEEDED_KEY, null);
+  const keys = Object.keys(DEMO_LABELS).filter(k => {
+    if (Array.isArray(claimed) && claimed.includes(k)) return true;
+    const rows = store.get(k, []);
+    return Array.isArray(rows) && rows.length > 0 && DEMO_RECOGNISERS[k](rows);
+  });
+  return clearableSummary(keys);
 }
 
 // He can answer "it is mine now" about the plan the same way he can about the
