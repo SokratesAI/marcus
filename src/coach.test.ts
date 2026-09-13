@@ -5,7 +5,7 @@ import path from "node:path";
 import request from "supertest";
 import { createApp } from "./index.js";
 import { StateStore } from "./state-store.js";
-import { askCoach, buildPrompt, coachConfig, osloDate, stripToolUseMarkers, MAX_HISTORY_TURNS } from "./coach.js";
+import { askCoach, buildPrompt, coachConfig, earlierInHisWords, osloDate, stripToolUseMarkers, MAX_EARLIER_CHARS, MAX_HISTORY_TURNS } from "./coach.js";
 
 const CONFIG = { baseUrl: "http://agora.test:8080", conversationId: "conv-1" };
 
@@ -132,16 +132,104 @@ describe("osloDate", () => {
     expect(osloDate(new Date("2026-06-30T12:00:00Z"))).toBe("2026-06-30");
   });
 
-  it("keeps only the newest turns, so a long chat cannot grow the prompt forever", () => {
+  it("keeps only the newest turns in the transcript, so a long chat cannot grow the prompt forever", () => {
     const history = Array.from({ length: MAX_HISTORY_TURNS + 5 }, (_, i) => ({
       role: i % 2 ? "marcus" : "user",
       text: `turn-${i}`,
     }));
     const p = buildPrompt("hi", {}, history);
-    expect(p).not.toContain("turn-0");
-    expect(p).toContain(`turn-${MAX_HISTORY_TURNS + 4}`);
+    const transcript = p.slice(p.indexOf("EARLIER IN THIS CONVERSATION"));
+    // turn-0 is his and survives in the older-messages block below; what must
+    // not happen is the transcript itself reaching back past the window.
+    expect(transcript).not.toContain("turn-0");
+    expect(transcript).toContain(`turn-${MAX_HISTORY_TURNS + 4}`);
     expect(p).toContain("Edvard:");
     expect(p).toContain("Marcus:");
+  });
+});
+
+describe("earlierInHisWords", () => {
+  const marcus = (text: string) => ({ role: "marcus", text });
+  const him = (text: string) => ({ role: "user", text });
+
+  it("is empty while the whole conversation still fits in the window", () => {
+    const history = Array.from({ length: MAX_HISTORY_TURNS }, (_, i) => him(`turn-${i}`));
+    expect(earlierInHisWords(history)).toEqual({ lines: [], dropped: 0 });
+  });
+
+  it("carries his own older messages forward and leaves Marcus's behind", () => {
+    const history = [
+      him("my doctor wants my cholesterol down"),
+      marcus("noted, we can build that in"),
+      ...Array.from({ length: MAX_HISTORY_TURNS }, (_, i) => him(`recent-${i}`)),
+    ];
+    expect(earlierInHisWords(history)).toEqual({
+      lines: ["my doctor wants my cholesterol down"],
+      dropped: 0,
+    });
+  });
+
+  it("keeps the newest that fit, in order, and counts the rest rather than hiding them", () => {
+    const long = "x".repeat(1500);
+    const history = [
+      him(`a-${long}`),
+      him(`b-${long}`),
+      him(`c-${long}`),
+      ...Array.from({ length: MAX_HISTORY_TURNS }, () => him("recent")),
+    ];
+    const { lines, dropped } = earlierInHisWords(history);
+    // Two of the three 1,502-character messages fit under 4,000; the oldest does not.
+    expect(lines).toEqual([`b-${long}`, `c-${long}`]);
+    expect(dropped).toBe(1);
+  });
+
+  it("stops at a message too big to fit rather than reaching past it for a smaller one", () => {
+    const history = [
+      him("short and old"),
+      him("y".repeat(MAX_EARLIER_CHARS + 1)),
+      ...Array.from({ length: MAX_HISTORY_TURNS }, () => him("recent")),
+    ];
+    // Reaching past the oversized one would put "short and old" next to the
+    // recent turns as though he had just said it.
+    expect(earlierInHisWords(history)).toEqual({ lines: [], dropped: 2 });
+  });
+
+  it("ignores blank and non-string messages instead of emitting empty lines", () => {
+    const history = [
+      him("   "),
+      { role: "user", text: 17 as unknown as string },
+      him("this one counts"),
+      ...Array.from({ length: MAX_HISTORY_TURNS }, () => him("recent")),
+    ];
+    expect(earlierInHisWords(history)).toEqual({ lines: ["this one counts"], dropped: 0 });
+  });
+});
+
+describe("buildPrompt's older-messages block", () => {
+  const him = (text: string) => ({ role: "user", text });
+  const filler = Array.from({ length: MAX_HISTORY_TURNS }, (_, i) => him(`recent-${i}`));
+
+  it("is absent entirely while nothing has scrolled out of the window", () => {
+    expect(buildPrompt("hi", {}, filler)).not.toContain("EARLIER, IN HIS OWN WORDS");
+  });
+
+  it("quotes what he said before the window, ahead of the recent transcript", () => {
+    const p = buildPrompt("hi", {}, [him("my doctor wants my cholesterol down"), ...filler]);
+    expect(p).toContain("EARLIER, IN HIS OWN WORDS");
+    expect(p).toContain("Edvard: my doctor wants my cholesterol down");
+    expect(p.indexOf("EARLIER, IN HIS OWN WORDS")).toBeLessThan(p.indexOf("EARLIER IN THIS CONVERSATION"));
+  });
+
+  it("says how many are older still, so the model is not told this is the whole of it", () => {
+    const long = "z".repeat(MAX_EARLIER_CHARS);
+    const p = buildPrompt("hi", {}, [him("the oldest thing"), him(long), ...filler]);
+    expect(p).toContain("1 older message(s) of his are older still");
+    expect(p).not.toContain("the oldest thing");
+  });
+
+  it("does not claim anything is missing when nothing is", () => {
+    const p = buildPrompt("hi", {}, [him("one old line"), ...filler]);
+    expect(p).not.toContain("older still");
   });
 });
 
