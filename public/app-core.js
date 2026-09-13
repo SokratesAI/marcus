@@ -2455,6 +2455,31 @@ function goalAlreadySet(proposal, existing) {
   return (existing || []).some(g => g && String(g.text || '').trim().toLowerCase() === want);
 }
 
+// A goal he was shown a card for and tapped Not now on.
+//
+// The coach has no way to know he declined. The ```goal block is stripped out
+// of the reply before the bubble is stored, and a decline is a tap rather than
+// a message, so neither half of what the model sees on the next turn carries
+// it -- while the sentence of his that produced the block is still sitting in
+// the history window. Left alone the model writes the same block on the next
+// turn and he gets the same card again, and again, for as long as that
+// statement stays in the window. The texts go up with the context so the coach
+// stops re-raising it; `goalDeclinedBefore` is the belt for a turn that raises
+// it anyway.
+function declinedGoalTexts(chat) {
+  return (chat || [])
+    .filter(m => m && m.goalDeclined && m.goalProposal && m.goalProposal.text)
+    .map(m => String(m.goalProposal.text).trim())
+    .filter(Boolean);
+}
+
+// Same normalisation as a goal he already has -- deliberately the same
+// function, so "already answered" cannot come to mean two different things
+// depending on which way he answered.
+function goalDeclinedBefore(proposal, chat) {
+  return goalAlreadySet(proposal, declinedGoalTexts(chat).map(text => ({ text })));
+}
+
 function validateGoal(rawText, rawDate, todayISO) {
   const text = String(rawText == null ? '' : rawText).trim();
   if (!text) return { ok: false, message: 'Say what you are training for.' };
