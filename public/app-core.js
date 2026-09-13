@@ -2850,7 +2850,13 @@ function validateGoalEdit(existing, rawText, rawDate, todayISO) {
   goal.created = created;
   if (String(existing.targetDate || '') === goal.targetDate) {
     goal.milestones = Array.isArray(existing.milestones) ? existing.milestones : [];
+    // Only the text changed, so phases Marcus shaped are still his phases.
+    if (existing.phasesCoached) goal.phasesCoached = true;
   } else if (goal.targetDate) {
+    // The race day moved, so the block is re-cut mechanically and the card goes
+    // back to saying so. Keeping the flag would leave Marcus's name on dates he
+    // never chose -- `phaseDates` shares the span out by his ratios, and this is
+    // a different span. The button is right there to ask him again.
     goal.milestones = carryMilestonesDone(buildMilestones(created, goal.targetDate), existing.milestones);
   }
   return { ok: true, goal };
