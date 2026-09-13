@@ -78,6 +78,13 @@ function renderHome() {
   // week from a race that has been and gone would send the coach an empty goal
   // list and get back the generic week he just cleared.
   const canDraft = planEmpty && !!draftGoals().length;
+  // The same shape as the goal prompt above: the only place to turn the evening
+  // reminder on is a card at the bottom of the Progress tab, under two charts,
+  // and the 20:00 job has been logging that it had nobody to send to. So it
+  // composes a real message every evening and delivers it to no device.
+  // `reminderState` is read at boot now rather than only when Progress is
+  // drawn, which is what makes this answerable on Home at all.
+  const offerReminders = homeOffersReminders(reminderState);
 
   view.innerHTML = `
     ${demo.length || planDemo ? demoNoticeCard(demo, planDemo) : ``}
@@ -133,6 +140,15 @@ function renderHome() {
       <div class="card__title-row"><h2>${esc(week.phase)}${week.phaseEnds ? ' phase' : ''}</h2><span class="chip chip--primary">${week.sessionsDone}/${week.sessionsPlanned} sessions</span></div>
       ${week.volumeTarget != null ? `<div class="exercise-line"><span>Volume</span><span>${week.volumeDone} / ${week.volumeTarget} kg</span></div>` : ``}
       <div class="card__note">${esc(weekTargetLabel(week))}</div>
+    </div>` : ``}
+
+    ${offerReminders ? `
+    <div class="section-title">Reminders</div>
+    <div class="card">
+      <div class="card__title-row"><h2>Marcus cannot reach you</h2><span class="chip">off</span></div>
+      <p class="card__note">Nothing on this phone is subscribed, so the evening reminder is written and sent to nobody. One tap and Marcus can buzz you once in the evening.</p>
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="enableRemindersFromHome()"><span class="material-icons-round">notifications_active</span> Turn on reminders</button>
+      <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="switchTab('progress')">Read what it sends first</button>
     </div>` : ``}
 
     <div class="section-title">Today's nutrition</div>
@@ -4994,6 +5010,16 @@ function describeReminders(status) {
   return 'Reminders: off. Marcus will not send anything until you turn them on.';
 }
 
+// Home offers the toggle only on a definite no. 'unknown' is the state before
+// the first read has come back, and 'unsupported' and 'blocked' are answers a
+// button cannot change -- an iPhone in a Safari tab has to be added to the Home
+// Screen first, and a denied permission can never be re-requested from script.
+// The Progress card says both of those things in full; Home says nothing rather
+// than drawing a button that cannot work.
+function homeOffersReminders(status) {
+  return !!status && status.state === 'off';
+}
+
 // The VAPID public key arrives base64url and `pushManager.subscribe` wants the
 // raw bytes. Checked rather than converted blindly: an uncompressed P-256 point
 // is 65 bytes starting 0x04, and a browser handed anything else fails inside
@@ -5262,6 +5288,42 @@ async function reminderDeps() {
   return { notification: Notification, registration, fetchFn: (...args) => fetch(...args) };
 }
 
+// Turning them on from Home. The Progress card's own button cannot be reused --
+// it is not on the page -- but the state it draws from can be, so both routes
+// write through `renderReminders` and the two cards can never disagree.
+async function enableRemindersFromHome() {
+  const deps = await reminderDeps();
+  if (!deps) { renderReminders({ state: 'unsupported' }); redrawHomeReminders(); return; }
+  const result = await enableReminders(deps);
+  renderReminders({ state: result.state });
+  toast(result.message);
+  redrawHomeReminders();
+}
+
+// Home is drawn from `reminderState`, so a change to it has to repaint. Only
+// Home, and only by calling its renderer: `switchTab` would re-enter
+// `renderProgress` -> `wireReminders` -> this read, which never terminates.
+function redrawHomeReminders() {
+  if (currentTab === 'home') renderHome();
+}
+
+// Read the real state and tell both cards. Called at boot as well as from the
+// Progress card, because Home now asks the question and the browser this is
+// aimed at is the one that never opens Progress.
+//
+// Nothing is allowed to escape it. This starts at boot and resolves whenever
+// the browser gets round to `serviceWorker.ready`, which can be after the page
+// it was going to draw on has gone -- and the old shape put the fallback draw
+// inside the final `.catch`, so a throw there was an unhandled rejection with
+// no page left to report it to.
+function refreshReminderState() {
+  return reminderDeps()
+    .then((deps) => (deps ? readReminderState(deps) : { state: 'unsupported' }))
+    .catch(() => ({ state: 'unsupported' }))
+    .then((status) => { renderReminders(status); redrawHomeReminders(); })
+    .catch(() => { /* the page is gone; there is nobody to tell */ });
+}
+
 function wireReminders() {
   renderReminders({ state: 'unknown' });
   const btn = document.getElementById('toggleReminders');
@@ -5284,10 +5346,7 @@ function wireReminders() {
     renderReminders({ state: result.state });
     toast(result.message);
   });
-  reminderDeps()
-    .then((deps) => (deps ? readReminderState(deps) : { state: 'unsupported' }))
-    .then(renderReminders)
-    .catch(() => renderReminders({ state: 'unsupported' }));
+  refreshReminderState();
 }
 
 // ---------- updates ----------
@@ -5399,6 +5458,10 @@ if (!seededThisBoot || typeof fetch !== 'function') bootSeed();
 switchTab('home');
 adoptServerCopyOnBoot().catch(() => { if (bootSeed()) switchTab(currentTab); });
 retryWhenBackOnline(window, document, retryServerSyncNow);
+// Home draws the reminder offer from this, so it has to be read whether or not
+// the Progress tab is ever opened. Nothing awaits it: the first paint is the
+// plan, and the card appears under it when the answer comes back.
+refreshReminderState();
 applyDueWeekOnVisible(document, applyDueWeek, redrawPlanTab);
 document.getElementById('updateReload')?.addEventListener('click', () => window.location.reload());
 if ('serviceWorker' in navigator) {
