@@ -4235,8 +4235,48 @@ function renderChatMessages() {
       ? '<span class="msg__offline">built-in reply — the coach was not reachable</span>'
       : '';
     return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(chatBubbleText(m))}${note}${goalProposalHtml(m)}${factProposalHtml(m)}</div>`;
-  }).join('') + unansweredHtml(msgs);
+  }).join('') + unansweredHtml(msgs) + openerHtml(msgs);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// The question Marcus opens with when his record of Edvard still has a hole in
+// it. Same contract as `unansweredHtml` above and for the same reason: drawn
+// from the stores on every render, so it appears the moment a gap is real and
+// goes away by itself the moment it is filled -- nothing has to remember to
+// remove it, and no flag records that it was shown.
+//
+// Below the unanswered card and never beside it. Those two are both Marcus
+// asking for something, and a thread that ends in two cards is a form.
+//
+// It carries no `coachTurnInFlight` check of its own, unlike the card above,
+// and the absence is deliberate rather than an oversight: a turn in flight is
+// exactly a thread that is owed an answer, so `unansweredChatTurn` is already
+// truthy for the whole of it -- his own bubble is the last one on a typed turn,
+// and a cut-off coach bubble is on a retried one. A second guard there is a
+// line no test can separate, which is how it was found.
+function openerHtml(msgs) {
+  if (unansweredChatTurn(msgs)) return '';
+  const ask = openingQuestion({
+    profile: store.get('profile', ''),
+    goals: store.get('goals', []),
+    sessions: store.get('sessions', []),
+  });
+  if (!ask) return '';
+  return `<div class="chat-goal" data-opener="${esc(ask.key)}">
+      <div class="chat-goal__title">${esc(ask.text)}</div>
+      <div class="chat-goal__actions">
+        <button class="btn btn--filled" id="chatOpener" onclick="answerOpeningQuestion()"><span class="material-icons-round">edit</span> Answer that</button>
+      </div>
+    </div>`;
+}
+
+// Puts the cursor in the box and nothing else. The question is Marcus's; the
+// answer has to be his own words, because everything downstream of it -- the
+// profile block, the goal block -- is the coach reading what he actually
+// wrote. Pre-filling the box would make him edit my guess instead.
+function answerOpeningQuestion() {
+  const input = document.getElementById('chatInput');
+  if (input) input.focus();
 }
 
 // True while ANY coach request is out, typed or retried. Not just the retry:
