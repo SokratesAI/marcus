@@ -657,8 +657,14 @@ describe("adoptMergedCopy", () => {
 describe("deleteSession", () => {
   it("records the tombstone as well as removing the row", () => {
     const ctx = loadApp();
-    ctx.store.set("sessions", [{ id: "s1" }, { id: "s2" }]);
+    // Dated, because arming redraws the recent-sessions list and that sorts on
+    // `date` -- the one-element array this test used to be left with never
+    // invoked the comparator, so the missing field never showed.
+    ctx.store.set("sessions", [{ id: "s1", date: "2026-09-01" }, { id: "s2", date: "2026-09-02" }]);
     ctx.store.set("deletions", []);
+    // Two taps now -- the bin arms the card and the confirm button deletes
+    // (src/app-sessiondelete.test.ts owns that contract).
+    ctx.armDeleteSession("s1");
     ctx.deleteSession("s1");
     expect(ctx.store.get("sessions", []).map((s: any) => s.id)).toEqual(["s2"]);
     expect(ctx.store.get("deletions", []).map((d: any) => d.id)).toEqual(["s1"]);

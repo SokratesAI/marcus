@@ -946,8 +946,15 @@ let logKind = 'strength';
 // What the sentence box understood, held across the re-render that fills the
 // form. Cleared as soon as the session is saved so it cannot re-apply itself.
 let logSentence = null;
+// Which session card is armed for deletion, if any. Declared up here with the
+// rest of the Log tab's UI state because `renderLog` just below clears it; the
+// reason it exists is written above `armDeleteSession`.
+let sessionDeleteArmed = null;
 
 function renderLog() {
+  // Any full redraw of the tab disarms: a confirm that outlived the screen it
+  // was asked on is not an answer to anything.
+  sessionDeleteArmed = null;
   const plan = store.get('plan');
   const cardio = logKind === 'cardio';
   const heard = logSentence;
@@ -1177,13 +1184,59 @@ function sessionNoteLine(s) {
   return `<div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">${esc(s.note)}${tail}</div>`;
 }
 
+// One tap on the bin emptied a session with nothing in between. Edvard's
+// capture, 2026-09-13: "Too easy to delete sessions in Marcus. I must get
+// prompted with 'are you sure?'". A logged session is the one record in here he
+// cannot get back by thinking harder -- it is the weights he actually lifted on
+// a day that has gone -- so it gets the two-step the Clear-the-training-log
+// button already has: arm it, read what is about to go, then a button that does
+// it.
+//
+// Only one card can be armed at a time, and which one is held in a variable
+// (`sessionDeleteArmed`, declared with the Log tab's other UI state) rather than
+// in the markup, so a redraw cannot lose it.
+//
+function armDeleteSession(id) {
+  sessionDeleteArmed = id;
+  renderRecentSessions();
+}
+
+function cancelDeleteSession() {
+  sessionDeleteArmed = null;
+  renderRecentSessions();
+}
+
+// What is inside the session, so the confirm step can say it out loud -- the
+// same contract as `clearableSummary` and for the same reason: he confirms
+// against what the record holds, never against the word "delete". The card
+// title already carries the date and the activity, so this is the part of it he
+// cannot see while deciding.
+function sessionDeleteSummary(s) {
+  if (sessionKind(s) === 'cardio') return cardioSummary(s);
+  const exercises = (s && s.exercises) || [];
+  const sets = exercises.reduce((n, e) => n + (((e && e.sets) || []).length), 0);
+  if (!exercises.length) return 'nothing logged in it';
+  return `${exercises.length} exercise${exercises.length === 1 ? '' : 's'}, ${sets} set${sets === 1 ? '' : 's'}`;
+}
+
+function sessionDeleteBlock(s) {
+  return `<div class="card__note" style="margin-top:12px">Are you sure? This deletes ${esc(sessionDeleteSummary(s))} and cannot be undone.</div>
+    <button class="btn btn--filled btn--block" onclick="deleteSession('${s.id}')" style="margin-top:10px">Delete this session</button>
+    <button class="btn btn--tonal btn--block" onclick="cancelDeleteSession()" style="margin-top:8px">Keep it</button>`;
+}
+
 function sessionCard(s) {
-  const del = `<button class="icon-btn" onclick="deleteSession('${s.id}')"><span class="material-icons-round">delete</span></button>`;
+  const armed = sessionDeleteArmed === s.id;
+  const del = armed
+    ? ''
+    : `<button class="icon-btn" onclick="armDeleteSession('${s.id}')" aria-label="Delete this session"><span class="material-icons-round">delete</span></button>`;
+  const confirm = armed ? sessionDeleteBlock(s) : '';
   if (sessionKind(s) === 'cardio') {
     return `<div class="card">
       <div class="card__title-row"><h2>${niceDate(s.date)} · ${esc(s.activity)}</h2>${del}</div>
       <div class="exercise-line"><span>${esc(cardioSummary(s))}</span><span>cardio</span></div>
       ${sessionNoteLine(s)}
+      ${confirm}
     </div>`;
   }
   const exercises = s.exercises || [];
@@ -1193,6 +1246,7 @@ function sessionCard(s) {
     ${exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets.length} sets${e.rpe != null ? ` \u00b7 ${linkGlossary('RPE')} ${e.rpe}` : ''}</span></div>`).join('')}
     <div style="font-size:12px;color:var(--md-on-surface-variant);margin-top:6px">Volume: ${Math.round(volume).toLocaleString()} kg</div>
     ${sessionNoteLine(s)}
+    ${confirm}
   </div>`;
 }
 
@@ -1203,6 +1257,18 @@ function renderRecentSessions() {
     : `<div class="empty">No sessions logged yet.</div>`;
 }
 function deleteSession(id) {
+  // Checked here as well as at the draw. The card only draws the confirm button
+  // for the armed session, but the bin's own handler used to be this function,
+  // so anything still holding that shape -- a card drawn before this change, a
+  // later caller that forgets to arm -- must not be able to delete through it.
+  if (sessionDeleteArmed !== id) {
+    toast('Tap the bin on that session first.');
+    return;
+  }
+  // Nothing disarms here on purpose: `renderLog` below is the single place that
+  // clears it, and a second assignment in this function is redundant -- a
+  // mutation that deleted it left the whole suite green, which is the honest
+  // proof that it was doing nothing.
   recordDeletion('sessions', id);
   store.set('sessions', store.get('sessions', []).filter(s => s.id !== id));
   renderLog();
