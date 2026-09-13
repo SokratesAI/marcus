@@ -144,6 +144,18 @@ describe("the block a phase implies", () => {
     expect(weeks.some((w: any) => w.phase === "Build")).toBe(true);
   });
 
+  it("stops at a week with no phase rather than rolling into it", () => {
+    const app = loadApp([]);
+    // A goal whose last milestone falls before its target date leaves
+    // phase-less rows at the end of the calendar. Those are not a phase and
+    // must never become a block -- the button would name `null`.
+    const weeks = [{ start: "2026-01-05", phase: "Base" }, { start: "2026-01-12", phase: "Base" },
+                   { start: "2026-01-19", phase: null }, { start: "2026-01-26", phase: null }];
+    const got = vm.runInContext(
+      `phaseBlock(${JSON.stringify(weeks)}, ["2026-01-12"])`, app) as any[];
+    expect(got).toHaveLength(0);
+  });
+
   it("is empty when this week has no phase, and when there is no calendar", () => {
     const app = loadApp([]);
     expect(vm.runInContext("phaseBlock([{ start: '2026-01-05', phase: null }, { start: '2026-01-12', phase: 'Base' }], [])", app)).toHaveLength(0);
