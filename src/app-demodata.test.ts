@@ -1,4 +1,4 @@
-import { renderApp } from "./app-dom.js";
+import { renderApp, settle } from "./app-dom.js";
 import { describe, it, expect } from "vitest";
 
 // The notice is rendered markup rather than wired listeners, so this uses the
@@ -8,8 +8,9 @@ import { describe, it, expect } from "vitest";
 // name from here and the store is read through the localStorage it writes to,
 // under the same `marcus.` prefix `store.get` uses. The functions under test
 // are declarations, so those come off `window` directly.
-function load(seed: Record<string, unknown> = {}) {
+async function load(seed: Record<string, unknown> = {}) {
   const app = renderApp("home", seed);
+  await settle();
   const win: any = app.window;
   return {
     ...app,
@@ -31,17 +32,17 @@ function load(seed: Record<string, unknown> = {}) {
 const SEEDED = ["sessions", "weights", "meals"];
 
 describe("the demo data a new browser is seeded with", () => {
-  it("records which stores seed() actually filled", () => {
-    const app = load();
+  it("records which stores seed() actually filled", async () => {
+    const app = await load();
     expect(app.get("demoSeeded")).toEqual(SEEDED);
     app.close();
   });
 
-  it("claims nothing in a browser that already held its own log", () => {
+  it("claims nothing in a browser that already held its own log", async () => {
     // A returning browser takes none of seed()'s branches. The separating input
     // is `plan`: seed() keys every branch on its own store, so all four have to
     // be present for nothing to be written.
-    const app = load({
+    const app = await load({
       plan: {
         blockName: "mine",
         // Every weekday, because Home looks up today by name and this test has
@@ -59,8 +60,8 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("counts only the seeded stores that still hold records", () => {
-    const app = load();
+  it("counts only the seeded stores that still hold records", async () => {
+    const app = await load();
     app.set("weights", []);
     const summary = app.win.demoSeededSummary();
     expect(summary.map((s: any) => s.key)).toEqual(["sessions", "meals"]);
@@ -68,15 +69,15 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("stops claiming anything once every seeded store is empty", () => {
-    const app = load();
+  it("stops claiming anything once every seeded store is empty", async () => {
+    const app = await load();
     app.win.clearTrainingLog();
     expect(app.win.demoSeededSummary()).toEqual([]);
     app.close();
   });
 
-  it("says so on Home, with the counts, above the plan", () => {
-    const app = load();
+  it("says so on Home, with the counts, above the plan", async () => {
+    const app = await load();
     const html = app.html();
     expect(html).toContain("This is demo data");
     // The counts are the point: he confirms against what is there, never
@@ -87,16 +88,16 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("is gone from Home once there is nothing seeded left", () => {
-    const app = load();
+  it("is gone from Home once there is nothing seeded left", async () => {
+    const app = await load();
     app.win.clearTrainingLog();
     app.win.renderHome();
     expect(app.html()).not.toContain("This is demo data");
     app.close();
   });
 
-  it("asks before it deletes, and names the total", () => {
-    const app = load();
+  it("asks before it deletes, and names the total", async () => {
+    const app = await load();
     expect(app.html()).not.toContain("Are you sure?");
     const total = app.count("sessions") + app.count("weights") + app.count("meals");
 
@@ -108,10 +109,10 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("leaving Home disarms the confirm", () => {
+  it("leaving Home disarms the confirm", async () => {
     // An armed card left live across a tab switch is a Delete-all-of-it under
     // his thumb on a screen he did not arm.
-    const app = load();
+    const app = await load();
     app.win.armClearDemo();
     expect(app.html()).toContain("Are you sure?");
     app.win.switchTab("plan");
@@ -121,8 +122,8 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("cancelling leaves the records and the notice both standing", () => {
-    const app = load();
+  it("cancelling leaves the records and the notice both standing", async () => {
+    const app = await load();
     app.win.armClearDemo();
     app.win.cancelClearDemo();
     expect(app.html()).toContain("This is demo data");
@@ -132,8 +133,8 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("clearing empties exactly the seeded stores and writes tombstones", () => {
-    const app = load();
+  it("clearing empties exactly the seeded stores and writes tombstones", async () => {
+    const app = await load();
     const sessions = app.count("sessions");
     const plan = app.get("plan");
     app.win.armClearDemo();
@@ -151,11 +152,11 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("clears only what was seeded, so a real goal logged since survives", () => {
+  it("clears only what was seeded, so a real goal logged since survives", async () => {
     // The separating input: a goal the user actually set, in a store that is in
     // LOGGED_STORES but was never seeded. Clearing the whole logged set would
     // take it, and a fresh browser has no goals, so nothing else notices.
-    const app = load();
+    const app = await load();
     app.set("goals", [{ id: "g1", text: "Olympic triathlon next August", targetDate: "2027-08-14", milestones: [] }]);
     app.win.clearDemoData();
     expect(app.get("goals")).toEqual([{ id: "g1", text: "Olympic triathlon next August", targetDate: "2027-08-14", milestones: [] }]);
@@ -163,8 +164,8 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("keeping it answers the question for good, without deleting anything", () => {
-    const app = load();
+  it("keeping it answers the question for good, without deleting anything", async () => {
+    const app = await load();
     const sessions = app.count("sessions");
     app.win.keepDemoData();
 
@@ -175,8 +176,8 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("restoring a backup file drops the claim -- those records are his", () => {
-    const app = load();
+  it("restoring a backup file drops the claim -- those records are his", async () => {
+    const app = await load();
     app.win.restoreBackup({ data: { sessions: [{ id: "real-1", date: "2026-09-12", day: "Friday", exercises: [] }] } });
     expect(app.get("demoSeeded")).toEqual([]);
     app.win.renderHome();
@@ -184,8 +185,8 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
-  it("adopting the server copy drops the claim, so real history is not called demo", () => {
-    const app = load();
+  it("adopting the server copy drops the claim, so real history is not called demo", async () => {
+    const app = await load();
     expect(app.get("demoSeeded")).toEqual(SEEDED);
 
     const adopted = app.win.adoptServerCopy({
