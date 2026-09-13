@@ -203,7 +203,7 @@ describe("askMarcus and the profile block", () => {
     const { ctx } = loadWithReply(`August works.\n\n${GOAL_BLOCK}\n${BLOCK}`);
     const out = await ctx.askMarcus("born 1994, doing Oslo Tri next August");
     expect(out.text).toBe("August works.");
-    expect(out.goal).toEqual({ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    expect(out.goals).toEqual([{ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" }]);
     expect(out.fact).toEqual({ text: "Born 1994. Semi-active." });
   });
 
@@ -318,7 +318,7 @@ describe("the fact card", () => {
     }]);
     ctx.acceptCoachFact(1000);
     ctx.renderChatMessages();
-    expect(byId.chatMessages.innerHTML).toContain("acceptCoachGoal(1000)");
+    expect(byId.chatMessages.innerHTML).toContain("acceptCoachGoal(1000, 0)");
     expect(ctx.store.get("goals", [])).toEqual([]);
   });
 

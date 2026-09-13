@@ -339,7 +339,7 @@ export const GOAL_INSTRUCTION = [
   '```goal',
   '{"text": "Olympic triathlon at Oslo Tri", "targetDate": "2027-08-14"}',
   "```",
-  'Rules: `text` is his goal in his own words, short enough to read on a card. `targetDate` is `YYYY-MM-DD` if he named a day or a month you can pin to one, and `""` if there is no date -- an ongoing goal is a real goal and must not be given an invented date. One block per reply, for the single clearest goal. Do not write a block for a goal already in TRAINING DATA above, and do not write one because you think he should have a goal -- only when he has actually told you one in this conversation. He has to confirm it before anything is saved, so do not claim in your reply that you have saved it; say you have written it down for him to confirm.',
+  'Rules: `text` is his goal in his own words, short enough to read on a card. `targetDate` is `YYYY-MM-DD` if he named a day or a month you can pin to one, and `""` if there is no date -- an ongoing goal is a real goal and must not be given an invented date. One block per goal he actually stated, in the order he said them -- if he named a race and an ongoing aim in the same message, write both, because he should not have to say the second one again to get a card for it. Do not write a block for a goal already in TRAINING DATA above, and do not write one because you think he should have a goal -- only when he has actually told you one in this conversation. He has to confirm each one before anything is saved, so do not claim in your reply that you have saved anything; say you have written them down for him to confirm.',
 ].join("\n");
 
 /** The other half of the profile record (issue #157).
@@ -370,7 +370,7 @@ export function profileInstruction(hasAbout: boolean): string {
       hasAbout ? "Do not write a block for anything already in ABOUT EDVARD above." : "",
       "Do not write one for how a single session went or how he feels today -- that is training data, not who he is.",
       "He has to confirm it before anything is saved, so do not claim you have saved it; say you have noted it down for him to confirm.",
-      "This block and a goal block can both appear in one reply, goal block first.",
+      "This block and any goal blocks can all appear in one reply, the goal blocks first.",
     ]
       .filter(Boolean)
       .join(" "),
