@@ -82,16 +82,39 @@ describe("the demo data a new browser is seeded with", () => {
     expect(html).toContain("This is demo data");
     // The counts are the point: he confirms against what is there, never
     // against the word "demo".
-    expect(html).toMatch(/filled this browser with \d+ sessions, \d+ bodyweights and \d+ meals/);
+    // The training week is on the list too. It is demo data as much as the rows
+    // are and it is the largest thing on the screen -- Home's Today card is
+    // nothing but this week -- and until now the card named everything except it.
+    expect(html).toMatch(/filled this browser with \d+ sessions, \d+ bodyweights, \d+ meals and a training week/);
     // Above the plan card, or the first thing he reads is a plan he never chose.
     expect(html.indexOf("This is demo data")).toBeLessThan(html.indexOf("Today"));
     app.close();
   });
 
-  it("is gone from Home once there is nothing seeded left", async () => {
+  it("still stands on the made-up week once every seeded row is gone", async () => {
+    // Exactly where Edvard was at 08:03 on 2026-09-13: he had deleted all sixteen
+    // demo sessions by hand and Home still drew a bench-press day for a man who
+    // had told Marcus he runs and rides. The row counts were empty; the week was
+    // not, and nothing on the screen said so.
     const app = await load();
     app.win.clearTrainingLog();
     app.win.renderHome();
+    expect(app.win.demoSeededSummary()).toEqual([]);
+    expect(app.html()).toContain("This is demo data");
+    expect(app.html()).toContain("a training week");
+    app.close();
+  });
+
+  it("is gone from Home once the week is not the made-up one either", async () => {
+    const app = await load();
+    app.win.clearTrainingLog();
+    // One exercise changed is enough: the claim is a comparison against the
+    // template, not a stored flag some writer has to remember to clear.
+    const plan = app.get("plan");
+    plan.days[0].exercises[0].name = "Threshold intervals";
+    app.set("plan", plan);
+    app.win.renderHome();
+    expect(app.win.planIsDemo()).toBe(false);
     expect(app.html()).not.toContain("This is demo data");
     app.close();
   });
@@ -143,12 +166,28 @@ describe("the demo data a new browser is seeded with", () => {
     expect(app.get("sessions")).toEqual([]);
     expect(app.get("weights")).toEqual([]);
     expect(app.get("meals")).toEqual([]);
-    // The plan is a template, not a record of a workout, and seed() rewrites it
-    // the moment it is falsy -- clearing it would put the demo block straight back.
-    expect(app.get("plan")).toEqual(plan);
+    // The made-up week goes with the log. Emptied rather than deleted, because
+    // Home reads `plan.days` and because seedShell rewrites a falsy plan on the
+    // next boot, which would put the bodybuilding block straight back.
+    expect(app.get("plan")).not.toEqual(plan);
+    expect(app.get("plan").blockName).toBe("No plan yet");
+    expect(app.get("plan").days.map((d: any) => d.day)).toEqual(
+      ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
+    expect(app.get("plan").days.every((d: any) => d.exercises.length === 0)).toBe(true);
     // Without tombstones the other phone merges every cleared session back.
     expect((app.get("deletions") || []).filter((d: any) => d.store === "sessions").length).toBe(sessions);
     expect(app.html()).not.toContain("This is demo data");
+    app.close();
+  });
+
+  it("says today is unplanned after the clear, not that it is a rest day", async () => {
+    // Every day of the empty week is `Open`, and the Today card's only empty
+    // state used to read "Rest day -- recovery is training too." for any day
+    // with no exercises, which would call a plan he no longer has a recovery day.
+    const app = await load();
+    app.win.clearDemoData();
+    expect(app.html()).toContain("Nothing planned for today yet.");
+    expect(app.html()).not.toContain("recovery is training too");
     app.close();
   });
 

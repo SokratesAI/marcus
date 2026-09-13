@@ -66,14 +66,19 @@ function renderHome() {
   // First thing on the first screen, above the plan: if these numbers are not
   // his, nothing below this card means what it says.
   const demo = demoSeededSummary();
+  // The week is demo data even after every seeded row is gone -- which is exactly
+  // where he was on 2026-09-13, having deleted all sixteen sessions by hand while
+  // Home still drew a bench-press day for a man who had told Marcus he runs and
+  // rides. So the card stands on the plan alone, not only on the row counts.
+  const planDemo = planIsDemo();
 
   view.innerHTML = `
-    ${demo.length ? demoNoticeCard(demo) : ``}
+    ${demo.length || planDemo ? demoNoticeCard(demo, planDemo) : ``}
     <div class="card">
       <div class="card__title-row"><h2>Today · ${todayName}</h2><span class="chip ${todayPlan.focus==='Rest'?'':'chip--primary'}">${esc(todayPlan.focus)}</span></div>
       ${todayPlan.exercises.length ? todayPlan.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}×${e.reps}</span></div>`).join('') : ``}
       ${todayPlan.cardio ? `<div class="exercise-line"><span>${esc(todayPlan.cardio.activity)}</span><span>${todayPlan.cardio.minutes} min</span></div>` : ``}
-      ${!todayPlan.exercises.length && !todayPlan.cardio ? `<div class="empty">Rest day — recovery is training too.</div>` : ``}
+      ${!todayPlan.exercises.length && !todayPlan.cardio ? `<div class="empty">${todayPlan.focus === 'Rest' ? 'Rest day — recovery is training too.' : 'Nothing planned for today yet.'}</div>` : ``}
       ${doneToday ? `<div class="exercise-line exercise-line--done"><span><span class="material-icons-round">check_circle</span> Logged today</span><span>${esc(doneToday.label)}</span></div>` : ``}
       <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="switchTab('log')"><span class="material-icons-round">add</span> ${doneToday ? 'Log another session' : 'Log this session'}</button>
     </div>
@@ -3425,10 +3430,35 @@ function demoSeededSummary() {
   return clearableSummary(keys.filter(k => DEMO_LABELS[k]));
 }
 
+// He can answer "it is mine now" about the plan the same way he can about the
+// log, and that answer has to stick across reloads -- `planIsDemo` is computed
+// rather than stored, so without this the card would come straight back.
+const DEMO_PLAN_KEPT_KEY = 'demoPlanKept';
+
 // Answered, either way. `[]` rather than a delete because `store.get` has no
 // remove and an empty array is what `demoSeededSummary` already treats as "no
 // claim" -- one shape for the absent case instead of two.
-function forgetDemoSeeded() { store.set(DEMO_SEEDED_KEY, []); }
+//
+// Answers for the plan as well as the log, and deliberately so: every caller --
+// "keep it, it is mine now", a restored backup file, an adopted server copy --
+// is saying the same thing about everything on the screen, and a card that went
+// on calling his own training week made-up after he restored it would be the
+// notice outliving its own question.
+function forgetDemoSeeded() { store.set(DEMO_SEEDED_KEY, []); store.set(DEMO_PLAN_KEPT_KEY, true); }
+
+
+// Is the training week on screen still the one Marcus made up? The plan is demo
+// data as much as the sixteen sessions were, and nothing has ever said so: it is
+// not in `demoSeeded` because `seedShell` writes it at load in every browser,
+// and it is not in LOGGED_STORES because clearing it would put it back on the
+// next boot. Recognised by comparing against the template instead of by a stored
+// marker, so it stops being demo the moment he or the coach changes one exercise
+// -- there is no writer that has to remember to clear a flag.
+function planIsDemo() {
+  if (store.get(DEMO_PLAN_KEPT_KEY, false)) return false;
+  const plan = store.get('plan', null);
+  return !!plan && JSON.stringify(plan) === JSON.stringify(demoPlanTemplate());
+}
 
 // Armed, not persisted: a confirm is about the tap that is happening now, so a
 // reload should land back on the question rather than on the answer.
@@ -3444,6 +3474,11 @@ function keepDemoData() { demoClearArmed = false; forgetDemoSeeded(); renderHome
 function clearDemoData() {
   const keys = demoSeededSummary().map(s => s.key);
   const result = clearTrainingLog(keys);
+  // The week goes with the log. Replaced rather than deleted, because Home reads
+  // `plan.days` and because `seedShell` rewrites a missing plan on the next boot,
+  // which would put the bodybuilding block straight back.
+  const planCleared = planIsDemo();
+  if (planCleared) store.set('plan', emptyPlanTemplate());
   demoClearArmed = false;
   // Forgotten whether or not every store cleared: the claim has been answered,
   // and a store this browser refused to write is not one a second confirm will
@@ -3451,15 +3486,18 @@ function clearDemoData() {
   forgetDemoSeeded();
   const total = result.cleared.reduce((n, s) => n + s.count, 0);
   if (result.failed.length) toast('This browser refused to clear some of the demo data.');
-  else toast('Cleared. ' + total + ' demo record(s) deleted.');
+  else toast('Cleared. ' + total + ' demo record(s) deleted' + (planCleared ? ', and the made-up week is empty.' : '.'));
   renderHome();
 }
 
 // "16 sessions, 14 bodyweights and 18 meals" -- the count is the point, the same
 // way it is for the clear button and the restore preview: he confirms against
 // what is actually there, never against the word "demo".
-function demoNoticeCard(summary) {
+function demoNoticeCard(summary, planDemo) {
   const parts = summary.map(s => s.count + ' ' + esc(DEMO_LABELS[s.key] || s.key) + (s.count === 1 ? '' : 's'));
+  // The plan is the one piece of demo data that is not a row count, and it is the
+  // one drawn largest -- Home's Today card is nothing but this week.
+  if (planDemo) parts.push('a training week');
   const list = parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : parts[0];
   const total = summary.reduce((n, s) => n + s.count, 0);
   return `
@@ -3467,7 +3505,7 @@ function demoNoticeCard(summary) {
       <div class="card__title-row"><h2>This is demo data</h2><span class="chip">not yours</span></div>
       <p class="card__note">Marcus filled this browser with ${list} so there was something to show. None of it is a workout you did, and every chart in the app is drawn from it.</p>
       ${demoClearArmed ? `
-      <div class="card__note" style="margin-top:10px">Are you sure? This deletes ${total} record(s) from this browser and from the server copy, and cannot be undone.</div>
+      <div class="card__note" style="margin-top:10px">Are you sure? This deletes ${total} record(s) from this browser and from the server copy${planDemo ? ' and empties the training week' : ''}, and cannot be undone.</div>
       <button class="btn btn--filled btn--block" style="margin-top:10px" onclick="clearDemoData()">Delete all of it</button>
       <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="cancelClearDemo()">Cancel</button>` : `
       <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="armClearDemo()"><span class="material-icons-round">delete_sweep</span> Clear the demo data</button>

@@ -3071,11 +3071,17 @@ const DEMO_SEEDED_KEY = 'demoSeeded';
 // half still runs at load while the demo *log* below waits for the server.
 // Neither of these is a record of anything: the plan is a template and the
 // greeting is Marcus saying hello.
-function seedShell() {
-  if (!store.get('plan')) {
-    store.set('plan', {
-      blockName: 'Hypertrophy Block — Week 5',
-      days: [
+// The week `seedShell` writes into a browser that has never opened Marcus.
+// It is a made-up bodybuilding block and it is the most prominent thing on the
+// first screen: Home's Today card is drawn straight from it. Lifted out of
+// `seedShell` so that `planIsDemo` in app.js can recognise it again later --
+// comparing against the template is what lets the app stop calling it demo the
+// moment a single exercise in it changes, with no stored marker to go stale.
+// A fresh object every call, because the plan editor mutates what it is given.
+function demoPlanTemplate() {
+  return {
+    blockName: 'Hypertrophy Block — Week 5',
+    days: [
         { day: 'Monday', focus: 'Push', exercises: [
           { name: 'Barbell Bench Press', sets: 4, reps: 8 },
           { name: 'Overhead Press', sets: 3, reps: 10 },
@@ -3106,8 +3112,26 @@ function seedShell() {
           { name: 'Rowing Erg', sets: 1, reps: 1 },
         ]},
         { day: 'Sunday', focus: 'Rest', exercises: [] },
-      ]
-    });
+    ]
+  };
+}
+
+// What replaces the demo week when he clears the demo data. Not an absent plan:
+// `renderHome` reads `plan.days` and a browser without one cannot draw its own
+// front page, which is the wall Cycle 1496 hit at 218 red tests. Every day is
+// `Open` rather than `Rest` so the Today card can say nothing is planned
+// instead of calling a gap a recovery day.
+function emptyPlanTemplate() {
+  return {
+    blockName: 'No plan yet',
+    days: ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+      .map(day => ({ day, focus: 'Open', exercises: [] }))
+  };
+}
+
+function seedShell() {
+  if (!store.get('plan')) {
+    store.set('plan', demoPlanTemplate());
   }
 
   if (!store.get('chat')) {
