@@ -397,6 +397,11 @@ async function fetchWeekDraft(row) {
         sessions: store.get('sessions', []),
         weights: store.get('weights', []),
         goals: store.get('goals', []),
+        // What he has told the app about himself (issue #157). The chat has
+        // read this since it was built; the week draft never did, so the record
+        // saying he runs and rides was invisible to the thing writing his
+        // strength days.
+        profile: profileText(),
       },
     }),
   });
