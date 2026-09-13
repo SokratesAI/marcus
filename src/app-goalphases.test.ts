@@ -92,6 +92,12 @@ describe("asking Marcus to shape the phases", () => {
     // Under four weeks the app's own cut writes one straight Build; there is
     // nothing to periodise, and the server refuses the same question.
     expect(ask({ targetDate: shift(20), created: t })).toBe(false);
+    // The Plan tab draws a card for every goal, passed ones included, so a race
+    // that has gone would otherwise show a live button: 200 days wide, all of
+    // it behind him, and the phases it comes back with end before today.
+    expect(ask({ targetDate: shift(-40), created: shift(-240) })).toBe(false);
+    // Today still counts -- a block can end this morning.
+    expect(ask({ targetDate: t, created: shift(-240) })).toBe(true);
   });
 
   it("sends the goal, his calendar day and his records", async () => {
