@@ -187,6 +187,48 @@ export function calendarWeekLine(row: unknown): string | null {
   );
 }
 
+/** A week already drafted ahead, as the page holds it in `plannedWeeks`. */
+export interface DraftPreviousWeek {
+  start?: unknown;
+  label?: unknown;
+  days?: unknown;
+}
+
+/** The week drafted immediately before the one being asked for.
+ *
+ * Every draft so far has been blind to every other draft: TRAINING DATA carries
+ * his logged sessions, which stop at today, so a block of four Base weeks was
+ * four calls that could each see his history and none of the three weeks beside
+ * it. The prompt told the model the week was "one step in a progression" and
+ * then gave it no previous step, so the only thing that actually moved between
+ * those weeks was the kilogram target the page computed. This is the step.
+ *
+ * It is the drafted week, not the calendar week before it: if week 3 was never
+ * drafted, week 2 is what week 4 has to build on, and the date says how far
+ * back that was rather than leaving the model to assume it was last week. */
+export function previousWeekLine(previous: unknown): string | null {
+  if (!previous || typeof previous !== "object") return null;
+  const p = previous as DraftPreviousWeek;
+  const start = isoDay(p.start);
+  if (!start) return null;
+  // Every field this then interpolates is checked, the way `calendarWeekLine`
+  // checks its row: the days come from the page unread, and a `days` holding
+  // prose rather than days would be dumped into the prompt as if it were a week.
+  // The shape check is deliberately shallow -- `parseDraftReply` is what knows
+  // what a day must contain, and re-stating its rules here would be the same
+  // rules in two places disagreeing later.
+  if (!Array.isArray(p.days) || !p.days.length) return null;
+  if (!p.days.every((d) => d && typeof d === "object" && !Array.isArray(d) && typeof (d as { day?: unknown }).day === "string")) {
+    return null;
+  }
+  const label = typeof p.label === "string" && p.label.trim() ? ` (${p.label.trim()})` : "";
+  return [
+    `THE WEEK ALREADY DRAFTED BEFORE IT, starting ${start}${label} -- ` +
+      "this is what the new week continues from, not something to repeat:",
+    JSON.stringify(p.days, null, 1),
+  ].join("\n");
+}
+
 /** The prompt is built here rather than in the browser for the same reason
  * `buildPrompt` is: what reaches the model is decided in one place and is
  * testable. */
@@ -196,12 +238,14 @@ export function buildDraftPrompt(
   todayISO?: string,
   week?: unknown,
   calendarWeek?: unknown,
+  previousWeek?: unknown,
 ): string {
   const today = isoDay(todayISO) ?? new Date().toISOString().slice(0, 10);
   const phased = (Array.isArray(goals) ? goals : goals ? [goals] : []).some(
     (g) => g && typeof g.text === "string" && g.text.trim() && phasePosition(g, today),
   );
   const calendar = calendarWeekLine(calendarWeek);
+  const previous = previousWeekLine(previousWeek);
   const progression = calendar
     ? [
         '- The week is one step in a progression from Base through Build and Peak to Taper: shape it for the week in the "Draft the week starting" line above, not for the current week, and name that phase and week in the note. Where his goals pull in different directions, that goal\'s week comes first.',
@@ -222,6 +266,7 @@ export function buildDraftPrompt(
     goalLines(goals, context.goals, today),
     ...(calendar ? [calendar] : []),
     ...(target ? [target] : []),
+    ...(previous ? [previous] : []),
     "TRAINING DATA (his own records, as stored by the app)",
     JSON.stringify(
       {
@@ -244,6 +289,11 @@ export function buildDraftPrompt(
       "- Use the exercises he already logs where they fit; the week is his, not a textbook's.",
       '- "note" is one plain sentence he will read above the week.',
       ...progression,
+      ...(previous
+        ? [
+            "- Move on from the week already drafted before it: keep the shape he is training in, and change what a week of progress changes -- a set, a rep, a distance, a session's emphasis. Do not hand back that week again.",
+          ]
+        : []),
       ...sizing,
     ].join("\n"),
   ].join("\n\n");
@@ -391,13 +441,16 @@ export async function draftWeek(
     week?: unknown;
     /** A Plan-tab calendar row, unchecked; `calendarWeekLine` checks it. */
     calendarWeek?: unknown;
+    /** The week drafted before this one, unchecked; `previousWeekLine` checks it. */
+    previousWeek?: unknown;
   },
 ): Promise<DraftResult> {
   // No history: a draft is a single question about his records, not a turn in
   // a conversation, and re-sending the chat would put the chat's tone in it.
   const empty: ChatTurn[] = [];
   const result = await askCoach(
-    buildDraftPrompt(goal, context, deps.today, deps.week, deps.calendarWeek), context, empty, deps);
+    buildDraftPrompt(goal, context, deps.today, deps.week, deps.calendarWeek, deps.previousWeek),
+    context, empty, deps);
   if (result.status !== "ok") return result;
   const parsed = parseDraftReply(result.reply);
   if (!parsed.ok) return { status: "unusable", reason: parsed.reason };
