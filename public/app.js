@@ -3106,12 +3106,12 @@ function renderProgress() {
 
   charts.weight = new Chart(document.getElementById('weightChart'), {
     type: 'line',
-    data: { labels: weightDays.labels.map(niceDate), datasets: [{ data: weightDays.values, spanGaps: true, borderColor: '#2E7D32', backgroundColor: 'rgba(46,125,50,.15)', tension: .3, fill: true, pointRadius: 2 }] },
+    data: { labels: weightDays.labels.map((iso) => niceDate(iso)), datasets: [{ data: weightDays.values, spanGaps: true, borderColor: '#2E7D32', backgroundColor: 'rgba(46,125,50,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
   charts.measure = new Chart(document.getElementById('measureChart'), {
     type: 'line',
-    data: { labels: measureDays.labels.map(niceDate), datasets: [{ data: measureDays.values, spanGaps: true, borderColor: '#8E24AA', backgroundColor: 'rgba(142,36,170,.15)', tension: .3, fill: true, pointRadius: 2 }] },
+    data: { labels: measureDays.labels.map((iso) => niceDate(iso)), datasets: [{ data: measureDays.values, spanGaps: true, borderColor: '#8E24AA', backgroundColor: 'rgba(142,36,170,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
   charts.volume = new Chart(document.getElementById('volumeChart'), {
@@ -3121,7 +3121,7 @@ function renderProgress() {
   });
   charts.cal = new Chart(document.getElementById('calChart'), {
     type: 'line',
-    data: { labels: calDays.labels.map(niceDate), datasets: [{ data: calDays.values, spanGaps: true, borderColor: '#5B8DEF', backgroundColor: 'rgba(91,141,239,.15)', tension: .3, fill: true, pointRadius: 2 }] },
+    data: { labels: calDays.labels.map((iso) => niceDate(iso)), datasets: [{ data: calDays.values, spanGaps: true, borderColor: '#5B8DEF', backgroundColor: 'rgba(91,141,239,.15)', tension: .3, fill: true, pointRadius: 2 }] },
     options: common
   });
 }

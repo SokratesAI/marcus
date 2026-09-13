@@ -74,6 +74,20 @@ describe("niceDate names the year only when it is not this one", () => {
     expect(jan).toContain("2032");
   });
 
+  it("ignores a second argument that is not a date string", () => {
+    const { niceDate } = loadApp();
+    // Three chart axes call this as `.map(niceDate)`, which hands the array
+    // index to the second parameter. `new Date('0T00:00')` is Invalid Date and
+    // `getFullYear()` is NaN, which is never equal to anything -- so without
+    // this guard every chart label printed a year. The call sites pass one
+    // argument now and this pins the function against the next one that does not.
+    const thisYear = new Date().getFullYear();
+    expect(niceDate(`${thisYear}-06-15`, 0 as any)).not.toContain(String(thisYear));
+    expect(niceDate(`${thisYear}-06-15`, 2 as any)).not.toContain(String(thisYear));
+    expect([`${thisYear}-06-15`, `${thisYear}-06-16`].map(niceDate).join(" "))
+      .not.toContain(String(thisYear));
+  });
+
   it("reads the current year off the clock when no date is passed", () => {
     const { niceDate } = loadApp();
     const thisYear = new Date().getFullYear();
