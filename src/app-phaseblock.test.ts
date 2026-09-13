@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 // Same vm shape as app-racecalendar-draft.test.ts. `replies` is consumed one
 // per /api/plan-draft call, so a test can make the third week fail and check
 // that the two before it stayed saved.
-function loadApp(sent: string[], replies?: any[]): any {
+function loadApp(sent: string[], replies?: any[], failWriteFrom?: number): any {
   const makeNode = (): any => ({
     value: "", textContent: "", innerHTML: "", hidden: false, style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -21,12 +21,23 @@ function loadApp(sent: string[], replies?: any[]): any {
     addEventListener() {},
   };
   const stored: Record<string, string> = {};
+  let writes = 0;
   const ctx: any = {
     console, setTimeout, clearTimeout, Math, JSON, Number, String, Array, Object, Date,
     document, navigator: {},
     localStorage: {
       getItem: (k: string) => (k in stored ? stored[k] : null),
-      setItem: (k: string, v: string) => { stored[k] = v; },
+      // A real phone runs out of room, and the only way to see what the app
+      // says when it does is to make setItem throw the error it really throws.
+      // Counted per key, so a test can say "the third planned week fails"
+      // without knowing how many other stores the fixture wrote first.
+      setItem: (k: string, v: string) => {
+        if (k === "marcus.plannedWeeks") writes++;
+        if (failWriteFrom && k === "marcus.plannedWeeks" && writes >= failWriteFrom) {
+          const err: any = new Error("quota"); err.name = "QuotaExceededError"; throw err;
+        }
+        stored[k] = v;
+      },
     },
     getComputedStyle: () => ({ getPropertyValue: () => "#000" }),
     Chart: function () { return { destroy() {} }; },
@@ -43,6 +54,10 @@ function loadApp(sent: string[], replies?: any[]): any {
   vm.createContext(ctx);
   vm.runInContext(
     APP_SOURCE +
+      // toast writes to one element with no queue, so the LAST call wins on
+      // his screen -- the test keeps them all and then checks which was last.
+      "\n;globalThis.__toasts = [];" +
+      "\n;const __toast = toast; toast = function (m) { globalThis.__toasts.push(String(m)); };" +
       "\n;globalThis.draftPhase = draftPhase;" +
       "\n;globalThis.phaseBlock = phaseBlock;" +
       "\n;globalThis.phaseBlockLabel = phaseBlockLabel;",
@@ -147,6 +162,43 @@ describe("drafting the block", () => {
     const want = block(app, planned.map((w: any) => w.start));
     expect(want.length).toBeGreaterThan(0);
     expect(vm.runInContext("planDraftBusy", app)).toBe(false);
+  });
+
+  it("does not let its own closing toast replace the one about full storage", async () => {
+    // store.set toasts the reason it failed, and this run toasts again after
+    // the loop. toast has no queue, so whatever it says last is all he sees.
+    const sent: string[] = [];
+    const app = loadApp(sent, undefined, 3);
+    const want = block(app);
+    expect(want.length).toBeGreaterThan(2);
+    await vm.runInContext("draftPhase('g1')", app);
+    const toasts: string[] = vm.runInContext("__toasts", app);
+    const last = toasts[toasts.length - 1];
+    expect(toasts.some(t => t.includes("Storage is full"))).toBe(true);
+    // The message he is left looking at has to carry BOTH facts: how far it
+    // got, and the thing he can do about it.
+    expect(last).toContain("Drafted 2 of");
+    expect(last).toContain("delete some old entries");
+    // Three asked for, two of them written down: it stopped at the failure
+    // rather than carrying on asking Marcus for weeks it cannot keep.
+    expect(sent).toHaveLength(3);
+    expect(vm.runInContext("localStorage.getItem('marcus.plannedWeeks')", app)).toContain(want[1].start);
+    expect(vm.runInContext("localStorage.getItem('marcus.plannedWeeks')", app)).not.toContain(want[2].start);
+  });
+
+  it("refuses to start while another draft is running, and says how far it has got", async () => {
+    const sent: string[] = [];
+    const app = loadApp(sent);
+    vm.runInContext("planDraftBusy = true", app);
+    await vm.runInContext("draftPhase('g1')", app);
+    expect(sent).toHaveLength(0);
+    expect(JSON.parse(vm.runInContext("JSON.stringify(store.get('plannedWeeks', []))", app))).toHaveLength(0);
+    // And the button he is looking at counts the week being written now, not
+    // the ones already finished -- 1 of 4 the moment the first one starts.
+    vm.runInContext("planDraftProgress = { done: 1, total: 4 }", app);
+    const html: string = vm.runInContext("raceCalendarBlock(raceCalendar(store.get('goals')[0]), 'g1')", app);
+    expect(html).toContain("Marcus is writing 2 of 4");
+    expect(html).toContain("disabled");
   });
 
   it("draws a block button on the calendar and drops it once the phase is drafted", async () => {

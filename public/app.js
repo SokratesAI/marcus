@@ -410,7 +410,10 @@ async function draftPhase(goalId) {
       if (got.error) { failure = got.error; break; }
       const list = saveWeekAhead(store.get('plannedWeeks', []),
         { days: got.days, note: got.note, weekOf: row.start, label: calendarRowLabel(row) });
-      if (!store.set('plannedWeeks', list)) { failure = 'There was no room to save the rest'; break; }
+      // store.set has already toasted its own, more specific reason, and toast
+      // has no queue -- so the sentence below has to carry the action it told
+      // him to take, or the final toast of this run silently replaces it.
+      if (!store.set('plannedWeeks', list)) { failure = 'The browser would not save the rest — delete some old entries.'; break; }
       saved++;
       planDraftProgress = { done: saved, total: block.length };
       renderPlan();
@@ -422,7 +425,10 @@ async function draftPhase(goalId) {
     planDraftProgress = null;
     renderPlan();
   }
-  if (saved && failure) toast('Drafted ' + saved + ' of ' + block.length + ' weeks — ' + failure);
+  // A full stop rather than a dash, because `failure` is a whole sentence and
+  // is the last thing he will see -- every path through this run ends in
+  // exactly one toast, and it is this one.
+  if (saved && failure) toast('Drafted ' + saved + ' of ' + block.length + ' weeks. ' + failure);
   else if (saved) toast('Drafted ' + (saved === 1 ? '1 week' : saved + ' weeks') + ' of this phase');
   else toast(failure || 'Marcus did not draft a week');
 }
