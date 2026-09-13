@@ -58,6 +58,48 @@ export interface CoachContext {
 // phone screen and the app's own chat sheet holds far more.
 export const MAX_HISTORY_TURNS = 12;
 
+// What the window drops is only ever HIS half. Marcus's own replies are
+// re-derivable from the training data and the plan; a sentence of Edvard's is
+// not stored anywhere else, so once it scrolls past turn twelve the coach has
+// no way back to it -- he tells it about his doctor's cholesterol note on
+// Monday and by Friday it has never heard of it. The browser already posts the
+// whole chat (public/app.js `askMarcus`), so nothing new has to be stored to
+// fix this: his older messages are simply carried forward on their own.
+//
+// The cap here has the same danger behind it as the one above and not a
+// tidiness one: this block is re-sent on every turn, so an unbounded one is a
+// bill that grows with use. 4,000 characters is roughly a thousand tokens --
+// a fraction of the training-data JSON already sent above it -- and about
+// forty phone-typed messages.
+export const MAX_EARLIER_CHARS = 4000;
+
+/** Edvard's own messages from before the recent window, oldest first.
+ *
+ * When the budget binds it keeps the NEWEST that fit and stops at the first
+ * one too big, rather than skipping it and reaching further back: a
+ * contiguous run of what he said is readable, a set with holes in it invites
+ * the model to join two statements that were never next to each other. The
+ * count of what did not fit is returned rather than swallowed, because the
+ * model reading "3 older messages are not shown" knows the conversation goes
+ * back further, and a silently truncated list tells it the opposite. */
+export function earlierInHisWords(
+  history: ChatTurn[],
+  budget: number = MAX_EARLIER_CHARS,
+): { lines: string[]; dropped: number } {
+  const older = history
+    .slice(0, Math.max(0, history.length - MAX_HISTORY_TURNS))
+    .filter((t) => t && t.role !== "marcus" && typeof t.text === "string" && t.text.trim() !== "");
+  const lines: string[] = [];
+  let used = 0;
+  for (let i = older.length - 1; i >= 0; i -= 1) {
+    const line = older[i].text.trim();
+    if (used + line.length > budget) break;
+    used += line.length + 1;
+    lines.unshift(line);
+  }
+  return { lines, dropped: older.length - lines.length };
+}
+
 /** Today's date in Edvard's own timezone, as `YYYY-MM-DD`.
  *
  * The server runs in UTC and he does not, so a bare `toISOString().slice(0, 10)`
@@ -181,6 +223,22 @@ export function buildPrompt(
   ];
   const standing = goalStandings(context.goals ?? [], day);
   if (standing) parts.push("WHERE EACH GOAL STANDS TODAY", standing);
+  const earlier = earlierInHisWords(history);
+  if (earlier.lines.length || earlier.dropped) {
+    parts.push(
+      "EARLIER, IN HIS OWN WORDS",
+      [
+        "Things Edvard said earlier in this same conversation, oldest first, before the recent turns below. Your own replies to them are not shown.",
+        earlier.dropped
+          ? `${earlier.dropped} older message(s) of his are older still and are not shown at all, so this conversation reaches back further than what you can see.`
+          : "",
+        "Treat these as things he has already told you: do not ask him again for something he has said here, and do not describe any of it as new.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      ...(earlier.lines.length ? [earlier.lines.map((l) => `Edvard: ${l}`).join("\n")] : []),
+    );
+  }
   if (recent.length) {
     parts.push(
       "EARLIER IN THIS CONVERSATION",
