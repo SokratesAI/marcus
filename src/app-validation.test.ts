@@ -329,7 +329,10 @@ describe("goals", () => {
       expect(r.ok).toBe(true);
       expect(r.goal.text).toBe("Olympic triathlon next summer");
       expect(r.goal.targetDate).toBe("2027-07-01");
-      expect(r.goal.milestones.map((m: any) => m.label)).toEqual(["Base", "Build", "Peak", "Taper"]);
+      // Ten months out, so the Base/Build pair repeats once -- buildMilestones
+      // below owns why. What this test is about is that validateGoal dates the
+      // phases at all.
+      expect(r.goal.milestones.map((m: any) => m.label)).toEqual(["Base", "Build", "Base", "Build", "Peak", "Taper"]);
     });
 
     it("refuses an empty sentence and a date already gone", () => {
@@ -356,12 +359,72 @@ describe("goals", () => {
   describe("buildMilestones", () => {
     it("lands the last phase exactly on the target date", () => {
       const { ctx } = loadApp();
-      // 2026-08-31 to 2027-07-01 is 304 days, so the phase ends fall at day
-      // 122, 228, 280 and 304 — counted out by hand rather than copied from a
-      // run, because a snapshot of the output cannot disagree with the output.
+      // 2026-08-31 to 2027-07-01 is 304 days. Peak takes its 42-day ceiling and
+      // Taper its 21, leaving 241 for the Base/Build pairs; 241 needs two pairs
+      // to keep Base under 84, so the ends fall at day 64, 121, 185, 241, 283
+      // and 304 — counted out by hand rather than copied from a run, because a
+      // snapshot of the output cannot disagree with the output.
       const ms = ctx.buildMilestones("2026-08-31", "2027-07-01");
       expect(ms.at(-1).date).toBe("2027-07-01");
-      expect(ms.map((m: any) => m.date)).toEqual(["2026-12-31", "2027-04-16", "2027-06-07", "2027-07-01"]);
+      expect(ms.map((m: any) => m.date)).toEqual([
+        "2026-11-03", "2026-12-30", "2027-03-04", "2027-04-29", "2027-06-10", "2027-07-01",
+      ]);
+    });
+
+    it("holds Peak and Taper to a real number of weeks however far off the race is", () => {
+      const { ctx } = loadApp();
+      // Eleven months. On the old shares this was an 8-week Peak and a 4-week
+      // Taper — four weeks of cut volume is detraining, not a taper.
+      const ms = ctx.buildMilestones("2026-09-13", "2027-08-13");
+      const days = (a: string, b: string) =>
+        Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
+      const taper = ms.at(-1), peak = ms.at(-2), beforePeak = ms.at(-3);
+      expect([peak.label, taper.label]).toEqual(["Peak", "Taper"]);
+      expect(days(peak.date, taper.date)).toBe(21);
+      expect(days(beforePeak.date, peak.date)).toBe(42);
+    });
+
+    it("repeats the Base/Build pair on a long goal instead of stretching one of each", () => {
+      const { ctx } = loadApp();
+      const ms = ctx.buildMilestones("2026-09-13", "2027-08-13");
+      expect(ms.map((m: any) => m.label)).toEqual(["Base", "Build", "Base", "Build", "Peak", "Taper"]);
+      // The repeat is said in the note, not the label: PHASE_VOLUME is keyed on
+      // the four labels and a fifth one would resize a week by undefined.
+      expect(ms[0].note).toContain("(block 1 of 2)");
+      expect(ms[2].note).toContain("(block 2 of 2)");
+      const days = (a: string, b: string) =>
+        Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
+      let prev = "2026-09-13";
+      for (const m of ms) {
+        expect(days(prev, m.date)).toBeLessThanOrEqual(84);
+        prev = m.date;
+      }
+    });
+
+    it("keeps every block under the ceiling on a goal two years out, not just one", () => {
+      const { ctx } = loadApp();
+      // Base is the longer half of the pair, so the number of pairs has to be
+      // read off Base rather than off the whole remainder: dividing the
+      // remainder by two blocks gives eleven pairs' worth of space four pairs
+      // wide, and an 89-day Base under an 84-day ceiling.
+      const ms = ctx.buildMilestones("2026-09-13", "2028-09-13");
+      const days = (a: string, b: string) =>
+        Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
+      let prev = "2026-09-13";
+      const spans = ms.map((m: any) => { const d = days(prev, m.date); prev = m.date; return d; });
+      expect(Math.max(...spans)).toBeLessThanOrEqual(84);
+      expect(ms.at(-1).date).toBe("2028-09-13");
+    });
+
+    it("leaves a goal short enough to periodise in one pass exactly where it was", () => {
+      const { ctx } = loadApp();
+      // Twelve weeks: no ceiling binds, so the 40/35/17/8 shares still decide
+      // and every date is the one the shares alone gave before the ceilings
+      // existed. This is the half of the change that has to be a no-op.
+      const ms = ctx.buildMilestones("2026-09-13", "2026-12-06");
+      expect(ms.map((m: any) => m.label)).toEqual(["Base", "Build", "Peak", "Taper"]);
+      expect(ms.map((m: any) => m.date)).toEqual(["2026-10-17", "2026-11-15", "2026-11-29", "2026-12-06"]);
+      expect(ms.every((m: any) => !m.note.includes("(block "))).toBe(true);
     });
 
     it("is honest about a window too short to periodise", () => {
