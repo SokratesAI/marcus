@@ -14,7 +14,7 @@
 // because it looks like it worked.
 
 import { aboutHim, askCoach, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
-import { isoDay, phasePosition, type DraftGoal } from "./goal-phase.js";
+import { isoDay, LANGUAGE_RULE, LANGUAGE_RULE_FIXED_KEYS, phasePosition, type DraftGoal } from "./goal-phase.js";
 
 /** Same order and spelling as the front end's own `DAY_NAMES`. A day the app
  * cannot match to a plan day is a day that silently never renders. */
@@ -322,6 +322,7 @@ export function buildDraftPrompt(
           ]
         : []),
       ...sizing,
+      `- ${LANGUAGE_RULE}${LANGUAGE_RULE_FIXED_KEYS}`,
     ].join("\n"),
   ].join("\n\n");
 }
