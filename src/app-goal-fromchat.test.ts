@@ -461,3 +461,106 @@ describe("askMarcus and a goal he already turned down", () => {
     expect(sent.context.declinedGoals).toEqual(["Olympic triathlon at Oslo Tri"]);
   });
 });
+
+// A date the coach writes that the app cannot use. `acceptCoachGoal` runs the
+// proposal through `validateGoal`, so before this the card drew a Set goal
+// button that could only ever toast: the date was refused, nothing was saved,
+// and the goal he had just stated in the chat had no way into the store at all.
+// The model is asked for `YYYY-MM-DD` and does not always comply, and it reasons
+// from a training cutoff months behind today -- "Oslo Tri next August" pinned to
+// the August already behind him is the ordinary case here.
+describe("a proposed date the app cannot use", () => {
+  const NOW = new Date("2026-09-13T06:00:00");
+
+  function proposalFrom(date: string, now: Date = NOW) {
+    const { ctx } = loadApp({ now });
+    return ctx.parseCoachGoal(
+      `Noted.\n\`\`\`goal\n{"text": "Olympic triathlon at Oslo Tri", "targetDate": "${date}"}\n\`\`\``,
+    ).goal;
+  }
+
+  it("drops a date already behind him and keeps the goal", () => {
+    expect(proposalFrom("2026-08-14")).toEqual({
+      text: "Olympic triathlon at Oslo Tri",
+      targetDate: "",
+      unusableDate: "2026-08-14",
+    });
+  });
+
+  it("drops today, which validateGoal refuses as not in the future", () => {
+    expect(proposalFrom("2026-09-13")?.unusableDate).toBe("2026-09-13");
+  });
+
+  it("drops a date that is not a real day", () => {
+    expect(proposalFrom("2027-02-31")?.unusableDate).toBe("2027-02-31");
+  });
+
+  it("drops natural language the model left unpinned", () => {
+    expect(proposalFrom("next summer")?.unusableDate).toBe("next summer");
+  });
+
+  it("leaves a usable future date alone and marks nothing", () => {
+    const goal = proposalFrom("2027-08-14");
+    expect(goal).toEqual({ text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    expect(goal.unusableDate).toBeUndefined();
+  });
+
+  // The point of the whole change: the button works now.
+  it("saves a real ongoing goal when he taps Set goal", () => {
+    const { ctx, toasts } = loadApp({ now: NOW });
+    ctx.store.set("chat", [
+      {
+        role: "marcus",
+        text: "August is realistic.",
+        ts: 1000,
+        goalProposal: { text: "Olympic triathlon at Oslo Tri", targetDate: "", unusableDate: "2026-08-14" },
+      },
+    ]);
+    ctx.acceptCoachGoal(1000);
+    const goals = ctx.store.get("goals", []);
+    expect(goals).toHaveLength(1);
+    expect(goals[0].text).toBe("Olympic triathlon at Oslo Tri");
+    expect(goals[0].targetDate).toBe("");
+    expect(goals[0].milestones).toEqual([]);
+    expect(toasts).toContain("Goal set.");
+    expect(ctx.store.get("chat", [])[0].goalSaved).toBe(true);
+  });
+
+  // Not a silent downgrade: he is told which date was dropped, so an ongoing
+  // goal he never stated cannot arrive looking like one he did.
+  it("says on the card which date was dropped and where to put the day", () => {
+    const { ctx, byId } = loadApp({ now: NOW });
+    ctx.store.set("chat", [
+      {
+        role: "marcus",
+        text: "August is realistic.",
+        ts: 1000,
+        goalProposal: { text: "Olympic triathlon at Oslo Tri", targetDate: "", unusableDate: "2026-08-14" },
+      },
+    ]);
+    ctx.renderChatMessages();
+    const html = byId.chatMessages.innerHTML;
+    expect(html).toContain("2026-08-14 is not a date I can use");
+    expect(html).toContain("Plan tab");
+    expect(html).toContain("Set goal");
+  });
+});
+
+// The form on the Plan tab and the card in the chat now ask one function
+// whether a date is real, so they cannot come to disagree about it.
+describe("goalDateProblem", () => {
+  it("passes an empty date, because an ongoing goal is a real goal", () => {
+    const { ctx } = loadApp({ now: new Date("2026-09-13T06:00:00") });
+    expect(ctx.goalDateProblem("")).toBe("");
+    expect(ctx.goalDateProblem(null)).toBe("");
+  });
+
+  it("gives validateGoal its refusal message verbatim", () => {
+    const { ctx } = loadApp({ now: new Date("2026-09-13T06:00:00") });
+    for (const date of ["2026-09-13", "2027-02-31", "next summer", "2099-01-01"]) {
+      const problem = ctx.goalDateProblem(date);
+      expect(problem).not.toBe("");
+      expect(ctx.validateGoal("Olympic triathlon", date).message).toBe(problem);
+    }
+  });
+});

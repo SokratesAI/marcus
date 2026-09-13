@@ -3919,7 +3919,13 @@ function goalProposalHtml(m) {
   if (m.goalSaved) return '<span class="msg__offline">Saved as a goal.</span>';
   if (m.goalDeclined) return '<span class="msg__offline">Not saved.</span>';
   const g = m.goalProposal;
-  const when = g.targetDate ? `Target ${esc(niceDate(g.targetDate))}` : 'No target date — an ongoing goal';
+  // `unusableDate` is set when the coach named a date the app cannot use -- not
+  // a real day, or one already behind him. The date is dropped rather than the
+  // goal (see `parseCoachGoal`), and the card says which date and why instead of
+  // quietly presenting an ongoing goal he did not state.
+  const when = g.unusableDate
+    ? `${esc(g.unusableDate)} is not a date I can use, so this saves as an ongoing goal — set the day on the Plan tab`
+    : g.targetDate ? `Target ${esc(niceDate(g.targetDate))}` : 'No target date — an ongoing goal';
   return `<div class="chat-goal">
       <div class="chat-goal__title">${esc(g.text)}</div>
       <div class="chat-goal__when">${when}</div>
@@ -4086,7 +4092,7 @@ async function askMarcus(text) {
       // The coach can end a reply with a ```goal block (idea #209). It comes
       // out here rather than at render time so the block is never stored as
       // part of the bubble -- a stripped reply is what he reads, once.
-      const parsed = parseCoachGoal(body.reply);
+      const parsed = parseCoachGoal(body.reply, todayStr());
       // Dropping the proposal, not the reply: the sentence around it is still
       // an answer. A goal he already has, or one he has already turned down, is not a
       // question worth asking twice.
