@@ -39,9 +39,32 @@ function loadApp(sent: string[]): any {
   ctx.window = ctx;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
-  vm.runInContext(APP_SOURCE + "\n;globalThis.requestDraft = requestDraft;globalThis.todayStr = todayStr;", ctx);
+  vm.runInContext(APP_SOURCE + "\n;globalThis.requestDraft = requestDraft;globalThis.todayStr = todayStr;globalThis.store = store;globalThis.saveProfile = saveProfile;", ctx);
   return ctx;
 }
+
+describe("the Draft button and his background record", () => {
+  // Idea #209. `coach.ts` has read the profile since issue #157; this body never
+  // carried it, so the week draft was the one place his background could not
+  // reach. Asserted on the wire rather than on the function's source: the server
+  // reads `context.profile` and nothing else.
+  it("sends what he has written about himself", async () => {
+    const sent: string[] = [];
+    const app = loadApp(sent);
+    app.saveProfile("Loper og sykler, har aldri trent styrke seriost.", "2026-09-13T10:00:00.000Z");
+    await app.requestDraft();
+    expect(JSON.parse(sent[0]).context.profile).toBe("Loper og sykler, har aldri trent styrke seriost.");
+  });
+
+  it("sends an empty string rather than nothing when he has written none", async () => {
+    // profileText() already normalises the three stored shapes to a string, so
+    // the server sees one type and aboutHim() drops the section.
+    const sent: string[] = [];
+    const app = loadApp(sent);
+    await app.requestDraft();
+    expect(JSON.parse(sent[0]).context.profile).toBe("");
+  });
+});
 
 describe("the Draft button", () => {
   it("sends his own calendar day with the goals", async () => {

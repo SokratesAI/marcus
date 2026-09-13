@@ -13,7 +13,7 @@
 // one that does not answer -- a plan that half-parsed is worse than no plan,
 // because it looks like it worked.
 
-import { askCoach, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
+import { aboutHim, askCoach, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
 import { isoDay, phasePosition, type DraftGoal } from "./goal-phase.js";
 
 /** Same order and spelling as the front end's own `DAY_NAMES`. A day the app
@@ -232,6 +232,32 @@ export function previousWeekLine(previous: unknown): string | null {
 /** The prompt is built here rather than in the browser for the same reason
  * `buildPrompt` is: what reaches the model is decided in one place and is
  * testable. */
+/** Who he is, as the week drafter sees it.
+ *
+ * `coach.ts` has printed this section into the chat prompt since issue #157 and
+ * the drafter never read it, so the one record saying he runs and rides and has
+ * never lifted seriously was invisible to the thing that writes his barbell
+ * days. Measured 2026-09-13 against the running Marcus: his three real goals
+ * with no profile drafted a week opening on a Barbell Back Squat.
+ *
+ * Same `aboutHim` as the chat, deliberately -- the cap and the "it was cut off"
+ * sentence are one decision, not two -- and an empty profile prints no heading
+ * at all rather than an empty one. */
+function aboutHimLines(profile: unknown): string[] {
+  const about = aboutHim(profile);
+  if (!about.text) return [];
+  return [
+    "ABOUT EDVARD",
+    [
+      "What he has told the app about himself. Treat it as established fact and let it decide what belongs in the week -- what he has actually trained, what he has time for, and anything he cannot do.",
+      about.truncated ? "It is longer than this and has been cut off here." : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
+    about.text,
+  ];
+}
+
 export function buildDraftPrompt(
   goals: DraftGoal | DraftGoal[] | null,
   context: CoachContext,
@@ -267,6 +293,7 @@ export function buildDraftPrompt(
     ...(calendar ? [calendar] : []),
     ...(target ? [target] : []),
     ...(previous ? [previous] : []),
+    ...aboutHimLines(context.profile),
     "TRAINING DATA (his own records, as stored by the app)",
     JSON.stringify(
       {
