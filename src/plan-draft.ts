@@ -211,7 +211,16 @@ export function previousWeekLine(previous: unknown): string | null {
   const p = previous as DraftPreviousWeek;
   const start = isoDay(p.start);
   if (!start) return null;
+  // Every field this then interpolates is checked, the way `calendarWeekLine`
+  // checks its row: the days come from the page unread, and a `days` holding
+  // prose rather than days would be dumped into the prompt as if it were a week.
+  // The shape check is deliberately shallow -- `parseDraftReply` is what knows
+  // what a day must contain, and re-stating its rules here would be the same
+  // rules in two places disagreeing later.
   if (!Array.isArray(p.days) || !p.days.length) return null;
+  if (!p.days.every((d) => d && typeof d === "object" && !Array.isArray(d) && typeof (d as { day?: unknown }).day === "string")) {
+    return null;
+  }
   const label = typeof p.label === "string" && p.label.trim() ? ` (${p.label.trim()})` : "";
   return [
     `THE WEEK ALREADY DRAFTED BEFORE IT, starting ${start}${label} -- ` +

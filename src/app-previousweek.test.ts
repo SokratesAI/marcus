@@ -91,6 +91,13 @@ describe("which week a draft continues from", () => {
     expect(got.label).toBe("Base week 1 of 6");
   });
 
+  it("does not depend on the list being in order", () => {
+    const app = loadApp([]);
+    const shuffled = [week("2026-01-26"), week("2026-01-05"), week("2026-01-12")];
+    expect(pick(app, shuffled, "2026-01-19").start).toBe("2026-01-12");
+    expect(pick(app, shuffled, "2026-02-02").start).toBe("2026-01-26");
+  });
+
   it("ignores a saved row with nothing in it, and answers null when there is none", () => {
     const app = loadApp([]);
     expect(pick(app, [week("2026-01-05", { days: [] })], "2026-01-12")).toBe(null);

@@ -42,6 +42,17 @@ describe("previousWeekLine", () => {
       expect(previousWeekLine(bad)).toBeNull();
     }
   });
+
+  it("refuses a days array that is not days, rather than putting it in the prompt", () => {
+    // A well-formed list holding something that is not a day: the top-level
+    // shape passes and the content is what would reach the coach.
+    for (const days of [["Monday"], [null], [[{ day: "Monday" }]], [{ focus: "Push" }],
+                        [{ day: 3 }], [{ day: "Monday" }, "Tuesday"]]) {
+      expect(previousWeekLine({ ...PREVIOUS, days })).toBeNull();
+    }
+    // And one that is days still passes, so the check is not just "refuse".
+    expect(previousWeekLine({ ...PREVIOUS, days: [{ day: "Monday" }, { day: "Tuesday" }] })).toContain("Tuesday");
+  });
 });
 
 describe("buildDraftPrompt with a week already drafted", () => {
