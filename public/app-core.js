@@ -2424,7 +2424,7 @@ function buildMilestones(startISO, targetISO) {
 // still stripped when the fence closes, so he never reads raw JSON.
 const COACH_GOAL_FENCE = /```goal\s*\n([\s\S]*?)```[ \t]*\n?/;
 
-function parseCoachGoal(reply) {
+function parseCoachGoal(reply, todayISO) {
   const raw = String(reply == null ? '' : reply);
   const match = raw.match(COACH_GOAL_FENCE);
   if (!match) return { text: raw, goal: null };
@@ -2442,6 +2442,21 @@ function parseCoachGoal(reply) {
   // or an `id` of its own must not have them reach the store -- validateGoal
   // mints both, and a goal is only ever built there.
   const targetDate = String(parsed.targetDate == null ? '' : parsed.targetDate).trim();
+  // The date the model wrote is checked HERE, not when he taps Set goal.
+  // `acceptCoachGoal` runs the proposal through `validateGoal`, so a date that
+  // is not a real day, or is not in the future, made the card's own button
+  // impossible: tap, toast, tap again, same toast, and the goal he had just
+  // stated in the chat was never savable at all. The instruction asks the model
+  // for `YYYY-MM-DD` and it does not always comply, and it is working from a
+  // training cutoff months behind today -- `Oslo Tri next August` pinned to the
+  // August that has already passed is the ordinary case, not the exotic one.
+  //
+  // So an unusable date becomes no date. The goal itself is still his and still
+  // worth saving: an ongoing goal is a real goal here, the card says the date
+  // was dropped and why, and the Plan tab's edit form is where the day goes in.
+  // Carrying the raw string back is what lets the card say which date it was.
+  const problem = goalDateProblem(targetDate, todayISO);
+  if (problem) return { text, goal: { text: goalText, targetDate: '', unusableDate: targetDate } };
   return { text, goal: { text: goalText, targetDate } };
 }
 
@@ -2480,17 +2495,18 @@ function goalDeclinedBefore(proposal, chat) {
   return goalAlreadySet(proposal, declinedGoalTexts(chat).map(text => ({ text })));
 }
 
-function validateGoal(rawText, rawDate, todayISO) {
-  const text = String(rawText == null ? '' : rawText).trim();
-  if (!text) return { ok: false, message: 'Say what you are training for.' };
-  if (text.length > GOAL_MAX_CHARS) return { ok: false, message: `Keep the goal under ${GOAL_MAX_CHARS} characters.` };
-  const today = todayISO || todayStr();
+// Why a target date cannot be used, or '' when it can. Split out of
+// `validateGoal` so the goal card the coach proposes can ask the same question
+// BEFORE it draws a Set goal button -- see `parseCoachGoal`. One rule, one
+// place: a second copy here would let the card and the form disagree about
+// which dates are real, which is the state where the button refuses a date the
+// card promised.
+//
+// An empty date is not a problem: an ongoing goal is a real goal.
+function goalDateProblem(rawDate, todayISO) {
   const date = String(rawDate == null ? '' : rawDate).trim();
-  // "Improve overall health and fitness" has no race day, and refusing it was
-  // refusing half of what idea #209 asks for. An ongoing goal has no phases --
-  // they are cut from a date -- and `targetDate: ''` is what every reader below
-  // checks for.
-  if (!date) return { ok: true, goal: { id: uid(), text, targetDate: '', created: today, milestones: [] } };
+  if (!date) return '';
+  const today = todayISO || todayStr();
   // A date input cannot produce this, but a paste can -- and `2027-02-31` does
   // not throw, it rolls forward to 3 March. Comparing the parsed components back
   // against what was typed is what catches the roll.
@@ -2498,11 +2514,27 @@ function validateGoal(rawText, rawDate, todayISO) {
   const parsed = new Date(date + 'T00:00');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime())
       || parsed.getFullYear() !== y || parsed.getMonth() + 1 !== mo || parsed.getDate() !== d) {
-    return { ok: false, message: 'That target date is not a real date.' };
+    return 'That target date is not a real date.';
   }
   const span = daysBetween(today, date);
-  if (span < 1) return { ok: false, message: 'The target date has to be in the future.' };
-  if (span > GOAL_MAX_DAYS) return { ok: false, message: 'That target is more than ten years out — check the year.' };
+  if (span < 1) return 'The target date has to be in the future.';
+  if (span > GOAL_MAX_DAYS) return 'That target is more than ten years out — check the year.';
+  return '';
+}
+
+function validateGoal(rawText, rawDate, todayISO) {
+  const text = String(rawText == null ? '' : rawText).trim();
+  if (!text) return { ok: false, message: 'Say what you are training for.' };
+  if (text.length > GOAL_MAX_CHARS) return { ok: false, message: `Keep the goal under ${GOAL_MAX_CHARS} characters.` };
+  const today = todayISO || todayStr();
+  const date = String(rawDate == null ? '' : rawDate).trim();
+  const problem = goalDateProblem(date, today);
+  if (problem) return { ok: false, message: problem };
+  // "Improve overall health and fitness" has no race day, and refusing it was
+  // refusing half of what idea #209 asks for. An ongoing goal has no phases --
+  // they are cut from a date -- and `targetDate: ''` is what every reader below
+  // checks for.
+  if (!date) return { ok: true, goal: { id: uid(), text, targetDate: '', created: today, milestones: [] } };
   return { ok: true, goal: { id: uid(), text, targetDate: date, created: today, milestones: buildMilestones(today, date) } };
 }
 
