@@ -946,6 +946,10 @@ let logKind = 'strength';
 // What the sentence box understood, held across the re-render that fills the
 // form. Cleared as soon as the session is saved so it cannot re-apply itself.
 let logSentence = null;
+// Which session card is armed for deletion, if any. Declared up here with the
+// rest of the Log tab's UI state because `renderLog` just below clears it; the
+// reason it exists is written above `armDeleteSession`.
+let sessionDeleteArmed = null;
 
 function renderLog() {
   // Any full redraw of the tab disarms: a confirm that outlived the screen it
@@ -1188,11 +1192,10 @@ function sessionNoteLine(s) {
 // button already has: arm it, read what is about to go, then a button that does
 // it.
 //
-// Which card is armed is held here rather than in the markup, so only one can be
-// armed at a time and a redraw cannot lose it. `renderLog` clears it, so
-// switching tab or logging anything disarms whatever was waiting.
-let sessionDeleteArmed = null;
-
+// Only one card can be armed at a time, and which one is held in a variable
+// (`sessionDeleteArmed`, declared with the Log tab's other UI state) rather than
+// in the markup, so a redraw cannot lose it.
+//
 function armDeleteSession(id) {
   sessionDeleteArmed = id;
   renderRecentSessions();
