@@ -245,8 +245,12 @@ export async function coachPhases(
   // asked, because the coach would answer something and the page would then
   // have phases on a goal that cannot have them.
   if (!target) return { status: "unusable", reason: "an ongoing goal has no phases to shape" };
-  const todayISO = isoDay(deps.today) ?? target;
-  const start = isoDay(g.created) ?? todayISO;
+  // The page always sends his own calendar day. Without one, the day the goal
+  // was set is the honest fallback -- the block is cut from it anyway, and
+  // falling back to the target date would tell the coach that today is race
+  // day.
+  const start = isoDay(g.created) ?? isoDay(deps.today) ?? target;
+  const todayISO = isoDay(deps.today) ?? start;
   if (daysBetween(start, target) < PHASE_MIN_SPAN_DAYS) {
     return { status: "unusable", reason: "this goal is too close to periodise" };
   }
