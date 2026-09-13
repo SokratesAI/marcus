@@ -10,6 +10,11 @@ function destroyCharts() { Object.values(charts).forEach(c => c.destroy()); char
 
 function switchTab(tab) {
   currentTab = tab;
+  // An armed confirm belongs to the screen it was tapped on. Leaving the tab and
+  // coming back should land on the question, not on a live Delete-all-of-it --
+  // same reason `renderLog` disarms the session bin and `wireSectionClear`
+  // disarms the chart clears.
+  demoClearArmed = false;
   document.querySelectorAll('.bottomnav__item').forEach(b => b.classList.toggle('is-active', b.dataset.tab === tab));
   destroyCharts();
   const renderers = { home: renderHome, plan: renderPlan, log: renderLog, nutrition: renderNutrition, progress: renderProgress };
@@ -58,8 +63,12 @@ function renderHome() {
   // A goal whose day has gone is not a goal Home should be counting down to.
   const behind = goalIsBehind(nextGoal);
   const week = homeWeekTarget();
+  // First thing on the first screen, above the plan: if these numbers are not
+  // his, nothing below this card means what it says.
+  const demo = demoSeededSummary();
 
   view.innerHTML = `
+    ${demo.length ? demoNoticeCard(demo) : ``}
     <div class="card">
       <div class="card__title-row"><h2>Today · ${todayName}</h2><span class="chip ${todayPlan.focus==='Rest'?'':'chip--primary'}">${esc(todayPlan.focus)}</span></div>
       ${todayPlan.exercises.length ? todayPlan.exercises.map(e => `<div class="exercise-line"><span>${esc(e.name)}</span><span>${e.sets}×${e.reps}</span></div>`).join('') : ``}
@@ -3345,6 +3354,11 @@ function restoreBackup(parsed) {
     else if (k !== 'deletions') restored.push(k);
   });
   forgetDeletionsOf(parsed.data);
+  // Whatever was seeded has just been overwritten by records the user is
+  // asserting are theirs -- from a backup file, or from the server copy, since
+  // `adoptServerCopy` comes through here too. Leaving the claim standing would
+  // put a "this is demo data" card over the history that was just restored.
+  forgetDemoSeeded();
   return { restored, failed };
 }
 
@@ -3387,6 +3401,79 @@ function forgetDeletionsOf(data) {
 // clearing it would put the demo block straight back. An empty array is truthy,
 // so the stores below stay cleared.
 const LOGGED_STORES = ['sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'plannedWeeks'];
+
+// ---------- the demo data a new browser is filled with ----------
+// `seed()` fills a browser that has never opened Marcus with sixteen sessions,
+// fourteen bodyweights and eighteen meals so the app has something to draw.
+// Nothing has ever said so on screen. Edvard told Marcus himself on 2026-09-07
+// -- "dataen som er her er bare demo data, ikke noe jeg faktisk har gjort" --
+// and on 2026-09-13 he deleted all sixteen sessions by hand, one bin tap at a
+// time, between 08:03:16 and 08:03:36. The button that would have taken all
+// three stores at once is the last card on the Progress tab, below the charts
+// and the reminders and the backup card, and he did not find it.
+//
+// So the app says it where the data is first shown, on Home, and the offer to
+// take it out is on the same card as the sentence that explains what it is.
+const DEMO_LABELS = { sessions: 'session', weights: 'bodyweight', meals: 'meal' };
+
+// The seeded stores that still hold something. A store he has already emptied
+// drops out, so the notice goes away on its own once all of them are gone --
+// which is what makes this safe to leave standing rather than one-shot.
+function demoSeededSummary() {
+  const keys = store.get(DEMO_SEEDED_KEY, null);
+  if (!Array.isArray(keys) || !keys.length) return [];
+  return clearableSummary(keys.filter(k => DEMO_LABELS[k]));
+}
+
+// Answered, either way. `[]` rather than a delete because `store.get` has no
+// remove and an empty array is what `demoSeededSummary` already treats as "no
+// claim" -- one shape for the absent case instead of two.
+function forgetDemoSeeded() { store.set(DEMO_SEEDED_KEY, []); }
+
+// Armed, not persisted: a confirm is about the tap that is happening now, so a
+// reload should land back on the question rather than on the answer.
+let demoClearArmed = false;
+
+function armClearDemo() { demoClearArmed = true; renderHome(); }
+function cancelClearDemo() { demoClearArmed = false; renderHome(); }
+
+// "Keep it" is a real answer and has to stick: he is saying the numbers are his
+// now, so the notice must not come back on the next render.
+function keepDemoData() { demoClearArmed = false; forgetDemoSeeded(); renderHome(); }
+
+function clearDemoData() {
+  const keys = demoSeededSummary().map(s => s.key);
+  const result = clearTrainingLog(keys);
+  demoClearArmed = false;
+  // Forgotten whether or not every store cleared: the claim has been answered,
+  // and a store this browser refused to write is not one a second confirm will
+  // get any further with.
+  forgetDemoSeeded();
+  const total = result.cleared.reduce((n, s) => n + s.count, 0);
+  if (result.failed.length) toast('This browser refused to clear some of the demo data.');
+  else toast('Cleared. ' + total + ' demo record(s) deleted.');
+  renderHome();
+}
+
+// "16 sessions, 14 bodyweights and 18 meals" -- the count is the point, the same
+// way it is for the clear button and the restore preview: he confirms against
+// what is actually there, never against the word "demo".
+function demoNoticeCard(summary) {
+  const parts = summary.map(s => s.count + ' ' + esc(DEMO_LABELS[s.key] || s.key) + (s.count === 1 ? '' : 's'));
+  const list = parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : parts[0];
+  const total = summary.reduce((n, s) => n + s.count, 0);
+  return `
+    <div class="card">
+      <div class="card__title-row"><h2>This is demo data</h2><span class="chip">not yours</span></div>
+      <p class="card__note">Marcus filled this browser with ${list} so there was something to show. None of it is a workout you did, and every chart in the app is drawn from it.</p>
+      ${demoClearArmed ? `
+      <div class="card__note" style="margin-top:10px">Are you sure? This deletes ${total} record(s) from this browser and from the server copy, and cannot be undone.</div>
+      <button class="btn btn--filled btn--block" style="margin-top:10px" onclick="clearDemoData()">Delete all of it</button>
+      <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="cancelClearDemo()">Cancel</button>` : `
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="armClearDemo()"><span class="material-icons-round">delete_sweep</span> Clear the demo data</button>
+      <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="keepDemoData()">Keep it, it is mine now</button>`}
+    </div>`;
+}
 
 // Counts what clearing would actually remove, so the confirm step can say it
 // out loud -- the same contract as `backupSummary` and for the same reason: the
