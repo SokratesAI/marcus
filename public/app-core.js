@@ -2727,6 +2727,55 @@ function unansweredChatTurn(chat) {
   return null;
 }
 
+// The one thing Marcus still does not know about him, or null when there is
+// nothing to open with.
+//
+// Edvard, in the chat on 2026-09-07 and still the last thing he said to Marcus
+// about what it is for: "Du er ikke ment til a vaere en reaktiv kommentator,
+// men en proaktiv trener. Om du hadde hyret inn en pt, hva hadde du
+// forventet?" -- you are not meant to be a reactive commentator, you are meant
+// to be a proactive coach. Marcus answered him with the list itself, and the
+// first item on it was "Spurt om bakgrunn forst": a coach you trusted would
+// have asked about your background before waiting for you to log anything.
+//
+// The opening bubble a new browser gets says the opposite in one sentence --
+// "Ask me about today's session, your plan, or how your progress looks" -- so
+// the thread starts by handing him the work of knowing what to ask. This picks
+// the question instead, and it picks it from what his stores actually hold
+// rather than from anything he typed: a gap in the record is a fact, and there
+// is nothing here to keyword-match.
+//
+// Ordered, and the order is the order a coach would need the answers in: who
+// he is, then what he is aiming at, then what he has been doing. Only the
+// first one that is missing is asked, because three questions at once is a
+// form, and the box he refuses to fill in is the whole reason this exists.
+function openingQuestion(state) {
+  const s = state || {};
+  const has = value => {
+    if (Array.isArray(value)) return value.length > 0;
+    return typeof value === 'string' ? value.trim() !== '' : Boolean(value);
+  };
+  if (!has(s.profile)) {
+    return {
+      key: 'profile',
+      text: "Before I can coach you properly I need to know who I am training. How long have you trained and how hard, and is there an injury or an illness I should work around?",
+    };
+  }
+  if (!has(s.goals)) {
+    return {
+      key: 'goals',
+      text: "What are you training for? A race, a date, or something ongoing like getting your cholesterol down -- all of it counts.",
+    };
+  }
+  if (!has(s.sessions)) {
+    return {
+      key: 'sessions',
+      text: "I have nothing you have actually done yet. What did you train this week, even roughly?",
+    };
+  }
+  return null;
+}
+
 // Appending, never replacing. One card must not be able to eat a paragraph he
 // typed himself -- that is the whole record gone for a tap he thought added a
 // line. A blank line between entries so the prose he wrote and the sentences
