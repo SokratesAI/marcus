@@ -193,6 +193,35 @@ export const GOAL_INSTRUCTION = [
   'Rules: `text` is his goal in his own words, short enough to read on a card. `targetDate` is `YYYY-MM-DD` if he named a day or a month you can pin to one, and `""` if there is no date -- an ongoing goal is a real goal and must not be given an invented date. One block per reply, for the single clearest goal. Do not write a block for a goal already in TRAINING DATA above, and do not write one because you think he should have a goal -- only when he has actually told you one in this conversation. He has to confirm it before anything is saved, so do not claim in your reply that you have saved it; say you have written it down for him to confirm.',
 ].join("\n");
 
+// The Claude CLI writes `**1 tool use**` into a turn's text where a tool call
+// happened, and that marker reaches this function verbatim: `/ask` hands back
+// whatever the turn produced. It is a UI artefact of the transcript, never
+// something the coach meant to say, so a reader gets a sentence that stops
+// mid-thought followed by a bolded number.
+//
+// This is not hypothetical. Edvard's own chat log on the server ends, on
+// 2026-09-07T20:32Z, with exactly that: he had just typed several paragraphs
+// of his training background, and the whole answer he got was "Skal se om jeg
+// har notert noe om deg fra før, så jeg ikke overskriver det jeg allerede
+// vet." followed by `**1 tool use**`. He has not opened the app since. The
+// cause was fixed a day later on the Agora side (the Ask turn was told about
+// tools it was not granted, so the model called one and the call reached
+// nothing), which is why this strips rather than diagnoses: the marker means a
+// tool call went nowhere, and there is nothing useful to show the reader
+// either way.
+//
+// Deliberately narrow. It matches only a line that is the whole marker, so a
+// reply that happens to discuss tool use in a sentence is untouched.
+const TOOL_USE_MARKER = /^\s*\*\*\d+ tool uses?\*\*\s*$/;
+
+export function stripToolUseMarkers(reply: string): string {
+  return reply
+    .split("\n")
+    .filter((line) => !TOOL_USE_MARKER.test(line))
+    .join("\n")
+    .trim();
+}
+
 export type CoachResult =
   | { status: "ok"; reply: string }
   | { status: "unconfigured" }
@@ -262,7 +291,15 @@ export async function askCoach(
     if (typeof body.reply !== "string" || body.reply.trim().length === 0) {
       return { status: "upstream", detail: "ask returned no reply" };
     }
-    return { status: "ok", reply: body.reply };
+    // A turn that was nothing but a tool call leaves nothing once the marker
+    // is gone. That is the same outcome as no reply at all, and saying so lets
+    // /api/chat answer 502 and the page fall back to its own built-in reply --
+    // which is a real sentence -- instead of storing a blank coach message.
+    const reply = stripToolUseMarkers(body.reply);
+    if (reply.length === 0) {
+      return { status: "upstream", detail: "ask returned only a tool-use marker" };
+    }
+    return { status: "ok", reply };
   } catch (err) {
     return { status: "upstream", detail: String((err as Error)?.message ?? err) };
   }
