@@ -2977,10 +2977,23 @@ function toast(message) {
 }
 
 // ---------- seed data ----------
-// True when `seed()` wrote the starter data on this boot, which can only happen
-// in a browser that has never opened Marcus before. Not persisted on purpose --
-// it is a fact about this page load, and the next one is a returning visit.
+// True when this browser held nothing Marcus had written at the moment it
+// booted. It used to mean "`seed()` ran on this boot", which was the same fact
+// by a different route, because `seed()` ran unconditionally at load and only
+// an empty browser took any of its branches. It no longer runs at load -- a
+// first open waits for the server (see `bootSeed` in app.js) -- so the flag is
+// read off the stores directly instead of set as a side effect of filling
+// them. Not persisted on purpose: it is a fact about this page load, and the
+// next one is a returning visit.
 let seededThisBoot = false;
+
+// The four stores `seed()` fills. A browser holding none of them has never
+// opened Marcus, and that is the only boot where the copy on the server can
+// win outright, because there is nothing here of the user's to lose.
+const SEEDED_STORE_KEYS = ['plan', 'sessions', 'weights', 'meals'];
+function neverOpened() {
+  return SEEDED_STORE_KEYS.every(k => !store.get(k));
+}
 
 // The logged stores `seed()` actually filled with demo data, remembered under
 // this key so Home can say so. Unlike `seededThisBoot` this one is persisted,
@@ -2989,13 +3002,13 @@ let seededThisBoot = false;
 // on the next reload would leave the numbers behind with nothing naming them.
 const DEMO_SEEDED_KEY = 'demoSeeded';
 
-function seed() {
-  // Collected rather than set per store, so one write records the whole answer
-  // and a browser that already held sessions but not meals is described
-  // accurately instead of as a blanket "this is all demo".
-  const seededStores = [];
+// Everything a first paint cannot do without. Home reads `plan.days`, so a
+// browser with no plan cannot draw its own front page -- which is why this
+// half still runs at load while the demo *log* below waits for the server.
+// Neither of these is a record of anything: the plan is a template and the
+// greeting is Marcus saying hello.
+function seedShell() {
   if (!store.get('plan')) {
-    seededThisBoot = true;
     store.set('plan', {
       blockName: 'Hypertrophy Block — Week 5',
       days: [
@@ -3033,6 +3046,23 @@ function seed() {
     });
   }
 
+  if (!store.get('chat')) {
+    store.set('chat', [
+      { role: 'marcus', text: "Hey! I'm Marcus, your trainer. Ask me about today's session, your plan, or how your progress looks — I'm watching your numbers 💪", ts: Date.now() }
+    ]);
+  }
+}
+
+// The fake training history: sixteen sessions, a month of bodyweights and a
+// week of meals. This is the half that reads as somebody's record of their own
+// work, and the half he deleted by hand one bin tap at a time on 2026-09-13.
+// It is held back on a first open until the server has said whether it holds
+// his real log -- see `bootSeed` in app.js.
+function seedDemoLog() {
+  // Collected rather than set per store, so one write records the whole answer
+  // and a browser that already held sessions but not meals is described
+  // accurately instead of as a blanket "this is all demo".
+  const seededStores = [];
   if (!store.get('sessions')) {
     const sessions = [];
     const names = { Monday: ['Barbell Bench Press','Overhead Press','Incline Dumbbell Press'], Tuesday: ['Deadlift','Pull-ups','Barbell Row'], Thursday: ['Back Squat','Romanian Deadlift','Leg Press'], Friday: ['Incline Bench Press','Lat Pulldown','Lateral Raise'] };
@@ -3089,14 +3119,19 @@ function seed() {
     seededStores.push('meals');
   }
 
-  if (!store.get('chat')) {
-    store.set('chat', [
-      { role: 'marcus', text: "Hey! I'm Marcus, your trainer. Ask me about today's session, your plan, or how your progress looks — I'm watching your numbers 💪", ts: Date.now() }
-    ]);
-  }
-
   // Only written when something was actually seeded. A returning browser takes
   // none of the branches above, so nothing is stored and nothing is claimed.
   if (seededStores.length) store.set(DEMO_SEEDED_KEY, seededStores);
 }
-seed();
+
+// Both halves, for a caller that wants what `seed()` has always meant.
+function seed() { seedShell(); seedDemoLog(); }
+
+// `seed()` is deliberately NOT called here any more. app.js's boot calls it --
+// straight away for a returning browser, and only after the server has
+// answered for a first open. A second phone of his has a real training log
+// waiting on the server, and writing sixteen fake sessions into the browser
+// before that answer arrives is the thing that made the demo data worth
+// fighting about in the first place.
+seededThisBoot = neverOpened();
+seedShell();

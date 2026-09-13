@@ -912,3 +912,82 @@ describe("retryServerSyncNow", () => {
     expect(calls).toBe(afterFirst);
   });
 });
+
+// The demo log used to be written at load, unconditionally, so a second phone
+// of his was filled with sixteen fake sessions and then had them overwritten by
+// his real ones a moment later. These pin the other order.
+describe("holding the demo log back until the server has answered", () => {
+  const withServer = (rev: number, calls: string[] = []) =>
+    loadApp({}, async (url: string, init?: any) => {
+      calls.push((init && init.method ? init.method + " " : "") + url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ rev, updatedAt: null, data: rev ? { sessions: [{ id: "his" }] } : null }),
+      };
+    });
+
+  it("writes no demo row at all while the probe is still in flight", () => {
+    // Read before any await, which is the frame the old code filled.
+    const ctx = withServer(12);
+    expect(ctx.store.get("sessions", null)).toBe(null);
+    expect(ctx.store.get("weights", null)).toBe(null);
+    expect(ctx.store.get("meals", null)).toBe(null);
+    expect(ctx.store.get("demoSeeded", null)).toBe(null);
+  });
+
+  it("still has a plan to draw on that first frame, because Home cannot render without one", () => {
+    const ctx = withServer(12);
+    expect(ctx.store.get("plan", null)).not.toBe(null);
+    expect(ctx.store.get("plan", { days: [] }).days).toHaveLength(7);
+  });
+
+  it("never writes a demo row into a browser the server has a copy for", async () => {
+    const ctx = withServer(12);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ctx.store.get("sessions", [])).toEqual([{ id: "his" }]);
+    // The claim is what Home reads to say "this is demo data". His own history
+    // must never carry it, and here there is nothing to clear it from.
+    // `restoreBackup` drops the claim on its way through, so this is the empty
+    // array rather than an absent key -- either way Home says nothing, and the
+    // point is that no store was ever filled for it to describe.
+    expect(ctx.store.get("demoSeeded", null)).toEqual([]);
+    expect(ctx.store.get("weights", null)).toBe(null);
+  });
+
+  it("seeds the demo log once the server says it holds nothing", async () => {
+    const ctx = withServer(0);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ctx.store.get("sessions", []).length).toBeGreaterThan(0);
+    expect(ctx.store.get("demoSeeded", null)).toEqual(["sessions", "weights", "meals"]);
+  });
+
+  it("seeds it too when the server cannot be reached", async () => {
+    const ctx = loadApp({}, async () => { throw new Error("offline"); });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ctx.store.get("sessions", []).length).toBeGreaterThan(0);
+  });
+
+  it("does not push the demo log it just wrote up to the server", async () => {
+    // The seed now runs AFTER the sync hook is wired, and every store it fills
+    // is a backup key. Without `seedingDemoLog` the first thing a new browser
+    // does is offer sixteen fake sessions to the server as his.
+    const calls: string[] = [];
+    const delays: number[] = [];
+    const ctx = loadApp(
+      {},
+      async (url: string) => {
+        calls.push(url);
+        return { ok: true, status: 200, json: async () => ({ rev: 0, updatedAt: null, data: null }) };
+      },
+      { setTimeout: (_fn: any, ms: number) => { delays.push(ms); return 0; }, clearTimeout: () => {} },
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ctx.store.get("sessions", []).length).toBeGreaterThan(0);
+    // SYNC_DEBOUNCE_MS. A timer at this delay is an armed push, and the seed
+    // must arm none -- three of them is what the retry tests saw before
+    // `seedingDemoLog` existed.
+    expect(delays).not.toContain(1500);
+    expect(calls).toEqual(["/api/state"]);
+  });
+});

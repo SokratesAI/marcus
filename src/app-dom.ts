@@ -95,3 +95,18 @@ export function renderApp(
     close: () => win.close(),
   };
 }
+
+/**
+ * Resolve once the boot's server-copy probe has settled.
+ *
+ * `renderApp` returns as soon as the scripts have run, and the demo log is no
+ * longer written by then: a first open holds it back until `/api/state` has
+ * answered, which in this harness is a rejected fetch and therefore a
+ * microtask away. A `setTimeout(0)` is a macrotask, so every microtask queued
+ * by that chain has run by the time it fires. A test that reads the seeded
+ * stores has to await this first; one that only reads markup drawn at boot
+ * does not.
+ */
+export function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}

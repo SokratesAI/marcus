@@ -4049,13 +4049,22 @@ async function syncNow() {
   renderServerCopy();
 }
 
+// True only while `bootSeed` is writing the demo log. That write now happens
+// after this hook is wired, which the old load-time seed never did, and every
+// store it fills is a backup key -- so without this the first thing a brand
+// new browser would do is push sixteen fake sessions up to the server as if
+// they were his. Nothing else sets it, and it is cleared in a `finally`.
+let seedingDemoLog = false;
+
 function scheduleServerSync(key) {
+  if (seedingDemoLog) return;
   // `syncRev` is not in BACKUP_KEYS, so writing it does not re-enter here.
   if (!BACKUP_KEYS.includes(key)) return;
-  // The first real write ends the fresh boot. `seed()` runs long before this
-  // hook is wired, so anything arriving here is the user, or a restore -- and
-  // either way there is now something in this browser worth not overwriting,
-  // which matters because the boot fetch below can still be in flight.
+  // The first real write ends the fresh boot. The demo log is the one write
+  // that is not the user's and does arrive here -- `seedingDemoLog` above
+  // turns it away -- so anything getting this far is the user, or a restore,
+  // and either way there is now something in this browser worth not
+  // overwriting, which matters because the boot fetch can still be in flight.
   seededThisBoot = false;
   if (syncTimer) clearTimeout(syncTimer);
   // The debounced sync below carries the whole payload, so it supersedes a
@@ -4135,10 +4144,24 @@ function adoptServerCopy(state) {
 // "my training log is gone".
 async function adoptServerCopyOnBoot() {
   const state = await readServerCopy();
+  // The page can be gone by now -- this is the one path in the app that writes
+  // to the screen after an await, and the render harness closes its jsdom
+  // window on every test that does not wait for the boot. Nothing below has
+  // anywhere to go once that has happened.
+  if (typeof document === 'undefined') return;
   renderServerCopy();
   const adopted = adoptServerCopy(state);
-  if (!adopted) return;
-  if (!adopted.ok) { toast(adopted.message); return; }
+  // The server had nothing to hand this browser, or could not be reached, or
+  // the copy would not save. Either way the demo data that was held back at
+  // boot is written now, so a first open still gets something to look at -- it
+  // just gets asked first. `bootSeed` is a no-op on every other boot.
+  const seeded = (!adopted || !adopted.ok) && bootSeed();
+  // Only repaint when something actually landed. A boot that was seeded
+  // synchronously and then heard nothing from the server has not changed a
+  // pixel, and repainting it anyway throws away whatever tab state the user
+  // built in the meantime.
+  if (!adopted) { if (seeded) switchTab(currentTab); return; }
+  if (!adopted.ok) { toast(adopted.message); if (seeded) switchTab(currentTab); return; }
   toast('Loaded your data from the server -- ' + adopted.restored.length + ' section(s).');
   switchTab(currentTab);
 }
@@ -4963,8 +4986,38 @@ termSheet.querySelector('.term-sheet__scrim').addEventListener('click', closeTer
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !termSheet.hidden) closeTerm(); });
 
 // ---------- boot ----------
+// Whether the demo data has been written yet on this page load. `seed()` skips
+// any store that already holds something, so calling it twice is harmless to
+// the data -- but the second call would re-claim `demoSeeded` for sections the
+// server copy did not carry, and say "this is demo data" over his own numbers.
+let bootSeeded = false;
+// Returns true only when this call is the one that wrote the demo data, so a
+// caller can tell "the screen just changed" from "already done at boot".
+function bootSeed() {
+  if (bootSeeded) return false;
+  bootSeeded = true;
+  seedingDemoLog = true;
+  try { seedDemoLog(); } finally { seedingDemoLog = false; }
+  return true;
+}
+
+// A returning browser is seeded here, synchronously, exactly as it was when
+// the call sat at the bottom of app-core.js: `seed()` takes none of its
+// branches for a browser that already holds a plan and a log, so the first
+// paint reads real data with no await in front of it.
+//
+// A browser with no `fetch` is seeded here too. It can never be handed a
+// server copy, so there is nothing to wait for, and waiting would only mean
+// painting an empty app at somebody who is never going to be offered anything
+// better.
+//
+// What is left is the case this whole change is about: a first open, in a
+// browser that can reach the server. That one waits -- `adoptServerCopyOnBoot`
+// calls `bootSeed()` itself once the answer is in, and does not call it at all
+// when his real log came back instead.
+if (!seededThisBoot || typeof fetch !== 'function') bootSeed();
 switchTab('home');
-adoptServerCopyOnBoot().catch(() => {});
+adoptServerCopyOnBoot().catch(() => { if (bootSeed()) switchTab(currentTab); });
 retryWhenBackOnline(window, document, retryServerSyncNow);
 applyDueWeekOnVisible(document, applyDueWeek, redrawPlanTab);
 document.getElementById('updateReload')?.addEventListener('click', () => window.location.reload());
