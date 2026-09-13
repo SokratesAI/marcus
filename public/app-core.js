@@ -2513,6 +2513,29 @@ function goalAlreadySet(proposal, existing) {
   return (existing || []).some(g => g && String(g.text || '').trim().toLowerCase() === want);
 }
 
+// The one case where "he already has that goal" is the wrong answer, and it is
+// the case the coach itself walks him into. He says "Olympic triathlon next
+// summer", the model cannot turn that into a day, so the block carries no
+// `targetDate` and the goal saves as an ongoing one -- and the same reply then
+// asks him whether he has a race date yet. When he answers it, the model writes
+// the block again WITH the day in it, `goalAlreadySet` matches on the text
+// alone, and the only thing in that reply he could not get anywhere else is
+// dropped before it is ever drawn.
+//
+// So: a proposal whose text he already has, carrying a usable day, on a goal
+// that has none, is an offer to set the day -- and it returns the goal to set
+// it on rather than a boolean, because the caller has to edit that record and
+// matching it twice is how two records drift apart. A goal that already HAS a
+// day is deliberately not in scope: moving a race he has already pinned re-cuts
+// his phases, and the edit form on the Plan tab is where that belongs.
+function goalDateOffer(proposal, existing) {
+  if (!proposal || !proposal.text || !proposal.targetDate) return null;
+  const want = proposal.text.trim().toLowerCase();
+  const match = (existing || []).find(g => g && String(g.text || '').trim().toLowerCase() === want);
+  if (!match) return null;
+  return String(match.targetDate || '').trim() ? null : match;
+}
+
 // A goal he was shown a card for and tapped Not now on.
 //
 // The coach has no way to know he declined. The ```goal block is stripped out

@@ -4607,6 +4607,20 @@ function goalProposalCardHtml(m, proposal, index) {
   // why instead of quietly presenting an ongoing goal he did not state.
   const g = resolveGoalProposal(proposal, todayStr());
   if (!g) return '';
+  // Asked against the goals as they stand now, for the same reason the date is
+  // re-resolved above: he may have set the day himself on the Plan tab since
+  // this card was drawn, and then there is nothing left to offer.
+  const dateless = goalDateOffer(g, store.get('goals', []));
+  if (dateless) {
+    return `<div class="chat-goal">
+      <div class="chat-goal__title">${esc(dateless.text)}</div>
+      <div class="chat-goal__when">You have this goal with no target date \u2014 set it to ${esc(niceDate(g.targetDate))}?</div>
+      <div class="chat-goal__actions">
+        <button class="btn btn--filled" onclick="acceptCoachGoal(${Number(m.ts)}, ${Number(index)})"><span class="material-icons-round">event</span> Set the date</button>
+        <button class="btn btn--tonal" onclick="declineCoachGoal(${Number(m.ts)}, ${Number(index)})">Not this</button>
+      </div>
+    </div>`;
+  }
   // Asked here as well as at the offer, for the same reason the date is: the
   // proposal is stored and the goals list moves under it. `askMarcus` drops a
   // proposal for a goal he already has, but only against the list as it stood
@@ -4653,7 +4667,25 @@ function acceptCoachGoal(ts, index) {
   // one redrawing. Two goals with one text is not a duplicate row he can tidy
   // up -- both are cut into phases, both go up to the coach in TRAINING DATA,
   // and it then reads one race as two.
-  if (goalAlreadySet(proposal, store.get('goals', []))) {
+  // The date branch, before the duplicate guard, because this IS the duplicate
+  // by text -- what makes it worth a tap is the day it carries. `validateGoalEdit`
+  // is the same path the edit form on the Plan tab takes, so the record keeps its
+  // id, its `created` day and its ticked phases, and the block is cut from the day
+  // the goal was set rather than from this morning.
+  const goals = store.get('goals', []);
+  const dateless = goalDateOffer(proposal, goals);
+  if (dateless) {
+    const edited = validateGoalEdit(dateless, dateless.text, proposal.targetDate);
+    if (!edited.ok) { toast(edited.message); return; }
+    if (!store.set('goals', goals.map(g => (g && g.id === dateless.id ? edited.goal : g)))) return;
+    markGoalAnswer(m, i, 'saved');
+    store.set('chat', msgs);
+    renderChatMessages();
+    switchTab(currentTab);
+    toast('Target date set.');
+    return;
+  }
+  if (goalAlreadySet(proposal, goals)) {
     toast('You already have that goal.');
     renderChatMessages();
     return;
@@ -4892,8 +4924,14 @@ async function askMarcus(text) {
       // Dropping the proposal, not the reply: the sentence around it is still
       // an answer. A goal he already has, or one he has already turned down, is not a
       // question worth asking twice.
+      // `goalDateOffer` is the exception to the first conjunct, not a second
+      // filter: a proposal for a goal he already has is still dropped, unless
+      // it carries the race day that goal is missing. That is the only new
+      // thing such a block can tell him, and it is the block the coach's own
+      // "do you have a race date yet?" asks him to produce.
       const goals = parsed.goals.filter(g =>
-        !goalAlreadySet(g, store.get('goals', []))
+        (!goalAlreadySet(g, store.get('goals', []))
+          || goalDateOffer(g, store.get('goals', [])))
         && !goalDeclinedBefore(g, store.get('chat', [])));
       // And a ```profile block (issue #157), off the reply the goal fence was
       // already taken out of -- one reply can carry both, and each block has
