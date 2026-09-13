@@ -267,3 +267,25 @@ describe("while a turn is in flight", () => {
     expect(byId["chatMessages"].innerHTML).not.toContain("Ask again");
   });
 });
+
+// And it has to come back afterwards. A flag set on every send and cleared
+// only on the happy path would hide the card for the rest of the session --
+// silently, and exactly when a lost reply is the thing he needs telling about.
+describe("after a turn has finished", () => {
+  it("draws the card again for the next thread that ends unanswered", async () => {
+    const { ctx, byId } = loadApp({
+      fetch: async () => ({ ok: true, json: async () => ({ reply: "Her er svaret." }) }),
+    });
+    ctx.document.getElementById("chatInput").value = "Hei";
+    ctx.document.getElementById("chatForm").handlers.submit({ preventDefault() {} });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(byId["chatMessages"].innerHTML).toContain("Her er svaret.");
+
+    // A second turn whose reply was lost, the way it would look on the next
+    // page load.
+    ctx.store.set("chat", ctx.store.get("chat", []).concat([{ role: "user", text: "Og i morgen?", ts: 9 }]));
+    ctx.renderChatMessages();
+    expect(byId["chatMessages"].innerHTML).toContain("Ask again");
+  });
+});
