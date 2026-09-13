@@ -3115,6 +3115,29 @@ function neverOpened() {
 // on the next reload would leave the numbers behind with nothing naming them.
 const DEMO_SEEDED_KEY = 'demoSeeded';
 
+// The demo log's own contents, hoisted out of `seedDemoLog` so that the code
+// which writes it and the code which recognises it read one table rather than
+// two copies that can drift apart.
+const DEMO_SESSION_EXERCISES = {
+  Monday: ['Barbell Bench Press', 'Overhead Press', 'Incline Dumbbell Press'],
+  Tuesday: ['Deadlift', 'Pull-ups', 'Barbell Row'],
+  Thursday: ['Back Squat', 'Romanian Deadlift', 'Leg Press'],
+  Friday: ['Incline Bench Press', 'Lat Pulldown', 'Lateral Raise'],
+};
+const DEMO_MEALS = [
+  ['Oats + whey + banana', 520, 38, 70, 9],
+  ['Chicken, rice, broccoli', 640, 52, 68, 14],
+  ['Greek yogurt + berries', 260, 22, 28, 6],
+  ['Salmon, potatoes, greens', 710, 45, 60, 28],
+  ['Protein shake', 220, 30, 10, 4],
+];
+// `seedDemoLog` starts the bodyweight run at 84.5 and takes 0.12-0.20 off every
+// other day, rounded to one decimal -- so the first row is 84.3 or 84.4 and each
+// step down is 0.1 or 0.2.
+const DEMO_WEIGHT_START = 84.5;
+const DEMO_WEIGHT_STEP_DAYS = 2;
+
+
 // Everything a first paint cannot do without. Home reads `plan.days`, so a
 // browser with no plan cannot draw its own front page -- which is why this
 // half still runs at load while the demo *log* below waits for the server.
@@ -3202,7 +3225,7 @@ function seedDemoLog() {
   const seededStores = [];
   if (!store.get('sessions')) {
     const sessions = [];
-    const names = { Monday: ['Barbell Bench Press','Overhead Press','Incline Dumbbell Press'], Tuesday: ['Deadlift','Pull-ups','Barbell Row'], Thursday: ['Back Squat','Romanian Deadlift','Leg Press'], Friday: ['Incline Bench Press','Lat Pulldown','Lateral Raise'] };
+    const names = DEMO_SESSION_EXERCISES;
     for (let i = 27; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i);
       const dayName = DAY_NAMES[d.getDay()];
@@ -3237,13 +3260,7 @@ function seedDemoLog() {
 
   if (!store.get('meals')) {
     const meals = [];
-    const sample = [
-      ['Oats + whey + banana', 520, 38, 70, 9],
-      ['Chicken, rice, broccoli', 640, 52, 68, 14],
-      ['Greek yogurt + berries', 260, 22, 28, 6],
-      ['Salmon, potatoes, greens', 710, 45, 60, 28],
-      ['Protein shake', 220, 30, 10, 4],
-    ];
+    const sample = DEMO_MEALS;
     for (let i = 6; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i);
       const count = 2 + Math.floor(Math.random() * 2);
