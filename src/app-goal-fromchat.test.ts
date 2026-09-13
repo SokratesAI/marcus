@@ -364,6 +364,60 @@ describe("the confirm card", () => {
     expect(toasts).toContain("Goal set.");
   });
 
+  // A stored proposal ages against the goals list the same way it ages against
+  // the calendar. `askMarcus` asks "does he already have this?" once, when the
+  // reply lands; the card lives in the chat for as long as he scrolls back to
+  // it, and he can add the same goal on the Plan tab in between.
+  it("offers no button for a goal he has added since the card was drawn", () => {
+    const { ctx, byId } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+    withProposal(ctx, { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    ctx.store.set("goals", [
+      { id: "g1", text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14", created: "2026-09-01", milestones: [] },
+    ]);
+    ctx.renderChatMessages();
+    expect(byId.chatMessages.innerHTML).toContain("Already a goal.");
+    expect(byId.chatMessages.innerHTML).not.toContain("Set goal");
+  });
+
+  it("writes no second copy of a goal he already has, and says so", () => {
+    const { ctx, toasts } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+    withProposal(ctx, { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    ctx.store.set("goals", [
+      { id: "g1", text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14", created: "2026-09-01", milestones: [] },
+    ]);
+    ctx.acceptCoachGoal(1000);
+    const goals = ctx.store.get("goals", []);
+    expect(goals).toHaveLength(1);
+    expect(goals[0].id).toBe("g1");
+    expect(toasts).toContain("You already have that goal.");
+    expect(toasts).not.toContain("Goal set.");
+  });
+
+  // Same identity rule as `goalAlreadySet` everywhere else: the text is the
+  // goal and the date is not, because moving a race day is what the edit form
+  // on the Plan tab is for.
+  it("counts the same goal on a different day as one he already has", () => {
+    const { ctx } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+    withProposal(ctx, { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    ctx.store.set("goals", [
+      { id: "g1", text: "  olympic triathlon at oslo tri ", targetDate: "2027-06-01", created: "2026-09-01", milestones: [] },
+    ]);
+    ctx.acceptCoachGoal(1000);
+    expect(ctx.store.get("goals", [])).toHaveLength(1);
+  });
+
+  // The guard must not fire on a goal that only looks similar, or a real
+  // second race becomes unsavable from the chat with no way to say why.
+  it("still saves a goal whose text is not one he has", () => {
+    const { ctx } = loadApp({ now: new Date("2026-09-12T22:00:00") });
+    withProposal(ctx, { text: "Olympic triathlon at Oslo Tri", targetDate: "2027-08-14" });
+    ctx.store.set("goals", [
+      { id: "g1", text: "Sprint triathlon at Oslo Tri", targetDate: "2027-06-01", created: "2026-09-01", milestones: [] },
+    ]);
+    ctx.acceptCoachGoal(1000);
+    expect(ctx.store.get("goals", [])).toHaveLength(2);
+  });
+
   it("does nothing for a timestamp that is not in the chat", () => {
     const { ctx } = loadApp();
     withProposal(ctx, { text: "Race", targetDate: "2027-08-14" });
