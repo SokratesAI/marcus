@@ -1262,7 +1262,10 @@ function deleteSession(id) {
     toast('Tap the bin on that session first.');
     return;
   }
-  sessionDeleteArmed = null;
+  // Nothing disarms here on purpose: `renderLog` below is the single place that
+  // clears it, and a second assignment in this function is redundant -- a
+  // mutation that deleted it left the whole suite green, which is the honest
+  // proof that it was doing nothing.
   recordDeletion('sessions', id);
   store.set('sessions', store.get('sessions', []).filter(s => s.id !== id));
   renderLog();
