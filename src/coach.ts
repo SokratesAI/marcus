@@ -413,6 +413,51 @@ export type CoachResult =
   | { status: "metered"; model: string }
   | { status: "upstream"; detail: string };
 
+/** How many extra times a structured answer is asked for when what came back
+ * did not parse. One: the second sample costs him another 13 seconds and takes
+ * a one-in-six failure to about one in thirty-six, and a third would make him
+ * wait forty seconds for a button that was probably never going to work. */
+export const SHAPE_RESAMPLES = 1;
+
+/** `askCoach` for the two routes that need a shape back rather than a sentence
+ * -- the drafted week and a goal's phases. It asks again when the reply does
+ * not parse, and hands back the last parse either way, so each caller's own
+ * refusal message is unchanged.
+ *
+ * Measured live on 2026-09-13, before this existed: six identical
+ * `POST /api/plan-draft` calls against the running pod returned five weeks and
+ * one `the coach did not answer with JSON`. Identical body every time, so that
+ * is the model sampling differently rather than a prompt that cannot work --
+ * and no wording fixes a one-in-six. Asking twice does.
+ *
+ * Only a parse failure is resampled. An `upstream` result may be a timeout he
+ * has already waited out once, and `metered` or `unconfigured` answer the same
+ * way however often they are asked. */
+export async function askCoachShaped<P extends { ok: boolean }>(
+  message: string,
+  context: CoachContext,
+  history: ChatTurn[],
+  deps: Parameters<typeof askCoach>[3],
+  parse: (reply: string) => P,
+): Promise<{ status: "parsed"; parsed: P } | Exclude<CoachResult, { status: "ok" }>> {
+  let parsed: P | null = null;
+  for (let attempt = 0; attempt <= SHAPE_RESAMPLES; attempt += 1) {
+    const result = await askCoach(message, context, history, deps);
+    if (result.status !== "ok") {
+      // A resample that could not reach the coach says nothing about the answer
+      // he already has. Report that one rather than a connection problem only
+      // the retry hit.
+      if (parsed) return { status: "parsed", parsed };
+      return result;
+    }
+    parsed = parse(result.reply);
+    if (parsed.ok) break;
+  }
+  // The loop body runs at least once and every path out of it either returns or
+  // assigns, so this is never the initial null.
+  return { status: "parsed", parsed: parsed as P };
+}
+
 export async function askCoach(
   message: string,
   context: CoachContext,

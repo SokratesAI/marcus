@@ -13,7 +13,7 @@
 // one that does not answer -- a plan that half-parsed is worse than no plan,
 // because it looks like it worked.
 
-import { aboutHim, askCoach, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
+import { aboutHim, askCoachShaped, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
 import { isoDay, LANGUAGE_RULE, LANGUAGE_RULE_FIXED_KEYS, phasePosition, type DraftGoal } from "./goal-phase.js";
 
 /** Same order and spelling as the front end's own `DAY_NAMES`. A day the app
@@ -476,11 +476,11 @@ export async function draftWeek(
   // No history: a draft is a single question about his records, not a turn in
   // a conversation, and re-sending the chat would put the chat's tone in it.
   const empty: ChatTurn[] = [];
-  const result = await askCoach(
+  const result = await askCoachShaped(
     buildDraftPrompt(goal, context, deps.today, deps.week, deps.calendarWeek, deps.previousWeek),
-    context, empty, deps);
-  if (result.status !== "ok") return result;
-  const parsed = parseDraftReply(result.reply);
+    context, empty, deps, parseDraftReply);
+  if (result.status !== "parsed") return result;
+  const parsed = result.parsed;
   if (!parsed.ok) return { status: "unusable", reason: parsed.reason };
   return { status: "ok", days: parsed.days, note: parsed.note };
 }

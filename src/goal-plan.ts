@@ -25,7 +25,7 @@
 // real. Weights cannot express that: any positive integers land on a legal
 // calendar, so the failure mode disappears rather than being validated against.
 
-import { askCoach, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
+import { askCoachShaped, type ChatTurn, type CoachConfig, type CoachContext } from "./coach.js";
 import { isoDay, LANGUAGE_RULE, type DraftGoal } from "./goal-phase.js";
 
 /** A phase as the coach proposes it: a name, a sentence, and how long it should
@@ -270,9 +270,9 @@ export async function coachPhases(
   // No history, for the same reason the drafted week sends none: this is a
   // single question about his records, not a turn in the chat.
   const empty: ChatTurn[] = [];
-  const result = await askCoach(buildPhasePrompt(g, todayISO), context, empty, deps);
-  if (result.status !== "ok") return result;
-  const parsed = parsePhasePlan(result.reply);
+  const result = await askCoachShaped(buildPhasePrompt(g, todayISO), context, empty, deps, parsePhasePlan);
+  if (result.status !== "parsed") return result;
+  const parsed = result.parsed;
   if (!parsed.ok) return { status: "unusable", reason: parsed.reason };
   const dated = phaseDates(parsed.phases, start, target);
   if (!dated.ok) return { status: "unusable", reason: dated.reason };
