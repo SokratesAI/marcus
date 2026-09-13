@@ -108,6 +108,19 @@ describe("the demo data a new browser is seeded with", () => {
     app.close();
   });
 
+  it("leaving Home disarms the confirm", () => {
+    // An armed card left live across a tab switch is a Delete-all-of-it under
+    // his thumb on a screen he did not arm.
+    const app = load();
+    app.win.armClearDemo();
+    expect(app.html()).toContain("Are you sure?");
+    app.win.switchTab("plan");
+    app.win.switchTab("home");
+    expect(app.html()).toContain("This is demo data");
+    expect(app.html()).not.toContain("Are you sure?");
+    app.close();
+  });
+
   it("cancelling leaves the records and the notice both standing", () => {
     const app = load();
     app.win.armClearDemo();

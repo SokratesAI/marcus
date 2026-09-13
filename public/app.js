@@ -10,6 +10,11 @@ function destroyCharts() { Object.values(charts).forEach(c => c.destroy()); char
 
 function switchTab(tab) {
   currentTab = tab;
+  // An armed confirm belongs to the screen it was tapped on. Leaving the tab and
+  // coming back should land on the question, not on a live Delete-all-of-it --
+  // same reason `renderLog` disarms the session bin and `wireSectionClear`
+  // disarms the chart clears.
+  demoClearArmed = false;
   document.querySelectorAll('.bottomnav__item').forEach(b => b.classList.toggle('is-active', b.dataset.tab === tab));
   destroyCharts();
   const renderers = { home: renderHome, plan: renderPlan, log: renderLog, nutrition: renderNutrition, progress: renderProgress };
