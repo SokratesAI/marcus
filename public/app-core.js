@@ -2981,7 +2981,19 @@ function toast(message) {
 // in a browser that has never opened Marcus before. Not persisted on purpose --
 // it is a fact about this page load, and the next one is a returning visit.
 let seededThisBoot = false;
+
+// The logged stores `seed()` actually filled with demo data, remembered under
+// this key so Home can say so. Unlike `seededThisBoot` this one is persisted,
+// because the question it exists to ask -- "is what you are looking at yours?"
+// -- outlives the page load that created the data, and a notice that vanished
+// on the next reload would leave the numbers behind with nothing naming them.
+const DEMO_SEEDED_KEY = 'demoSeeded';
+
 function seed() {
+  // Collected rather than set per store, so one write records the whole answer
+  // and a browser that already held sessions but not meals is described
+  // accurately instead of as a blanket "this is all demo".
+  const seededStores = [];
   if (!store.get('plan')) {
     seededThisBoot = true;
     store.set('plan', {
@@ -3041,6 +3053,7 @@ function seed() {
       });
     }
     store.set('sessions', sessions);
+    seededStores.push('sessions');
   }
 
   if (!store.get('weights')) {
@@ -3052,6 +3065,7 @@ function seed() {
       weights.push({ date: fmtDate(d), kg: Math.round(w * 10) / 10 });
     }
     store.set('weights', weights);
+    seededStores.push('weights');
   }
 
   if (!store.get('meals')) {
@@ -3072,6 +3086,7 @@ function seed() {
       }
     }
     store.set('meals', meals);
+    seededStores.push('meals');
   }
 
   if (!store.get('chat')) {
@@ -3079,5 +3094,9 @@ function seed() {
       { role: 'marcus', text: "Hey! I'm Marcus, your trainer. Ask me about today's session, your plan, or how your progress looks — I'm watching your numbers 💪", ts: Date.now() }
     ]);
   }
+
+  // Only written when something was actually seeded. A returning browser takes
+  // none of the branches above, so nothing is stored and nothing is claimed.
+  if (seededStores.length) store.set(DEMO_SEEDED_KEY, seededStores);
 }
 seed();
