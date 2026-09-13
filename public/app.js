@@ -4213,7 +4213,9 @@ let coachTurnInFlight = false;
 
 // The card at the foot of a thread that ends without an answer. Drawn from the
 // stored messages every render, so it appears the moment a reply is lost and
-// goes away by itself as soon as one lands -- there is no flag to keep in step.
+// goes away by itself as soon as one lands -- nothing has to remember to
+// remove it. The one flag it reads is about the request in flight right now,
+// not about whether a card is owed.
 //
 // It says which of the two failures happened, because they are different
 // things to a reader: "I never got a reply" and "the reply stopped halfway".
