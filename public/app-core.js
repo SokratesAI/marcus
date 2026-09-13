@@ -48,7 +48,25 @@ const fmtDate = (d) => {
   return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
 };
 const todayStr = () => fmtDate(new Date());
-const niceDate = (iso) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+// The year is printed only when the date is not in the current one, and that
+// is not cosmetic. The race calendar for a goal eleven months out draws 49
+// rows that cross a New Year -- `Mon, Dec 28` and `Mon, Jan 4` sat adjacent
+// with nothing saying they were different years, and a target of `Sat, Aug 14`
+// read as this August. Measured in a real browser, cycle 1474; the whole suite
+// passed because every fixture date was inside one year.
+const niceDate = (iso, todayISO) => {
+  const d = new Date(iso + 'T00:00');
+  // `typeof` rather than a truthiness check, because the danger is a caller
+  // passing something that is not a date at all. Three chart axes reached
+  // this as `.map(niceDate)`, which hands the array INDEX to the second
+  // parameter -- `new Date('0T00:00')` is Invalid Date, `getFullYear()` is
+  // NaN, and NaN never equals anything, so every label printed a year. The
+  // call sites pass one argument now; this is the second line of defence.
+  const now = typeof todayISO === 'string' && todayISO ? new Date(todayISO + 'T00:00') : new Date();
+  const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
+};
 
 // ---------- one source of truth for "what day is it" ----------
 function planDayName(date) { return DAY_NAMES[(date || new Date()).getDay()]; }
