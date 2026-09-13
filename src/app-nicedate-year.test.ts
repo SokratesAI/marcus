@@ -41,22 +41,26 @@ function loadApp(): any {
   return ctx;
 }
 
-const TODAY = "2026-09-13"; // a Sunday
+// Deliberately NOT the real today. A fixture year equal to the wall clock's
+// makes `todayISO` and `new Date()` agree, so a mutation that drops the
+// parameter entirely and reads the clock passes every assertion -- measured,
+// cycle 1474, where exactly that mutation SURVIVED against a 2026 fixture.
+const TODAY = "2031-09-14"; // a Sunday, and a year this box will not reach
 
 describe("niceDate names the year only when it is not this one", () => {
   it("leaves the year off a date in the current year", () => {
     const { niceDate } = loadApp();
-    expect(niceDate("2026-12-28", TODAY)).toBe("Mon, Dec 28");
+    expect(niceDate("2031-12-29", TODAY)).toBe("Mon, Dec 29");
   });
 
   it("names the year on a date in a later year", () => {
     const { niceDate } = loadApp();
-    expect(niceDate("2027-01-04", TODAY)).toBe("Mon, Jan 4, 2027");
+    expect(niceDate("2032-01-05", TODAY)).toBe("Mon, Jan 5, 2032");
   });
 
   it("names the year on a date in an earlier year", () => {
     const { niceDate } = loadApp();
-    expect(niceDate("2025-12-28", TODAY)).toBe("Sun, Dec 28, 2025");
+    expect(niceDate("2030-12-29", TODAY)).toBe("Sun, Dec 29, 2030");
   });
 
   it("separates the two adjacent race-calendar rows that read identically before", () => {
@@ -64,10 +68,10 @@ describe("niceDate names the year only when it is not this one", () => {
     // Consecutive Mondays on either side of a New Year. Before this change
     // these differed only in the month, so a reader had no way to tell that
     // eight days had crossed a year.
-    const dec = niceDate("2026-12-28", TODAY);
-    const jan = niceDate("2027-01-04", TODAY);
-    expect(dec).not.toContain("2026");
-    expect(jan).toContain("2027");
+    const dec = niceDate("2031-12-29", TODAY);
+    const jan = niceDate("2032-01-05", TODAY);
+    expect(dec).not.toContain("2031");
+    expect(jan).toContain("2032");
   });
 
   it("reads the current year off the clock when no date is passed", () => {
