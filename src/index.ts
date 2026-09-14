@@ -526,12 +526,17 @@ export function createApp(
   });
 
   app.post("/api/chat", express.json({ limit: MAX_BODY }), async (req, res) => {
-    const { message, context, history, today } = req.body as {
+    const { message, context, history, today, probe } = req.body as {
       message?: unknown;
       context?: unknown;
       history?: unknown;
       today?: unknown;
+      probe?: unknown;
     };
+    // Opt-in, and only ever `true`. A probe is somebody checking that the coach
+    // still answers; it reaches the coach exactly like a tap does and must not
+    // land in the share `marcus-kr-coach-first-try` reads. See coach-outcome.ts.
+    const isProbe = probe === true;
     if (typeof message !== "string" || message.trim().length === 0) {
       res.status(400).json({ error: "message is required" });
       return;
@@ -548,7 +553,7 @@ export function createApp(
       // Issue #227's `marcus-kr-coach-first-try`. Awaited before replying so a
       // test can read it back deterministically; `record` never throws, so a
       // broken volume cannot turn a good answer into a 500.
-      await coachOutcomes.record("chat", true, now());
+      await coachOutcomes.record("chat", true, now(), isProbe);
       res.status(200).json({ reply: result.reply });
       return;
     }
@@ -565,7 +570,7 @@ export function createApp(
       res.status(503).json({ error: "the coach is not on a subscription model" });
       return;
     }
-    await coachOutcomes.record("chat", false, now());
+    await coachOutcomes.record("chat", false, now(), isProbe);
     logger.warn({ detail: result.detail }, "coach did not answer");
     res.status(502).json({ error: "the coach did not answer" });
   });
@@ -584,7 +589,7 @@ export function createApp(
     // `calendarWeek` is the Plan-tab calendar row whose Draft button was tapped.
     // `previousWeek` is the week already drafted before this one, so a block of
     // weeks is a progression rather than the same week four times.
-    const { goal, goals, context, today, week, calendarWeek, previousWeek } = req.body as {
+    const { goal, goals, context, today, week, calendarWeek, previousWeek, probe } = req.body as {
       goal?: unknown;
       goals?: unknown;
       context?: unknown;
@@ -592,7 +597,9 @@ export function createApp(
       week?: unknown;
       calendarWeek?: unknown;
       previousWeek?: unknown;
+      probe?: unknown;
     };
+    const isProbe = probe === true;
     // Timed for issue #227's `marcus-kpi-coach-latency`. The clock goes
     // around `draftWeek` and not around the whole handler because the handler
     // is the coach call plus a JSON parse -- and it is the coach's wait that
@@ -608,8 +615,11 @@ export function createApp(
       // Recorded only on an answer, and awaited before replying so a test can
       // read it back deterministically. `record` never throws, so a broken
       // volume cannot turn a good draft into a 500.
-      await coachLatency.record(Date.now() - startedAt, now());
-      await coachOutcomes.record("plan-draft", true, now());
+      // A probe is left out of the latency history for the same reason it is
+      // left out of the share: `marcus-kpi-coach-latency` is about how long HE
+      // waited, and nothing here can tell the two apart afterwards.
+      if (!isProbe) await coachLatency.record(Date.now() - startedAt, now());
+      await coachOutcomes.record("plan-draft", true, now(), isProbe);
       res.status(200).json({ days: result.days, note: result.note });
       return;
     }
@@ -626,12 +636,12 @@ export function createApp(
       // 502 and not 500: the coach answered, and what it said was not a week.
       // The reason is returned because it is the only thing that tells Edvard
       // whether to press the button again or give up on it.
-      await coachOutcomes.record("plan-draft", false, now());
+      await coachOutcomes.record("plan-draft", false, now(), isProbe);
       logger.warn({ reason: result.reason }, "coach draft was not a week");
       res.status(502).json({ error: `the coach did not draft a week: ${result.reason}` });
       return;
     }
-    await coachOutcomes.record("plan-draft", false, now());
+    await coachOutcomes.record("plan-draft", false, now(), isProbe);
     logger.warn({ detail: result.detail }, "coach did not answer");
     res.status(502).json({ error: "the coach did not answer" });
   });
@@ -646,14 +656,20 @@ export function createApp(
     // `targetDate`; the dates are computed off those, not off this server's
     // clock. `today` is his own calendar day, for the same UTC reason the
     // drafted week sends it.
-    const { goal, context, today } = req.body as { goal?: unknown; context?: unknown; today?: unknown };
+    const { goal, context, today, probe } = req.body as {
+      goal?: unknown;
+      context?: unknown;
+      today?: unknown;
+      probe?: unknown;
+    };
+    const isProbe = probe === true;
     const result = await coachPhases(goal, (context ?? {}) as CoachContext, {
       config: coach,
       fetch: fetchImpl,
       today: typeof today === "string" ? today : undefined,
     });
     if (result.status === "ok") {
-      await coachOutcomes.record("goal-phases", true, now());
+      await coachOutcomes.record("goal-phases", true, now(), isProbe);
       res.status(200).json({ milestones: result.milestones, note: result.note });
       return;
     }
@@ -670,12 +686,12 @@ export function createApp(
       // 502 and not 500: the coach answered, and what it said is not a block of
       // phases. The reason goes back because it is the only thing that tells
       // Edvard whether to press the button again or keep the dates he has.
-      await coachOutcomes.record("goal-phases", false, now());
+      await coachOutcomes.record("goal-phases", false, now(), isProbe);
       logger.warn({ reason: result.reason }, "coach phases were not a block");
       res.status(502).json({ error: `the coach did not shape the phases: ${result.reason}` });
       return;
     }
-    await coachOutcomes.record("goal-phases", false, now());
+    await coachOutcomes.record("goal-phases", false, now(), isProbe);
     logger.warn({ detail: result.detail }, "coach did not answer");
     res.status(502).json({ error: "the coach did not answer" });
   });

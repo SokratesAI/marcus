@@ -26,6 +26,7 @@ describe("summarise", () => {
     // from "the coach has not been asked anything yet".
     expect(summarise([])).toEqual({
       count: 0, answered: 0, firstTryPct: null, newestAt: null, oldestAt: null, byRoute: {},
+      probes: { count: 0, answered: 0 },
     });
   });
 
@@ -239,7 +240,7 @@ describe("GET /api/coach/outcomes", () => {
     const app = createApp(new StateStore(dir), undefined, { coach: null, coachOutcomes: log });
     const res = await request(app).get("/api/coach/outcomes");
     expect(Object.keys(res.body).sort()).toEqual(
-      ["answered", "byRoute", "count", "firstTryPct", "newestAt", "oldestAt"],
+      ["answered", "byRoute", "count", "firstTryPct", "newestAt", "oldestAt", "probes"],
     );
     expect(res.text).not.toContain("01:02:03");
   });
@@ -299,3 +300,91 @@ const GOAL = {
     { label: "Taper", note: "", date: "2027-01-10" },
   ],
 };
+
+describe("a probe is not one of his taps", () => {
+  // Cycle 1603 drove the live /api/chat once to check the coach was still a
+  // real conversation, and the key result went from "no data yet" to
+  // "100% over 1 tap" -- a number about a curl. See coach-outcome.ts.
+  it("keeps a probe out of the share, the routes and the timestamps", () => {
+    const s = summarise([
+      { at: "2026-09-14T10:00:00.000Z", route: "chat", ok: true, probe: true },
+      { at: "2026-09-14T11:00:00.000Z", route: "chat", ok: false, probe: true },
+    ]);
+    expect(s.count).toBe(0);
+    expect(s.answered).toBe(0);
+    expect(s.firstTryPct).toBeNull();
+    expect(s.newestAt).toBeNull();
+    expect(s.oldestAt).toBeNull();
+    expect(s.byRoute).toEqual({});
+    expect(s.probes).toEqual({ count: 2, answered: 1 });
+  });
+
+  it("does not move a share a real tap already set", () => {
+    // The separating case: without the split, one failed probe halves a
+    // perfect share and the reading is about the prober, not about him.
+    const real = { at: "2026-09-14T09:00:00.000Z", route: "chat", ok: true };
+    const withProbe = summarise([
+      real,
+      { at: "2026-09-14T10:00:00.000Z", route: "chat", ok: false, probe: true },
+    ]);
+    expect(withProbe.firstTryPct).toBe(100);
+    expect(withProbe.count).toBe(1);
+    expect(withProbe.newestAt).toBe("2026-09-14T09:00:00.000Z");
+    expect(withProbe.probes).toEqual({ count: 1, answered: 0 });
+  });
+
+  it("treats a sample written before the flag existed as a real tap", () => {
+    // Every sample already on disk has no `probe` key at all; absent must not
+    // read as a probe, or the whole history vanishes from the share.
+    const s = summarise([{ at: "2026-09-13T09:00:00.000Z", route: "chat", ok: true }]);
+    expect(s.count).toBe(1);
+    expect(s.probes.count).toBe(0);
+  });
+
+  it("keeps the flag across a restart", async () => {
+    const log = new CoachOutcomeLog(dir);
+    await log.record("chat", true, "2026-09-14T10:00:00.000Z", true);
+    await log.record("chat", true, "2026-09-14T10:01:00.000Z");
+    const summary = await new CoachOutcomeLog(dir).summary();
+    expect(summary.count).toBe(1);
+    expect(summary.probes).toEqual({ count: 1, answered: 1 });
+  });
+
+  it("drops a sample whose probe field is not a boolean", async () => {
+    // Same direction as the junk test above: an unreadable marker must not
+    // fall through to "real tap", which is the reading that inflates the share.
+    await fs.writeFile(
+      path.join(dir, "coach-outcomes.json"),
+      JSON.stringify([{ at: "2026-09-14T10:00:00.000Z", route: "chat", ok: true, probe: "yes" }]),
+      "utf8",
+    );
+    expect(await new CoachOutcomeLog(dir).list()).toEqual([]);
+  });
+
+  it("POST /api/chat with probe:true answers him and records no tap", async () => {
+    const app = createApp(new StateStore(dir), undefined, {
+      fetchImpl: fakeCoach(),
+      coach: { baseUrl: "http://agora", conversationId: "c1" },
+      coachOutcomes: new CoachOutcomeLog(dir),
+    });
+    const res = await request(app).post("/api/chat").send({ message: "still there?", context: {}, probe: true });
+    expect(res.status).toBe(200);
+    const summary = await request(app).get("/api/coach/outcomes");
+    expect(summary.body.count).toBe(0);
+    expect(summary.body.firstTryPct).toBeNull();
+    expect(summary.body.probes).toEqual({ count: 1, answered: 1 });
+  });
+
+  it("POST /api/chat without the flag still records the tap", async () => {
+    // The mirror, so the test above cannot pass by the route being broken.
+    const app = createApp(new StateStore(dir), undefined, {
+      fetchImpl: fakeCoach(),
+      coach: { baseUrl: "http://agora", conversationId: "c1" },
+      coachOutcomes: new CoachOutcomeLog(dir),
+    });
+    await request(app).post("/api/chat").send({ message: "hei", context: {} });
+    const summary = await request(app).get("/api/coach/outcomes");
+    expect(summary.body.count).toBe(1);
+    expect(summary.body.probes).toEqual({ count: 0, answered: 0 });
+  });
+});
