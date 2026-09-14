@@ -38,6 +38,30 @@ function streak() {
   return trainingStreak(store.get('sessions', []), todayStr(), store.get('plan'));
 }
 
+// idea #208 asks for the plan proposal to reach him "after a logged session or
+// week". It has existed since marcus#14 and it has only ever been reachable by
+// opening the Plan tab and scrolling past the goals -- so the review runs, the
+// reason is written, the citation from idea #214 is attached, and Home, the tab
+// the app opens on, says nothing about any of it.
+//
+// The headline is `proposals[0]` rather than a new ranking: planReview already
+// pushes them in its own order of consequence (a phase resize, then easing off,
+// then the days you are not keeping, then adding volume), and inventing a
+// second priority here would let Home and the Plan tab disagree about which
+// suggestion matters most.
+//
+// Deliberately NOT a badge. `openNudges` counts things that go away on their
+// own -- log the session and the nudge is gone. A proposal stands until it is
+// accepted and there is no way to dismiss one, so counting it would pin the
+// home-screen icon at 1 forever for anyone who reads a suggestion and decides
+// against it.
+function homeReviewPrompt(review) {
+  const proposals = (review && review.proposals) || [];
+  if (!proposals.length) return null;
+  const first = proposals[0];
+  return { count: proposals.length, title: first.title, reason: first.reason, kind: first.kind };
+}
+
 function renderHome() {
   const plan = store.get('plan');
   const todayName = planDayName();
@@ -63,6 +87,8 @@ function renderHome() {
   // A goal whose day has gone is not a goal Home should be counting down to.
   const behind = goalIsBehind(nextGoal);
   const week = homeWeekTarget();
+  // Same call the Plan tab makes, same arguments, so the two cannot disagree.
+  const suggests = homeReviewPrompt(planReview(plan, store.get('sessions', []), todayStr(), undefined, nextGoal));
   // First thing on the first screen, above the plan: if these numbers are not
   // his, nothing below this card means what it says.
   const demo = demoSeededSummary();
@@ -140,6 +166,14 @@ function renderHome() {
       <div class="card__title-row"><h2>${esc(week.phase)}${week.phaseEnds ? ' phase' : ''}</h2><span class="chip chip--primary">${week.sessionsDone}/${week.sessionsPlanned} sessions</span></div>
       ${week.volumeTarget != null ? `<div class="exercise-line"><span>Volume</span><span>${week.volumeDone} / ${week.volumeTarget} kg</span></div>` : ``}
       <div class="card__note">${esc(weekTargetLabel(week))}</div>
+    </div>` : ``}
+
+    ${suggests ? `
+    <div class="section-title">Marcus suggests</div>
+    <div class="card">
+      <div class="card__title-row"><h2>${esc(suggests.title)}</h2><span class="chip chip--primary">${suggests.count === 1 ? '1 change' : suggests.count + ' changes'}</span></div>
+      <p class="card__note">${esc(suggests.reason)}</p>
+      <button class="btn btn--filled btn--block" style="margin-top:12px" onclick="switchTab('plan')"><span class="material-icons-round">fact_check</span> ${suggests.count === 1 ? 'Read it on the Plan tab' : 'Read all ' + suggests.count + ' on the Plan tab'}</button>
     </div>` : ``}
 
     ${offerReminders ? `
