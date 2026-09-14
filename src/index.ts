@@ -10,6 +10,7 @@ import { coachPhases } from "./goal-plan.js";
 import { draftWeek } from "./plan-draft.js";
 import { SubscriptionStore, VapidKeyStore, validateSubscription } from "./push.js";
 import { CoachLatencyLog } from "./coach-latency.js";
+import { CoachOutcomeLog } from "./coach-outcome.js";
 import { declarativePayload, sendPush, sendToAll } from "./push-send.js";
 import {
   initTracing,
@@ -48,6 +49,8 @@ export interface AppOptions {
   subscriptions?: SubscriptionStore;
   /** Injected only so a test never appends to a real latency history. */
   coachLatency?: CoachLatencyLog;
+  /** Same, for the record of whether each coach call came back usable. */
+  coachOutcomes?: CoachOutcomeLog;
   /** Passed by the entrypoint after `initTracing`. Null, and therefore a
    * pass-through, everywhere else -- a test must not open a span. */
   tracer?: TracerLike | null;
@@ -70,6 +73,7 @@ export function createApp(
   const vapidKeys = options.vapidKeys ?? new VapidKeyStore(path.dirname(store.filePath));
   const subscriptions = options.subscriptions ?? new SubscriptionStore(path.dirname(store.filePath));
   const coachLatency = options.coachLatency ?? new CoachLatencyLog(path.dirname(store.filePath));
+  const coachOutcomes = options.coachOutcomes ?? new CoachOutcomeLog(path.dirname(store.filePath));
 
   // First, so the span covers the body parser and the static handler as well
   // as the API routes.
@@ -313,6 +317,22 @@ export function createApp(
     }
   });
 
+  // Issue #227's `marcus-kr-coach-first-try`: the share of coach taps that came
+  // back with a usable answer, so nobody has to hammer the live coach to read
+  // it. Same shape and same reasoning as the latency route above -- a summary
+  // and never the samples, because a list of timestamps is a record of when
+  // Edvard uses this app and the key result needs a share.
+  app.get("/api/coach/outcomes", async (_req, res) => {
+    try {
+      res.status(200).json(await coachOutcomes.summary());
+    } catch (err) {
+      logger.error({ err }, "could not read the coach outcome history");
+      // 500 rather than an empty summary: no calls yet is a real reading, and
+      // an unreadable history must never be recorded as one.
+      res.status(500).json({ error: "could not read the coach outcome history" });
+    }
+  });
+
   // Idea #217, second slice: the send itself. This is the route the 20:00
   // CronJob calls; it is not a route a phone calls, which is why it is the one
   // route here that needs a credential.
@@ -525,6 +545,10 @@ export function createApp(
       { config: coach, fetch: fetchImpl, today: typeof today === "string" ? today : undefined },
     );
     if (result.status === "ok") {
+      // Issue #227's `marcus-kr-coach-first-try`. Awaited before replying so a
+      // test can read it back deterministically; `record` never throws, so a
+      // broken volume cannot turn a good answer into a 500.
+      await coachOutcomes.record("chat", true, now());
       res.status(200).json({ reply: result.reply });
       return;
     }
@@ -541,6 +565,7 @@ export function createApp(
       res.status(503).json({ error: "the coach is not on a subscription model" });
       return;
     }
+    await coachOutcomes.record("chat", false, now());
     logger.warn({ detail: result.detail }, "coach did not answer");
     res.status(502).json({ error: "the coach did not answer" });
   });
@@ -584,6 +609,7 @@ export function createApp(
       // read it back deterministically. `record` never throws, so a broken
       // volume cannot turn a good draft into a 500.
       await coachLatency.record(Date.now() - startedAt, now());
+      await coachOutcomes.record("plan-draft", true, now());
       res.status(200).json({ days: result.days, note: result.note });
       return;
     }
@@ -600,10 +626,12 @@ export function createApp(
       // 502 and not 500: the coach answered, and what it said was not a week.
       // The reason is returned because it is the only thing that tells Edvard
       // whether to press the button again or give up on it.
+      await coachOutcomes.record("plan-draft", false, now());
       logger.warn({ reason: result.reason }, "coach draft was not a week");
       res.status(502).json({ error: `the coach did not draft a week: ${result.reason}` });
       return;
     }
+    await coachOutcomes.record("plan-draft", false, now());
     logger.warn({ detail: result.detail }, "coach did not answer");
     res.status(502).json({ error: "the coach did not answer" });
   });
@@ -625,6 +653,7 @@ export function createApp(
       today: typeof today === "string" ? today : undefined,
     });
     if (result.status === "ok") {
+      await coachOutcomes.record("goal-phases", true, now());
       res.status(200).json({ milestones: result.milestones, note: result.note });
       return;
     }
@@ -641,10 +670,12 @@ export function createApp(
       // 502 and not 500: the coach answered, and what it said is not a block of
       // phases. The reason goes back because it is the only thing that tells
       // Edvard whether to press the button again or keep the dates he has.
+      await coachOutcomes.record("goal-phases", false, now());
       logger.warn({ reason: result.reason }, "coach phases were not a block");
       res.status(502).json({ error: `the coach did not shape the phases: ${result.reason}` });
       return;
     }
+    await coachOutcomes.record("goal-phases", false, now());
     logger.warn({ detail: result.detail }, "coach did not answer");
     res.status(502).json({ error: "the coach did not answer" });
   });
