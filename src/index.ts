@@ -9,6 +9,7 @@ import { askCoach, coachConfig, type CoachConfig, type CoachContext } from "./co
 import { coachPhases } from "./goal-plan.js";
 import { draftWeek } from "./plan-draft.js";
 import { SubscriptionStore, VapidKeyStore, validateSubscription } from "./push.js";
+import { CoachLatencyLog } from "./coach-latency.js";
 import { declarativePayload, sendPush, sendToAll } from "./push-send.js";
 import {
   initTracing,
@@ -45,6 +46,8 @@ export interface AppOptions {
    * neither. */
   vapidKeys?: VapidKeyStore;
   subscriptions?: SubscriptionStore;
+  /** Injected only so a test never appends to a real latency history. */
+  coachLatency?: CoachLatencyLog;
   /** Passed by the entrypoint after `initTracing`. Null, and therefore a
    * pass-through, everywhere else -- a test must not open a span. */
   tracer?: TracerLike | null;
@@ -66,6 +69,7 @@ export function createApp(
   const coach = options.coach !== undefined ? options.coach : coachConfig(process.env);
   const vapidKeys = options.vapidKeys ?? new VapidKeyStore(path.dirname(store.filePath));
   const subscriptions = options.subscriptions ?? new SubscriptionStore(path.dirname(store.filePath));
+  const coachLatency = options.coachLatency ?? new CoachLatencyLog(path.dirname(store.filePath));
 
   // First, so the span covers the body parser and the static handler as well
   // as the API routes.
@@ -281,6 +285,31 @@ export function createApp(
       // is a real and actionable reading, and an unreadable store must never
       // be recorded as one.
       res.status(500).json({ error: "could not count the subscriptions" });
+    }
+  });
+
+  // Issue #227's guardrail for the coach: how long a plan draft actually made
+  // him wait. Nova reads it every cycle into `marcus-kpi-coach-latency`, which
+  // until now carried a number one cycle typed after driving the route by hand
+  // and a written "no instrument" beside it.
+  //
+  // It answers a summary and never the samples. There is nothing sensitive in
+  // a duration, but a list of timestamps is a record of when Edvard uses this
+  // app, and the KPI needs a median -- so the narrower thing is also the
+  // sufficient one. `newestAt`/`oldestAt` stay because a median with no idea
+  // how old it is cannot be told from a current reading.
+  //
+  // Unauthenticated for the same reason `/api/push/subscribers` above is: it
+  // changes nothing, and every route on this server already takes an
+  // unauthenticated body from whoever can reach the pod.
+  app.get("/api/coach/latency", async (_req, res) => {
+    try {
+      res.status(200).json(await coachLatency.summary());
+    } catch (err) {
+      logger.error({ err }, "could not read the coach latency history");
+      // 500 rather than an empty summary: no samples yet is a real reading,
+      // and an unreadable history must never be recorded as one.
+      res.status(500).json({ error: "could not read the coach latency history" });
     }
   });
 
@@ -539,6 +568,11 @@ export function createApp(
       calendarWeek?: unknown;
       previousWeek?: unknown;
     };
+    // Timed for issue #227's `marcus-kpi-coach-latency`. The clock goes
+    // around `draftWeek` and not around the whole handler because the handler
+    // is the coach call plus a JSON parse -- and it is the coach's wait that
+    // the KPI is about.
+    const startedAt = Date.now();
     const result = await draftWeek(
       (Array.isArray(goals) ? goals : goal ?? null) as Parameters<typeof draftWeek>[0],
       (context ?? {}) as Parameters<typeof draftWeek>[1],
@@ -546,6 +580,10 @@ export function createApp(
         previousWeek },
     );
     if (result.status === "ok") {
+      // Recorded only on an answer, and awaited before replying so a test can
+      // read it back deterministically. `record` never throws, so a broken
+      // volume cannot turn a good draft into a 500.
+      await coachLatency.record(Date.now() - startedAt, now());
       res.status(200).json({ days: result.days, note: result.note });
       return;
     }

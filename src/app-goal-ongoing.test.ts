@@ -3,10 +3,33 @@ import vm from "node:vm";
 import { describe, it, expect } from "vitest";
 import { buildDraftPrompt, weekTargetLine } from "./plan-draft.js";
 
+/** `Date`, but `new Date()` and `Date.now()` answer `todayISO` when one is
+ * given. Noon local, so a test is not one hour from a different day. */
+function pinnedClock(todayISO?: string): DateConstructor {
+  if (!todayISO) return Date;
+  const at = () => new Date(`${todayISO}T12:00:00`).getTime();
+  return class extends Date {
+    constructor(...args: any[]) {
+      if (args.length === 0) super(at());
+      else super(...(args as [any]));
+    }
+    static now(): number {
+      return at();
+    }
+  } as unknown as DateConstructor;
+}
+
 // Idea #209: "Improve overall health and fitness" is his own example of a goal,
 // and it has no race day. Same vm shape as app-plandraft-today.test.ts, except
 // the view node is kept so a render can be read back.
-function loadApp(sent: string[]): any {
+//
+// `todayISO` pins the clock the *render* reads. Every date in this file is
+// passed in explicitly except that one: `renderHome` calls `todayStr()` and
+// `homeWeekTarget()` with no argument, so it reads the wall clock, and the
+// kilogram-target test below was green at merge and went red on nobody's diff
+// once the real day passed a week after its newest logged session. A fixture
+// that pins every date but the one the subject actually reads is not pinned.
+function loadApp(sent: string[], todayISO?: string): any {
   const makeNode = (): any => ({
     value: "", textContent: "", innerHTML: "", hidden: false, style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -24,7 +47,8 @@ function loadApp(sent: string[]): any {
   };
   const stored: Record<string, string> = {};
   const ctx: any = {
-    console, setTimeout, clearTimeout, Math, JSON, Number, String, Array, Object, Date,
+    console, setTimeout, clearTimeout, Math, JSON, Number, String, Array, Object,
+    Date: pinnedClock(todayISO),
     document, navigator: {},
     localStorage: {
       getItem: (k: string) => (k in stored ? stored[k] : null),
@@ -129,7 +153,7 @@ describe("a goal with no target date", () => {
     })()`);
 
   it("gets a kilogram target for the week instead of an empty Home card", () => {
-    const app = loadApp([]);
+    const app = loadApp([], "2026-09-11");
     withTwoLoggedWeeks(app);
     const week = run(app, "homeWeekTarget('2026-09-11')");
     expect(week.reason).toBe("ok");
