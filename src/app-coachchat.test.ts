@@ -127,14 +127,17 @@ describe("askMarcus", () => {
       },
     });
     seed(ctx);
-    // `goals` is empty and `fact` null because this reply carries neither a
-    // ```goal nor a ```profile block; those and the cards they draw are covered
-    // in app-goal-fromchat.test.ts and app-profile-fromchat.test.ts.
+    // `goals` is empty and `fact` and `session` null because this reply carries
+    // none of the three blocks; those and the cards they draw are covered in
+    // app-goal-fromchat.test.ts, app-profile-fromchat.test.ts and
+    // app-session-fromchat.test.ts. The exact shape is asserted on purpose --
+    // a new key on this return value is a new card on his screen.
     expect(await ctx.askMarcus("what should I do today?")).toEqual({
       text: "Squats. Go.",
       offline: false,
       goals: [],
       fact: null,
+      session: null,
     });
     expect(sent.message).toBe("what should I do today?");
     expect(sent.context.sessions).toEqual([{ date: "2026-09-04", kind: "strength" }]);

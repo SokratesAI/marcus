@@ -59,6 +59,12 @@ export interface CoachContext {
    * for the same reason: the block is stripped before the bubble is stored, so
    * nothing else in this prompt carries the refusal. */
   declinedFacts?: unknown[];
+  /** Sessions the coach proposed and Edvard turned down, one sentence each --
+   * the same problem as `declinedGoals` a third time. The client suppresses the
+   * card for one he has already refused, so without this the model can write a
+   * block, say it has written the session down for him to confirm, and leave
+   * him a sentence with nothing under it to tap. */
+  declinedSessions?: unknown[];
 }
 
 // A cap with a danger behind it rather than a tidiness one: the whole context
@@ -292,6 +298,7 @@ export function buildPrompt(
   }
   parts.push(GOAL_INSTRUCTION);
   parts.push(profileInstruction(Boolean(about.text)));
+  parts.push(SESSION_INSTRUCTION(day));
   const declined = declinedGoals(context.declinedGoals ?? []);
   if (declined) {
     parts.push(
@@ -309,6 +316,14 @@ export function buildPrompt(
       "THINGS ABOUT HIM HE HAS ALREADY TURNED DOWN",
       "He was shown a card for each of these and chose not to have it noted. Do not write a profile block for any of them again, and do not treat them as established fact.",
       refused,
+    );
+  }
+  const unlogged = declinedGoals(context.declinedSessions ?? []);
+  if (unlogged) {
+    parts.push(
+      "SESSIONS HE HAS ALREADY TURNED DOWN",
+      "He was shown a card for each of these and chose not to log it. Do not write a session block for any of them again, and do not treat any of them as training he did.",
+      unlogged,
     );
   }
   parts.push("MESSAGE FROM EDVARD", message);
@@ -374,6 +389,46 @@ export function profileInstruction(hasAbout: boolean): string {
     ]
       .filter(Boolean)
       .join(" "),
+  ].join("\n");
+}
+
+/** The third block, and the one his log is actually empty for (idea #208).
+ *
+ * His synced state on 2026-09-15 carries 21 chat messages and **zero**
+ * sessions. The Log tab already turns a typed sentence into a prefilled form,
+ * but it is a list of English keywords on a tab he is not on -- and he writes
+ * to Marcus in Norwegian. So the one place he talks to his coach is the one
+ * place he cannot log from, and every card this app draws is reasoning from an
+ * empty log.
+ *
+ * Same contract as the two blocks above, deliberately: the block is a proposal
+ * and never a write. The app strips it out, shows him what it heard, and
+ * stores nothing until he taps Log it. The worst a wrong block can do is put a
+ * card on the screen he declines.
+ *
+ * `today` is in here rather than left implicit because the date is the field a
+ * model gets wrong -- it reasons from a training cutoff months behind the day
+ * he is typing on, and a session filed under last year's date is invisible on
+ * every screen in the app. The client refuses a future date and anything more
+ * than 90 days old outright rather than shifting it, so a block with a bad day
+ * produces no card at all. */
+export function SESSION_INSTRUCTION(today: string): string {
+  return [
+    "LOGGING A SESSION HE DID",
+    `If Edvard says he trained -- a lift, a set, a workout he has already done -- end your reply with a block in exactly this shape, after your normal answer. Today is ${today}.`,
+    "```session",
+    `{"date": "${today}", "exercises": [{"name": "Knebøy", "sets": 5, "reps": 5, "weight": 100, "rpe": 8}]}`,
+    "```",
+    [
+      "Rules: `date` is `YYYY-MM-DD`, the day he did it -- today's date above unless he named another day, and never a day in the future.",
+      "`name` is the exercise in his own words, in his own language.",
+      "`sets`, `reps` and `weight` are numbers: how many sets, how many reps in a set, and the kilograms on the bar. `weight` is 0 for a bodyweight exercise.",
+      "`rpe` is optional, 1 to 10, only if he said how hard it was.",
+      "One block per reply, for the session he just described. Do not write one for a session already in TRAINING DATA above, do not write one for a workout he is planning to do, and do not write one because you think he should have trained.",
+      "If he said he trained but did not say the sets, reps or weight, do not guess and do not write a block -- ask him for the numbers instead.",
+      "He has to confirm it before anything is saved, so do not claim you have logged it; say you have written it down for him to confirm.",
+      "This block goes last, after any goal or profile block.",
+    ].join(" "),
   ].join("\n");
 }
 

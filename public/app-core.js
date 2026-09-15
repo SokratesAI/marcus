@@ -2709,6 +2709,159 @@ function factDeclinedBefore(fact, chat) {
   return declinedFactTexts(chat).some(text => factAlreadyKnown(fact, text));
 }
 
+// ---------- a session he says he did in the chat (idea #208) ----------
+// He has 21 chat messages on the server and zero sessions. The Log tab already
+// reads a typed sentence ("ran 7 km, felt hard") into a prefilled form, but it
+// is on the other tab and it is a list of English words -- and he writes to
+// Marcus in Norwegian. So the one place he actually talks to his coach is the
+// one place he cannot log from, and every card Marcus draws is built on a log
+// that is empty.
+//
+// Deliberately the goal block's shape and the goal block's contract, down to
+// the fence, because the failure to avoid is the same one: a card offering to
+// save a session he never did. The coach proposes, he taps, the app writes.
+// Nothing here saves anything.
+const COACH_SESSION_FENCE = /```session\s*\n([\s\S]*?)```[ \t]*\n?/;
+
+// How far back a proposed date may reach. A coach reasoning from a training
+// cutoff months behind today writes last year's date the same way it writes
+// last August for a race, and a session filed 300 days ago is invisible on
+// every screen in this app -- it lands behind the end of every window.
+const SESSION_MAX_AGE_DAYS = 90;
+
+// A session's date, unlike a goal's, is a day that has already happened. So the
+// two ends are reversed: the future is the error and the past is the record.
+// An unusable date is a refused proposal rather than a dropped field -- a
+// session with no day cannot be stored at all, and guessing "today" for a
+// session he said he did on Tuesday would file the wrong day under his name.
+function sessionDateProblem(rawDate, todayISO) {
+  const date = String(rawDate == null ? '' : rawDate).trim();
+  if (!date) return 'no date';
+  const today = todayISO || todayStr();
+  const [y, mo, d] = date.split('-').map(Number);
+  const parsed = new Date(date + 'T00:00');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime())
+      || parsed.getFullYear() !== y || parsed.getMonth() + 1 !== mo || parsed.getDate() !== d) {
+    return 'not a real date';
+  }
+  const span = daysBetween(today, date);
+  if (span > 0) return 'in the future';
+  if (span < -SESSION_MAX_AGE_DAYS) return 'too long ago';
+  return '';
+}
+
+/** One ```session block's JSON body as a proposal, or null.
+ *
+ * The rows go through `validateSession` -- the same function the Log tab's own
+ * save button calls -- so a block the store would refuse never becomes a card.
+ * That is the confirm-button rule this repo has paid for twice: a card whose
+ * button can only ever toast is worse than no card, because it reads as an
+ * offer. */
+function sessionProposalFrom(body, todayISO) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const date = String(parsed.date == null ? '' : parsed.date).trim();
+  if (sessionDateProblem(date, todayISO)) return null;
+  const rows = Array.isArray(parsed.exercises) ? parsed.exercises : [];
+  if (!rows.length) return null;
+  const checked = validateSession(rows.map(r => ({
+    name: r && r.name,
+    sets: r && r.sets,
+    reps: r && r.reps,
+    weight: r && r.weight,
+    rpe: r && r.rpe,
+  })));
+  if (!checked.ok) return null;
+  const proposal = { date, kind: 'strength', exercises: checked.exercises };
+  // Only what a session record actually carries. A model that invents an `id`
+  // must not have it reach the store -- `acceptCoachSession` mints one, the
+  // same way `validateGoal` is the only place a goal id is made.
+  const note = String(parsed.note == null ? '' : parsed.note).trim();
+  if (note) proposal.note = note;
+  return proposal;
+}
+
+function parseCoachSession(reply, todayISO) {
+  const raw = String(reply == null ? '' : reply);
+  const match = raw.match(COACH_SESSION_FENCE);
+  if (!match) return { text: raw, session: null };
+  // Stripped whether or not it parses, same as the other two fences, so a
+  // malformed block is never read as raw JSON in a bubble.
+  const text = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim();
+  return { text, session: sessionProposalFrom(match[1], todayISO) };
+}
+
+// What makes two sessions the same session: the day, and what was done on it.
+// Not the weights -- correcting 100 kg to 102.5 kg is an edit on the Log tab,
+// not a second workout -- and not the order, because the coach writes the
+// exercises back in whatever order he said them.
+function sessionKey(session) {
+  if (!session || !session.date) return '';
+  const names = (session.exercises || [])
+    .map(e => String((e && e.name) || '').trim().toLowerCase())
+    .filter(Boolean)
+    .sort();
+  if (!names.length) return '';
+  return String(session.date).trim() + '|' + names.join(',');
+}
+
+// A session he has already logged is a card asking him to log it twice, and a
+// duplicate here is worse than a duplicate goal: it doubles his weekly volume,
+// which is the number the plan review reasons from.
+function sessionAlreadyLogged(proposal, existing) {
+  const want = sessionKey(proposal);
+  if (!want) return false;
+  return (existing || []).some(s => sessionKey(s) === want);
+}
+
+function declinedSessionKeys(chat) {
+  return (chat || [])
+    .filter(m => m && m.sessionDeclined && m.sessionProposal)
+    .map(m => sessionKey(m.sessionProposal))
+    .filter(Boolean);
+}
+
+// Same normalisation as one already in the log, for the same reason
+// `goalDeclinedBefore` reuses `goalAlreadySet`: "already answered" must not
+// mean two things depending on which way he answered.
+// The same list for the coach's prompt: what he turned down, as the sentence
+// the card showed him rather than the record behind it, because the model is
+// being told what not to offer again and not being handed a session.
+function declinedSessionSentences(chat) {
+  return (chat || [])
+    .filter(m => m && m.sessionDeclined && m.sessionProposal)
+    .map(m => {
+      const sentence = sessionProposalSentence(m.sessionProposal);
+      return sentence ? `${sentence} (${m.sessionProposal.date})` : '';
+    })
+    .filter(Boolean);
+}
+
+function sessionDeclinedBefore(proposal, chat) {
+  const want = sessionKey(proposal);
+  if (!want) return false;
+  return declinedSessionKeys(chat).indexOf(want) !== -1;
+}
+
+// What the card says back, so he confirms a session he can read rather than a
+// word. Deliberately the Log tab's own phrasing (`5×5 Knebøy at 100 kg`), so
+// the same workout reads the same way in both places.
+function sessionProposalSentence(proposal) {
+  if (!proposal || !proposal.exercises) return '';
+  return proposal.exercises.map(e => {
+    const sets = (e.sets || []).length;
+    const first = (e.sets || [])[0] || {};
+    const weight = Number(first.weight);
+    const load = Number.isFinite(weight) && weight > 0 ? ` at ${weight} kg` : '';
+    return `${sets}×${first.reps} ${e.name}${load}`;
+  }).join(', ');
+}
+
 // A turn where the coach never actually answered, or null. Two ways that
 // happens and they need one card, because the recovery is the same: ask again.
 //
