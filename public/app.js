@@ -4524,7 +4524,7 @@ function renderChatMessages() {
     const note = m.role === 'marcus' && m.offline
       ? '<span class="msg__offline">built-in reply — the coach was not reachable</span>'
       : '';
-    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(chatBubbleText(m))}${note}${goalProposalHtml(m)}${factProposalHtml(m)}</div>`;
+    return `<div class="msg msg--${m.role === 'marcus' ? 'marcus' : 'user'}">${esc(chatBubbleText(m))}${note}${goalProposalHtml(m)}${factProposalHtml(m)}${sessionProposalHtml(m)}</div>`;
   }).join('') + unansweredHtml(msgs) + openerHtml(msgs);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -4874,6 +4874,86 @@ function declineCoachFact(ts) {
   renderChatMessages();
 }
 
+// `sessionSaved` and `sessionDeclined` are their own flags, same reason the
+// fact pair is separate from the goal pair: one reply can carry all three
+// blocks and answering one must not silently answer another.
+function sessionProposalHtml(m) {
+  if (!m || m.role !== 'marcus' || !m.sessionProposal || !m.ts) return '';
+  if (m.sessionSaved) return '<span class="msg__offline">Logged.</span>';
+  if (m.sessionDeclined) return '<span class="msg__offline">Not logged.</span>';
+  // Asked here as well as at the offer, and for a harder reason than the goal
+  // card's: the proposal is stored and he goes days without opening the app.
+  // A "today" proposal read three days later is a date `acceptCoachSession`
+  // still saves -- correctly, it is the day he trained -- but it may be a
+  // session he has since logged on the Log tab in the meantime, and this card
+  // would sit there offering to log it a second time.
+  if (sessionAlreadyLogged(m.sessionProposal, store.get('sessions', []))) {
+    return '<span class="msg__offline">Already in your log.</span>';
+  }
+  // And the date can go bad purely by the calendar moving: a session offered
+  // 89 days ago that he never answered is one day past the window tomorrow.
+  // That is the dead-button shape this repo has paid for -- tap, toast, tap
+  // again -- so the card says what happened instead of drawing a button.
+  if (sessionDateProblem(m.sessionProposal.date, todayStr())) {
+    return '<span class="msg__offline">Too old to log now — add it on the Log tab if you still want it.</span>';
+  }
+  return `<div class="chat-goal">
+      <div class="chat-goal__title">${esc(sessionProposalSentence(m.sessionProposal))}</div>
+      <div class="chat-goal__when">${esc(niceDate(m.sessionProposal.date))}${m.sessionProposal.note ? ' — ' + esc(m.sessionProposal.note) : ''}</div>
+      <div class="chat-goal__actions">
+        <button class="btn btn--filled" onclick="acceptCoachSession(${Number(m.ts)})"><span class="material-icons-round">fitness_center</span> Log it</button>
+        <button class="btn btn--tonal" onclick="declineCoachSession(${Number(m.ts)})">Not this</button>
+      </div>
+    </div>`;
+}
+
+// Every guard is re-checked here and not only where the card was drawn. The
+// render that drew it can be days old, and both the log and the calendar move
+// underneath it.
+function acceptCoachSession(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || !m.sessionProposal || m.sessionSaved || m.sessionDeclined) return;
+  const proposal = m.sessionProposal;
+  if (sessionDateProblem(proposal.date, todayStr())) {
+    toast('That day is outside what I can log now — add it on the Log tab.');
+    renderChatMessages();
+    return;
+  }
+  const sessions = store.get('sessions', []);
+  if (sessionAlreadyLogged(proposal, sessions)) {
+    // Answered, not pending: the card must not come back offering a session
+    // that is already in the log.
+    m.sessionSaved = true;
+    store.set('chat', msgs);
+    renderChatMessages();
+    toast('That one is already in your log.');
+    return;
+  }
+  // Built here rather than carried from the block: the id and the shape of a
+  // session record are this app's business, not the model's.
+  const record = { id: uid(), date: proposal.date, kind: 'strength', exercises: proposal.exercises };
+  if (proposal.note) record.note = proposal.note;
+  sessions.push(record);
+  if (!store.set('sessions', sessions)) return;
+  m.sessionSaved = true;
+  store.set('chat', msgs);
+  renderChatMessages();
+  // Redraw the tab behind the sheet, same as a coach fact: closing the chat
+  // must not show a Log tab or a Home card that predates the session.
+  switchTab(currentTab);
+  toast('Logged.');
+}
+
+function declineCoachSession(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || !m.sessionProposal || m.sessionSaved || m.sessionDeclined) return;
+  m.sessionDeclined = true;
+  store.set('chat', msgs);
+  renderChatMessages();
+}
+
 // What the composer asks for, keyed by the button that opened the sheet.
 // Idea #209's chat route is reached from a Home card that says "say it in your
 // own words -- 'Olympic triathlon next August' is enough", and the sheet then
@@ -5007,6 +5087,10 @@ async function askMarcus(text) {
           declinedGoals: declinedGoalTexts(store.get('chat', [])),
           // Same, for facts about him he was offered and said no to.
           declinedFacts: declinedFactTexts(store.get('chat', [])),
+          // Same again for sessions he was offered and did not log: the card is
+          // suppressed for one he refused, so a model that re-proposed it would
+          // leave him a sentence saying he can confirm it below and no card.
+          declinedSessions: declinedSessionSentences(store.get('chat', [])),
         },
         // The turn just typed is already in the store; it goes in as the
         // message, not a second time as history.
@@ -5043,15 +5127,27 @@ async function askMarcus(text) {
         && !factDeclinedBefore(heard.fact, store.get('chat', []))
         ? heard.fact
         : null;
+      // And a ```session block (idea #208), off the text both fences have
+      // already come out of. Same three filters as the other two: a session he
+      // already logged, and one he has already turned down, are not questions
+      // worth asking twice -- and a duplicate here doubles the weekly volume
+      // every plan card reasons from, so the check is not cosmetic.
+      const told = parseCoachSession(heard.text, todayStr());
+      const session = told.session
+        && !sessionAlreadyLogged(told.session, store.get('sessions', []))
+        && !sessionDeclinedBefore(told.session, store.get('chat', []))
+        ? told.session
+        : null;
       // A reply that was nothing but the block(s) would otherwise be an empty
       // bubble with cards under it. The goal sentence wins when both are
       // there, because the goal is the bigger thing he just said.
-      const shown = heard.text
+      const shown = told.text
         || (goals.length > 1 ? 'Written down — confirm the ones below and I will set them as your goals.' : '')
         || (goals.length ? 'Written down — confirm it below and I will set it as your goal.' : '')
         || (fact ? 'Noted — confirm it below and I will remember it.' : '')
+        || (session ? 'Written down — confirm it below and I will log it.' : '')
         || body.reply;
-      return { text: shown, offline: false, goals, fact };
+      return { text: shown, offline: false, goals, fact, session };
     }
     return marcusReplyAfterAPause(text);
   } catch {
@@ -5104,6 +5200,7 @@ function sendCoachTurn(text) {
     // idea what was said to it.
     if (reply.goals && reply.goals.length) msg.goalProposals = reply.goals;
     if (reply.fact) msg.factProposal = reply.fact;
+    if (reply.session) msg.sessionProposal = reply.session;
     all.push(msg);
     store.set('chat', all);
   }).finally(() => {
