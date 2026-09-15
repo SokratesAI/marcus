@@ -2772,6 +2772,38 @@ function unansweredChatTurn(chat) {
 // he is, then what he is aiming at, then what he has been doing. Only the
 // first one that is missing is asked, because three questions at once is a
 // form, and the box he refuses to fill in is the whole reason this exists.
+// The background question below has one wrong answer it can give, and his own
+// thread is where it gives it. He typed 1,825 characters of training history
+// into the chat on 2026-09-07 -- an achilles injury, an Ironman in Hamburg in
+// 2023, 10kg back on, a sprint triathlon next August -- and `profile` is still
+// empty, measured on his live state at 02:13 on 2026-09-15. Nothing has ever
+// read a message he already sent. So asking him that question today is Marcus
+// asking him to type it a second time, which is the complaint that produced
+// the question in the first place.
+//
+// This offers his own words back instead, with the words on screen, and saves
+// nothing until he taps. Never a rewrite and never a summary: `text` is
+// carried through untouched, because a card that paraphrases him is a card
+// that can put a sentence he did not write into what Marcus knows about him.
+//
+// The cut is long enough to be a background rather than a greeting, and it is
+// measured off his own thread rather than picked: his ten messages there are 2
+// to 192 characters except the background at 1,825, so 400 sits clear of both
+// ends by a wide margin.
+const MIN_BACKGROUND_CHARS = 400;
+
+// The newest one, not the first: if he wrote his history twice, the later one
+// is the one he would expect Marcus to have. A message he has already answered
+// -- saved or declined -- is gone from here for good, which is what stops the
+// card coming back every render.
+function backgroundHeAlreadyTyped(chat) {
+  const found = (chat || [])
+    .filter(m => m && m.role === 'user' && !m.backgroundSaved && !m.backgroundDeclined)
+    .map(m => ({ text: String(m.text == null ? '' : m.text).trim(), ts: Number(m.ts) }))
+    .filter(m => m.text.length >= MIN_BACKGROUND_CHARS && Number.isFinite(m.ts));
+  return found.length ? found[found.length - 1] : null;
+}
+
 function openingQuestion(state) {
   const s = state || {};
   const has = value => {
@@ -2779,6 +2811,14 @@ function openingQuestion(state) {
     return typeof value === 'string' ? value.trim() !== '' : Boolean(value);
   };
   if (!has(s.profile)) {
+    const typed = backgroundHeAlreadyTyped(s.chat);
+    if (typed) {
+      return {
+        key: 'profile-typed',
+        text: "You have already told me this and I never wrote it down. Shall I keep it as what I know about you?",
+        background: typed,
+      };
+    }
     return {
       key: 'profile',
       text: "Before I can coach you properly I need to know who I am training. How long have you trained and how hard, and is there an injury or an illness I should work around?",

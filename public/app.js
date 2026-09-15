@@ -4550,8 +4550,28 @@ function openerHtml(msgs) {
     profile: store.get('profile', ''),
     goals: store.get('goals', []),
     sessions: store.get('sessions', []),
+    // The thread itself, because the first question this asks may already be
+    // answered in it -- see `backgroundHeAlreadyTyped`. The messages this is
+    // drawn under are the same ones, so it reads the argument rather than the
+    // store: a card about a message that is not on screen is a card about
+    // nothing.
+    chat: msgs,
   });
   if (!ask) return '';
+  // His own words, offered back. Two buttons rather than one, and the decline
+  // is what makes the card honest: a paragraph he typed to make a point is not
+  // automatically a fact about himself, and the only person who can tell those
+  // apart is him.
+  if (ask.background) {
+    return `<div class="chat-goal" data-opener="${esc(ask.key)}">
+      <div class="chat-goal__title">${esc(ask.text)}</div>
+      <div class="chat-goal__when">${esc(ask.background.text)}</div>
+      <div class="chat-goal__actions">
+        <button class="btn btn--filled" onclick="acceptTypedBackground(${Number(ask.background.ts)})"><span class="material-icons-round">person</span> Remember this</button>
+        <button class="btn btn--tonal" onclick="declineTypedBackground(${Number(ask.background.ts)})">Not this</button>
+      </div>
+    </div>`;
+  }
   return `<div class="chat-goal" data-opener="${esc(ask.key)}">
       <div class="chat-goal__title">${esc(ask.text)}</div>
       <div class="chat-goal__actions">
@@ -4774,6 +4794,51 @@ function factProposalHtml(m) {
         <button class="btn btn--tonal" onclick="declineCoachFact(${Number(m.ts)})">Not this</button>
       </div>
     </div>`;
+}
+
+// The same two handlers as a fact the coach proposed, against a message he
+// wrote himself. They are separate functions rather than a flag on the fact
+// pair because the two cards are answered against different things: a fact
+// lives on the coach's bubble and this lives on his own, and sharing the flags
+// would let accepting one retire the other.
+//
+// Every guard is re-checked here and not only where the card was drawn. The
+// render that drew it may be minutes old -- he can have typed into the About
+// you box on the Plan tab in between, which is the state where a button
+// promises to remember something Marcus already knows.
+function acceptTypedBackground(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || m.role !== 'user' || m.backgroundSaved || m.backgroundDeclined) return;
+  const text = String(m.text == null ? '' : m.text).trim();
+  if (text.length < MIN_BACKGROUND_CHARS) return;
+  const existing = profileText();
+  if (factAlreadyKnown({ text }, existing)) {
+    // Answered, not pending: the card must not come back to offer him
+    // something that is already on the record.
+    m.backgroundSaved = true;
+    store.set('chat', msgs);
+    renderChatMessages();
+    toast('I already have that noted.');
+    return;
+  }
+  if (!saveProfile(appendFact(existing, text))) return;
+  m.backgroundSaved = true;
+  store.set('chat', msgs);
+  renderChatMessages();
+  // Redraw the tab behind the sheet, same as a coach fact: closing the chat
+  // must not show an About you box that predates the tap.
+  switchTab(currentTab);
+  toast('Noted.');
+}
+
+function declineTypedBackground(ts) {
+  const msgs = store.get('chat', []);
+  const m = msgs.find(x => x && x.ts === ts);
+  if (!m || m.role !== 'user' || m.backgroundSaved || m.backgroundDeclined) return;
+  m.backgroundDeclined = true;
+  store.set('chat', msgs);
+  renderChatMessages();
 }
 
 function acceptCoachFact(ts) {
