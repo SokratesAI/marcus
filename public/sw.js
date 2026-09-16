@@ -125,7 +125,13 @@ self.addEventListener('notificationclick', (e) => {
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const client of list) {
-        if (typeof client.focus === 'function') return client.focus();
+        if (typeof client.focus !== 'function') continue;
+        // Focusing leaves the window on whatever tab it was showing, so a link
+        // that names one (`/#plan`) is handed to the page to open.
+        if (target.includes('#') && typeof client.postMessage === 'function') {
+          client.postMessage({ type: 'open-link', navigate: target });
+        }
+        return client.focus();
       }
       return typeof self.clients.openWindow === 'function' ? self.clients.openWindow(target) : undefined;
     })
