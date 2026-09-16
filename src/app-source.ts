@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // index.html's script tags and sw.js's SHELL are checked against it by
 // src/app-split.test.ts, so moving code between the files cannot silently ship
 // a page that loads only half of itself.
-export const APP_FILES = ["app-core.js", "app-demo.js", "app.js"] as const;
+export const APP_FILES = ["app-core.js", "app-demo.js", "app.js", "app-formdemo.js"] as const;
 
 export function appFile(name: string): string {
   return readFileSync(path.join(__dirname, "..", "public", name), "utf8");
