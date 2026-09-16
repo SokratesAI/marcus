@@ -5290,7 +5290,7 @@ function bootSeed() {
 // calls `bootSeed()` itself once the answer is in, and does not call it at all
 // when his real log came back instead.
 if (!seededThisBoot || typeof fetch !== 'function') bootSeed();
-switchTab('home');
+openLinkedTab();
 adoptServerCopyOnBoot().catch(() => { if (bootSeed()) switchTab(currentTab); });
 retryWhenBackOnline(window, document, retryServerSyncNow);
 // Home draws the reminder offer from this, so it has to be read whether or not

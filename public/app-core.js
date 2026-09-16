@@ -3,6 +3,32 @@
 // it is the half every unit test actually calls. It is a classic script and
 // shares one global scope with app.js, which loads after it -- see
 // src/app-source.ts for the ordered list every consumer reads.
+// ---------- linked tab ----------
+// A link can name the tab it opens after `#`: the 20:00 reminder sends `/#plan`.
+// Boot used to open Home whatever the address said, so that link landed on the
+// wrong screen. Anything that is not a tab name still opens Home.
+const LINKED_TABS = ['home', 'plan', 'log', 'nutrition', 'progress'];
+function linkedTab(link) {
+  const text = String(link || '');
+  const at = text.indexOf('#');
+  const name = at < 0 ? '' : text.slice(at + 1).toLowerCase();
+  return LINKED_TABS.includes(name) ? name : null;
+}
+
+// Boot opens the tab the page's own address names. A notification tapped while
+// the app is already open cannot change that address -- sw.js only focuses the
+// window -- so it arrives here as an `open-link` message instead.
+function openLinkedTab(win = typeof window !== 'undefined' ? window : {}, open = switchTab) {
+  open(linkedTab(win.location && win.location.hash) || 'home');
+  const sw = win.navigator && win.navigator.serviceWorker;
+  if (!sw || typeof sw.addEventListener !== 'function') return;
+  sw.addEventListener('message', (e) => {
+    const data = e && e.data;
+    const tab = data && data.type === 'open-link' ? linkedTab(data.navigate) : null;
+    if (tab) open(tab);
+  });
+}
+
 // ---------- storage helpers ----------
 // Set once the server-copy code below is defined. It is a hook rather than a
 // direct call because `store` is the first thing in this file and the sync code

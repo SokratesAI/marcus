@@ -48,11 +48,11 @@ export interface RenderedApp {
 export function renderApp(
   tab: string,
   seed: Record<string, unknown> = {},
-  opts: { now?: Date } = {},
+  opts: { now?: Date; url?: string } = {},
 ): RenderedApp {
   const dom = new JSDOM(INDEX_HTML, {
     runScripts: "outside-only",
-    url: "https://marcus.test/",
+    url: opts.url ?? "https://marcus.test/",
     pretendToBeVisual: true,
   });
   const win: any = dom.window;
@@ -80,7 +80,8 @@ export function renderApp(
   // Same concatenation order the browser uses; see src/app-source.ts.
   const source = APP_FILES.map(appFile).join("\n");
   win.eval(source);
-  win.switchTab(tab);
+  // An empty tab keeps the one boot opened, so a test can ask what boot chose.
+  if (tab) win.switchTab(tab);
 
   const view: any = win.document.getElementById("view");
   return {

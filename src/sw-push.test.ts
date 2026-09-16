@@ -19,6 +19,7 @@ interface Harness {
   shown: Shown[];
   focused: string[];
   opened: string[];
+  posted: unknown[];
 }
 
 /** The worker as Chrome runs it: a registration that can draw a notification
@@ -29,11 +30,15 @@ function loadServiceWorker(opts: { windows?: string[] } = {}): Harness {
   const shown: Shown[] = [];
   const focused: string[] = [];
   const opened: string[] = [];
+  const posted: unknown[] = [];
   const windows = (opts.windows ?? []).map((url) => ({
     url,
     focus: () => {
       focused.push(url);
       return Promise.resolve(url);
+    },
+    postMessage: (data: unknown) => {
+      posted.push(data);
     },
   }));
   const self = {
@@ -72,7 +77,7 @@ function loadServiceWorker(opts: { windows?: string[] } = {}): Harness {
     setTimeout: (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms),
   });
   vm.runInContext(SW_SOURCE, context);
-  return { handlers, shown, focused, opened };
+  return { handlers, shown, focused, opened, posted };
 }
 
 /** What `event.data` is for a real push: a body with a `.json()` on it. */
@@ -148,6 +153,23 @@ describe("tapping the notification", () => {
     expect(closed).toBe(true);
     expect(focused).toEqual(["https://marcus.example/"]);
     expect(opened).toEqual([]);
+  });
+
+  it("hands an open window the tab a link names, since focusing does not move it", async () => {
+    const { handlers, focused, posted } = loadServiceWorker({ windows: ["https://marcus.example/"] });
+    await fire(handlers.notificationclick, {
+      notification: { close: () => {}, data: { navigate: "/#plan" } },
+    });
+    expect(posted).toEqual([{ type: "open-link", navigate: "/#plan" }]);
+    expect(focused).toEqual(["https://marcus.example/"]);
+  });
+
+  it("posts nothing for a link that names no tab", async () => {
+    const { handlers, posted } = loadServiceWorker({ windows: ["https://marcus.example/"] });
+    await fire(handlers.notificationclick, {
+      notification: { close: () => {}, data: { navigate: "/" } },
+    });
+    expect(posted).toEqual([]);
   });
 
   it("opens the navigate target when nothing is open", async () => {
