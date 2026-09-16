@@ -2063,9 +2063,8 @@ const GLOSSARY = [
 // ---------- how to do the lift (idea #193) ----------
 // The glossary above answers "what does this word mean". This answers the other
 // question you have standing at the rack: "am I doing this right". It is the
-// "how" half of idea #193; the video/GIF half is not here, because a
-// demonstration is somebody else's footage and its licence is a decision Edvard
-// makes, not one a cycle makes for him.
+// "how" half of idea #193. The "show me" half is the drawing beside it -- see
+// `formDemoFrames` below for where the drawings come from and their licence.
 //
 // Two boundaries, and the second is the one that decides whether this ever
 // shows up. The entries cover the eighteen lifts the seeded plan actually names
@@ -2079,11 +2078,11 @@ const FORM_GUIDE = [
     setup: 'Eyes under the bar, shoulder blades pulled back and down into the bench, feet flat and driving into the floor. Grip a little wider than shoulders.',
     execution: 'Unrack, bring the bar down under control to the lower chest, touch, then press back up and slightly towards your face. Wrists stacked over elbows the whole way.',
     mistakes: ['Flaring the elbows straight out to the sides — keep them at roughly 45 degrees to the ribs.', 'Bouncing the bar off the chest instead of touching it.', 'Losing the arch and letting the shoulders roll forward at the bottom.'] },
-  { name: 'Incline Bench Press', group: 'Chest',
+  { name: 'Incline Bench Press', demo: 'incline-bench-press', group: 'Chest',
     setup: 'Bench at 30 degrees, not 45 — the steeper it gets the more it becomes an overhead press. Same shoulder blades, same foot drive.',
     execution: 'Lower to just below the collarbone, touch, press back over the upper chest.',
     mistakes: ['Setting the bench too steep and turning it into a shoulder day.', 'Letting the bar drift down to the sternum as if it were a flat bench.'] },
-  { name: 'Incline Dumbbell Press', group: 'Chest',
+  { name: 'Incline Dumbbell Press', demo: 'incline-dumbbell-press', group: 'Chest',
     setup: 'Bench at 30 degrees. Kick the dumbbells up into position with your knees rather than curling them into place.',
     execution: 'Lower until the dumbbells are level with the chest, elbows under the wrists, then press up and slightly together without clanging them at the top.',
     mistakes: ['Going so deep the shoulder takes over from the chest.', 'Pressing in an arc so far in that the dumbbells collide and the last inch does nothing.'] },
@@ -2095,23 +2094,23 @@ const FORM_GUIDE = [
     setup: 'Bar over the middle of the foot, shins close, hips higher than the knees, chest up, lats pulling the bar into the legs.',
     execution: 'Push the floor away and let the bar drag up the legs. Hips and shoulders rise together; lock out by standing tall, not by leaning back.',
     mistakes: ['Letting the hips shoot up first so it becomes a stiff-legged pull.', 'Rounding the lower back — stop the set when position goes, not when the reps run out.', 'Jerking the bar off the floor instead of taking the slack out first.'] },
-  { name: 'Romanian Deadlift', aka: ['RDL'], group: 'Legs',
+  { name: 'Romanian Deadlift', demo: 'romanian-deadlift', aka: ['RDL'], group: 'Legs',
     setup: 'Start standing with the bar already in your hands, knees softly bent and then kept at that angle throughout.',
     execution: 'Push the hips back and let the bar slide down the thighs until you feel a strong stretch in the hamstrings — usually somewhere around the knee — then drive the hips forward.',
     mistakes: ['Turning it into a squat by bending the knees more as you descend.', 'Chasing depth past where the hamstrings stop and the lower back starts.'] },
-  { name: 'Back Squat', aka: ['Squat', 'Barbell Squat'], group: 'Legs',
+  { name: 'Back Squat', demo: 'back-squat', aka: ['Squat', 'Barbell Squat'], group: 'Legs',
     setup: 'Bar on the upper back, not the neck. Feet about shoulder-width, toes slightly out, whole foot planted.',
     execution: 'Break at the hips and knees together, sit down between your feet to at least parallel, then drive up with the chest staying where it was.',
     mistakes: ['Knees collapsing inward on the way up.', 'Heels lifting — that is usually ankle mobility, not effort.', 'Cutting depth as the weight climbs, so the sets stop comparing to each other.'] },
-  { name: 'Front Squat', group: 'Legs',
+  { name: 'Front Squat', demo: 'front-squat', group: 'Legs',
     setup: 'Bar across the front of the shoulders resting on the delts, elbows lifted so the upper arms are near parallel to the floor. Feet about shoulder-width, toes slightly out.',
     execution: 'Sit straight down with the torso as upright as you can hold it, to at least parallel, then drive up while keeping the elbows high — the rack position is what fails first, not the legs.',
     mistakes: ['Elbows dropping on the way up, which pitches the bar forward off the shoulders.', 'Gripping the bar in the palms instead of letting it sit on the shoulders with the fingers only steadying it.', 'Treating the back squat weight as the starting point — a front squat is normally well below it.'] },
-  { name: 'Leg Press', group: 'Legs',
+  { name: 'Leg Press', demo: 'leg-press', group: 'Legs',
     setup: 'Feet mid-platform, shoulder-width, hips and lower back flat against the pad.',
     execution: 'Lower until the knees reach roughly 90 degrees, then press back without snapping the knees straight at the top.',
     mistakes: ['Going so deep the pelvis lifts off the pad and the lower back rounds.', 'Locking the knees out hard at the top.'] },
-  { name: 'Calf Raise', group: 'Legs',
+  { name: 'Calf Raise', demo: 'calf-raise', group: 'Legs',
     setup: 'Balls of the feet on the edge of the step or platform, heels free to drop below.',
     execution: 'Drop the heels for a full stretch, pause, then push all the way up onto the toes and pause there too. Slow at both ends.',
     mistakes: ['Bouncing through short reps that use the tendon rather than the muscle.'] },
@@ -2131,15 +2130,15 @@ const FORM_GUIDE = [
     setup: 'Rope at roughly face height, arms straight, a step back so there is tension before the first rep.',
     execution: 'Pull the rope towards your face with the hands finishing beside your ears and the elbows high. Squeeze, then return slowly.',
     mistakes: ['Loading it heavy enough that it becomes a row.', 'Letting the elbows drop below the wrists.'] },
-  { name: 'Lateral Raise', group: 'Shoulders',
+  { name: 'Lateral Raise', demo: 'lateral-raise', group: 'Shoulders',
     setup: 'Dumbbells at your sides, small bend in the elbows, torso still.',
     execution: 'Raise out to the sides to roughly shoulder height, leading with the elbows, then lower slower than you lifted.',
     mistakes: ['Swinging the weight up with the hips.', 'Going far above shoulder height, where the traps take over.'] },
-  { name: 'Barbell Curl', group: 'Arms',
+  { name: 'Barbell Curl', demo: 'barbell-curl', group: 'Arms',
     setup: 'Shoulder-width grip, elbows tucked at the ribs, ribs down.',
     execution: 'Curl by bending the elbow only, squeeze at the top, then lower all the way to straight.',
     mistakes: ['Swinging the bar up with the lower back.', 'Letting the elbows travel forward so the front delts take the work.'] },
-  { name: 'Triceps Pushdown', aka: ['Tricep Pushdown', 'Cable Pushdown'], group: 'Arms',
+  { name: 'Triceps Pushdown', demo: 'triceps-pushdown', aka: ['Tricep Pushdown', 'Cable Pushdown'], group: 'Arms',
     setup: 'Elbows pinned at your sides, small forward lean, shoulders down.',
     execution: 'Straighten the arms against the cable, pause at lockout, then let the forearms rise back to 90 degrees only.',
     mistakes: ['Letting the elbows drift forward and away from the ribs.', 'Leaning your bodyweight onto the bar when it gets heavy.'] },
@@ -2170,6 +2169,18 @@ function formGuide(name) {
   if (!key) return null;
   const hit = formGuideEntries().filter(function (e) { return e.key === key; })[0];
   return hit ? hit.entry : null;
+}
+
+// The "show me" half of idea #193: a start and an end drawing per lift, which the
+// sheet flips between. The drawings are Everkinetic's (github.com/everkinetic/data,
+// CC BY-SA 4.0), resized and greyed into public/form/, and the sheet credits them.
+// Only ten of the eighteen lifts carry `demo`. The others have no drawing in that
+// set that shows the same lift -- its pull-up is behind the neck, its bent-over
+// row is underhand, its bench press looks inclined -- and a drawing of a different
+// variant beside cues for this one is worse than no drawing.
+function formDemoFrames(entry) {
+  if (!entry || !entry.demo) return [];
+  return ['./form/' + entry.demo + '-1.png', './form/' + entry.demo + '-2.png'];
 }
 
 // ---------- weekly balance: hard sets per muscle group (idea #187) ----------

@@ -311,6 +311,16 @@ body{
 .term-sheet__header{display:flex;align-items:center;gap:8px;}
 .term-sheet__title{flex:1;font-size:17px;font-weight:700;margin:0;}
 .term-sheet__body{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--md-on-surface-variant);white-space:pre-line;}
+/* The form drawing (idea #193): two frames stacked, the top one blinking on and
+   off, so start and end position alternate without a timer to clean up. */
+.term-sheet__demo[hidden]{display:none;}
+.form-demo{position:relative;width:180px;height:180px;margin:12px auto 0;background:#fff;border-radius:12px;overflow:hidden;}
+.form-demo img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;}
+.form-demo img:last-child{animation:form-demo-flip 1.6s steps(1,end) infinite;}
+@keyframes form-demo-flip{0%{opacity:0;}50%{opacity:1;}}
+@media (prefers-reduced-motion: reduce){.form-demo img:last-child{animation:none;opacity:0;}}
+.form-demo__credit{margin:4px 0 0;text-align:center;font-size:11px;color:var(--md-on-surface-variant);}
+.form-demo__credit a{color:inherit;}
 
 /* Progress photos (idea #202). A horizontal strip rather than a grid: the
    comparison the photos exist for is the first against the last, and a strip
