@@ -4240,6 +4240,20 @@ function retryUnansweredTurn() {
   return sendCoachTurn(pending.text);
 }
 
+// Issue #244: the Ask again card sat under his cut-off 09-07 background from
+// 09-13 on, unanswered, because it waits for a tap. Opening Chat answers a
+// cut-off turn by itself. Never a 'lost' one -- his own last bubble may still
+// be getting a reply on another device. Once per page load, so a coach that is
+// down is not asked on every open; the card stays for that.
+let cutOffTurnRetriedOnOpen = false;
+function answerCutOffTurnOnOpen() {
+  if (cutOffTurnRetriedOnOpen || coachTurnInFlight) return;
+  const pending = unansweredChatTurn(store.get('chat', []));
+  if (!pending || pending.reason !== 'cut off') return;
+  cutOffTurnRetriedOnOpen = true;
+  return sendCoachTurn(pending.text, { dropOffline: true });
+}
+
 // The confirm card under a coach bubble that heard a goal. It is drawn from the
 // stored message rather than from the last request, for the same reason the
 // offline note is: scrolling back to a bubble from three days ago has to tell
@@ -4582,6 +4596,7 @@ function openChat(topic) {
   const input = document.getElementById('chatInput');
   input.placeholder = (typeof topic === 'string' && CHAT_PROMPTS[topic]) || CHAT_PROMPT_DEFAULT;
   input.focus();
+  return answerCutOffTurnOnOpen();
 }
 function closeChat() { chatSheet.hidden = true; }
 document.getElementById('chatFab').addEventListener('click', openChat);
@@ -4782,7 +4797,9 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
 // own request is a second place for the reply to be stored differently.
 // Storing the typed turn is deliberately NOT in here: the submit handler does
 // it, and a retry must not write his question into the thread twice.
-function sendCoachTurn(text) {
+// `dropOffline`: on the automatic retry above, a built-in rules line is not an
+// answer to his question, and storing it would take the Ask again card away.
+function sendCoachTurn(text, { dropOffline = false } = {}) {
   coachTurnInFlight = true;
   renderChatMessages();
   chatStatus.textContent = 'typing…';
@@ -4797,6 +4814,7 @@ function sendCoachTurn(text) {
     typing.remove();
     chatStatus.textContent = 'online';
     chatStatus.classList.remove('is-typing');
+    if (reply.offline && dropOffline) return;
     const all = store.get('chat', []);
     const msg = { role: 'marcus', text: reply.text, ts: Date.now() };
     // Only set on the fallback path, so the 13 turns already in the store --
