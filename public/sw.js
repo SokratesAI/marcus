@@ -1,4 +1,4 @@
-const CACHE = 'marcus-shell-v6';
+const CACHE = 'marcus-shell-v7';
 const SHELL = ['./', './index.html', './styles.css', './app-core.js', './app-demo.js', './app.js', './app-formdemo.js', './manifest.json', './icon.svg', './apple-touch-icon.png'];
 
 // A stalled connection neither resolves nor rejects, so a bare network-first

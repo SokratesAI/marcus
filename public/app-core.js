@@ -3548,3 +3548,52 @@ function seed() { seedShell(); seedDemoLog(); }
 // fighting about in the first place.
 seededThisBoot = neverOpened();
 seedShell();
+
+// ---------- saying no to a suggestion (idea #208) ----------
+// The row's own words: "Edvard always approves/rejects/edits; never
+// auto-applied." Accepting has worked since marcus#14 and the plan form is the
+// edit, but a suggestion he disagreed with could not be put away: it stood on
+// Home and on the Plan tab until his log happened to move the numbers under it.
+//
+// A no is to one reading, not to that kind of change forever. The record keys on
+// the proposal's id AND its reason, and the reason carries the numbers that
+// produced it ("trained on Friday 0 times and on Saturday 5 times"). When his
+// log moves those numbers the sentence changes and Marcus asks again, because
+// that is a new observation rather than the one he turned down. It is a synced
+// store like the others, so a no on one phone is a no on both.
+function declinedKey(p) {
+  return p && typeof p.id === 'string' ? p.id + '\n' + String(p.reason || '') : null;
+}
+
+function withoutDeclined(proposals, declined) {
+  const no = {};
+  (Array.isArray(declined) ? declined : []).forEach(d => { if (d && typeof d.key === 'string') no[d.key] = true; });
+  return (Array.isArray(proposals) ? proposals : []).filter(p => !no[declinedKey(p)]);
+}
+
+// The review with his declined suggestions taken out. `note` is what the Plan
+// tab prints when the list is empty, and planReview leaves it blank whenever it
+// had something to say, so a list emptied by his own no needs a sentence of its
+// own rather than a blank space.
+function openReview(review) {
+  const all = (review && review.proposals) || [];
+  const proposals = withoutDeclined(all, store.get('declinedProposals', []));
+  const note = all.length && !proposals.length
+    ? 'You said no to every suggestion. Marcus asks again when your log changes the numbers behind one.'
+    : (review && review.note) || '';
+  return Object.assign({}, review, { proposals, note });
+}
+
+function declineButton(p) {
+  return `<button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="declineProposal('${esc(p.id)}')">No thanks</button>`;
+}
+
+function declineProposal(id) {
+  const review = planReview(store.get('plan'), store.get('sessions', []), todayStr(), undefined, homeGoal());
+  const key = declinedKey(review.proposals.find(p => p.id === id));
+  if (!key) { toast('That suggestion is no longer current'); return; }
+  const declined = store.get('declinedProposals', []);
+  if (!store.set('declinedProposals', (Array.isArray(declined) ? declined : []).concat([{ key, ts: Date.now() }]))) return;
+  toast('Marcus will not suggest that again unless your log changes it');
+  renderPlan();
+}

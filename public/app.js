@@ -39,10 +39,7 @@ function streak() {
 }
 
 // idea #208 asks for the plan proposal to reach him "after a logged session or
-// week". It has existed since marcus#14 and it has only ever been reachable by
-// opening the Plan tab and scrolling past the goals -- so the review runs, the
-// reason is written, the citation from idea #214 is attached, and Home, the tab
-// the app opens on, says nothing about any of it.
+// week", and it was only reachable by scrolling the Plan tab.
 //
 // The headline is `proposals[0]` rather than a new ranking: planReview already
 // pushes them in its own order of consequence (a phase resize, then easing off,
@@ -50,11 +47,8 @@ function streak() {
 // second priority here would let Home and the Plan tab disagree about which
 // suggestion matters most.
 //
-// Deliberately NOT a badge. `openNudges` counts things that go away on their
-// own -- log the session and the nudge is gone. A proposal stands until it is
-// accepted and there is no way to dismiss one, so counting it would pin the
-// home-screen icon at 1 forever for anyone who reads a suggestion and decides
-// against it.
+// Deliberately NOT a badge: `openNudges` counts things that go away on their
+// own, and a suggestion goes only when he accepts or declines it.
 function homeReviewPrompt(review) {
   const proposals = (review && review.proposals) || [];
   if (!proposals.length) return null;
@@ -88,7 +82,7 @@ function renderHome() {
   const behind = goalIsBehind(nextGoal);
   const week = homeWeekTarget();
   // Same call the Plan tab makes, same arguments, so the two cannot disagree.
-  const suggests = homeReviewPrompt(planReview(plan, store.get('sessions', []), todayStr(), undefined, nextGoal));
+  const suggests = homeReviewPrompt(openReview(planReview(plan, store.get('sessions', []), todayStr(), undefined, nextGoal)));
   // First thing on the first screen, above the plan: if these numbers are not
   // his, nothing below this card means what it says.
   const demo = demoSeededSummary();
@@ -223,7 +217,7 @@ function renderPlan() {
   const plan = store.get('plan');
   const todayName = planDayName();
   const goals = goalsSorted();
-  const review = planReview(plan, store.get('sessions', []), todayStr(), undefined, homeGoal());
+  const review = openReview(planReview(plan, store.get('sessions', []), todayStr(), undefined, homeGoal()));
   // A goal the other phone deleted while its edit form was open falls back to
   // the Add form rather than saving over nothing.
   const editing = goalEditId ? goals.find(g => g.id === goalEditId) || null : null;
@@ -268,6 +262,7 @@ function renderPlan() {
             <a href="${esc(c.ref.url)}" target="_blank" rel="noopener noreferrer">${esc(c.ref.authors)} (${c.ref.year})</a> &middot; ${esc(c.ref.venue)}<br>${linkGlossary(c.ref.finding)}<br><em>${linkGlossary(c.stretch)}</em>
           </div>`).join('')}
         <button class="btn btn--tonal btn--block" style="margin-top:8px" onclick="acceptProposal('${p.id}')">Change the plan</button>
+        ${declineButton(p)}
       </div>`).join('') : `<div class="empty">${esc(review.note)}</div>`}
     <div class="card__note" style="padding:0 4px 4px">Every number above is read off your own log. Where endurance research points the same way, the paper is quoted under the suggestion with how far it actually goes; suggestions about which days and which lifts you keep carry none, because that is adherence rather than physiology.</div>
 
@@ -3476,7 +3471,7 @@ function renderProgress() {
 const BACKUP_VERSION = 1;
 // Every store key the app writes. `chat` is in here because the coach's memory
 // of the conversation is data the user would miss, not chrome.
-const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'chat', 'deletions', 'plannedWeeks', 'profile'];
+const BACKUP_KEYS = ['plan', 'sessions', 'weights', 'measurements', 'photos', 'meals', 'goals', 'chat', 'deletions', 'plannedWeeks', 'profile', 'declinedProposals'];
 
 // The three stores the app can delete from, and the reason this list is three
 // names rather than every store: `deleteSession`, `deleteMeal` and `deleteGoal`
@@ -3712,6 +3707,7 @@ const MERGE_KEYS = {
   chat: { by: ['ts', 'role', 'text'], sort: 'ts' },
   // A week saved ahead on one phone must survive a push from the other.
   plannedWeeks: { by: ['id'] },
+  declinedProposals: { by: ['key'], sort: 'ts' },
   // A tombstone is a record like any other and merges like one: the union of
   // both sides is what either phone deleted, and a deletion both sides know
   // about is one deletion.
