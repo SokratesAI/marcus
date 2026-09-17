@@ -124,10 +124,33 @@ describe("openNudges", () => {
     expect(app.openNudges(plan(), done, "2026-09-09")).toEqual([]);
   });
 
-  it("has nothing to say without a plan", () => {
+  // Issue #243: this used to assert [] for both, which is the bug -- with no
+  // plan the badge could never say anything, however long nothing was logged.
+  it("nudges once with no plan and nothing logged this week", () => {
     const app = loadApp();
-    expect(app.openNudges(null, [], THURSDAY)).toEqual([]);
-    expect(app.openNudges({ days: [] }, [], THURSDAY)).toEqual([]);
+    for (const empty of [null, { days: [] }, plan({ days: plan().days.map((d: any) => ({ ...d, exercises: [], cardio: undefined })) })]) {
+      const out = app.openNudges(empty, [], THURSDAY);
+      expect(out.length).toBe(1);
+      expect(out[0].kind).toBe("unplanned");
+    }
+  });
+
+  it("clears the no-plan nudge with any session this week, today included", () => {
+    const app = loadApp();
+    expect(app.openNudges({ days: [] }, [session(MONDAY)], THURSDAY)).toEqual([]);
+    expect(app.openNudges({ days: [] }, [session(THURSDAY)], THURSDAY)).toEqual([]);
+  });
+
+  it("does not let last week's session clear the no-plan nudge", () => {
+    const app = loadApp();
+    expect(app.openNudges({ days: [] }, [session("2026-09-06")], THURSDAY).length).toBe(1);
+    // A future-dated row is not a session this week either.
+    expect(app.openNudges({ days: [] }, [session("2026-09-11")], THURSDAY).length).toBe(1);
+  });
+
+  it("never adds the no-plan nudge beside a real plan", () => {
+    const app = loadApp();
+    expect(app.openNudges(plan(), [], MONDAY).map((n: any) => n.kind)).toEqual(["today"]);
   });
 
   it("caps at two, so the badge is a nudge count and not a backlog", () => {
