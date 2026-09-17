@@ -2872,6 +2872,16 @@ function openNudges(plan, sessions, todayISO) {
       ? 'One session earlier this week is still unlogged.'
       : earlier + ' sessions earlier this week are still unlogged.' });
   }
+  // Both nudges above key off a training day in the plan, so with no plan they
+  // could never fire: from 09-13, when Edvard cleared the demo week, the badge
+  // stayed at zero whatever he did or did not log (issue #243). An empty plan
+  // gets one nudge of its own instead, and it still goes away without him
+  // answering it -- any session this week clears it, and Monday resets it.
+  if (!planTrainingDays(plan).length) {
+    let loggedThisWeek = false;
+    for (let iso = start; iso <= today; iso = shiftDay(iso, 1)) if (logged[iso]) loggedThisWeek = true;
+    if (!loggedThisWeek) nudges.push({ kind: 'unplanned', text: 'Nothing logged this week, and no plan to log against.' });
+  }
   return nudges;
 }
 
