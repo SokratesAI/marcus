@@ -1,8 +1,8 @@
 {
   "why": "marcus-kpi-browser-monolith in project-goals.md: the largest hand-written JS file Marcus serves to the page. It is a ratchet -- it may fall and must never rise. src/browser-size-ratchet.test.ts refuses a merge that moves it either way without changing this file, so growing the browser monolith is a line in a diff instead of a number a daily sweep notices the next morning.",
-  "measuredAt": "2026-09-17 12:15 Oslo",
+  "measuredAt": "2026-09-17 12:41 Oslo",
   "largestFile": "app.js",
-  "largestBytes": 282091,
+  "largestBytes": 283082,
   "kpiCeilingKB": 292,
   "kpiCeilingNote": "The KPI's high is 292 KB, declared 2026-09-14 from that day's reading. The file was over it from 2026-09-14 until 2026-09-16, when the demo-notice block moved to public/app-demo.js and brought it back under. This check deliberately does not fail on the KPI ceiling -- a permanently red suite is one nobody reads, and the gap is reported every sweep by tools.project_goals_check. What this check stops is the next kilobyte."
 }

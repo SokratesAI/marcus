@@ -32,6 +32,7 @@ function loadApp(opts: { fetch?: any } = {}): {
       content: { firstElementChild: { cloneNode: () => makeNode() } },
       appendChild() {},
       remove() {},
+      focus() {},
       addEventListener(name: string, fn: any) {
         (node.handlers ??= {})[name] = fn;
       },
@@ -287,5 +288,103 @@ describe("after a turn has finished", () => {
     ctx.store.set("chat", ctx.store.get("chat", []).concat([{ role: "user", text: "Og i morgen?", ts: 9 }]));
     ctx.renderChatMessages();
     expect(byId["chatMessages"].innerHTML).toContain("Ask again");
+  });
+});
+
+// Issue #244. The Ask again card has been under his cut-off background since
+// 09-13 and no answer came, because it waits for a tap. Opening Chat answers a
+// cut-off turn by itself now -- once per page load, and never a turn whose last
+// bubble is his, which may still be on its way from another device.
+describe("opening Chat on a cut-off thread", () => {
+  const CUT_THREAD = () => [
+    { role: "marcus", text: "Fortell meg om bakgrunnen din.", ts: 1 },
+    { role: "user", text: "Bakgrunnen min er at jeg er semi-aktiv.", ts: 2 },
+    { role: "marcus", text: CUT_OFF, ts: 3 },
+  ];
+
+  it("answers the question it was cut off on, once, without being asked", async () => {
+    const sent: any[] = [];
+    const { ctx, byId } = loadApp({
+      fetch: async (_url: string, init: any) => {
+        sent.push(JSON.parse(init.body));
+        return { ok: true, json: async () => ({ reply: "Takk. Her er det jeg ville gjort fram mot august." }) };
+      },
+    });
+    ctx.store.set("chat", CUT_THREAD());
+
+    await ctx.openChat();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message).toBe("Bakgrunnen min er at jeg er semi-aktiv.");
+    const chat = ctx.store.get("chat", []);
+    expect(chat).toHaveLength(4);
+    expect(chat.filter((m: any) => m.role === "user")).toHaveLength(1);
+    expect(chat[3]).toMatchObject({ role: "marcus", text: "Takk. Her er det jeg ville gjort fram mot august." });
+    expect(byId["chatMessages"].innerHTML).not.toContain("Ask again");
+
+    // Closing and opening again asks nothing: the thread is answered.
+    await ctx.openChat();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(1);
+  });
+
+  it("asks only once per page load when the coach does not answer", async () => {
+    let calls = 0;
+    const { ctx, byId } = loadApp({
+      fetch: async (url: string) => {
+        if (url === "/api/chat") calls += 1;
+        throw new Error("coach down");
+      },
+    });
+    ctx.store.set("chat", CUT_THREAD());
+
+    await ctx.openChat();
+    // The built-in rules answer after a 650-1150 ms pause.
+    await new Promise((r) => setTimeout(r, 1300));
+
+    // The rule-based line is not stored under his question, so the thread still
+    // ends on the cut-off bubble and the card is still there to tap.
+    expect(ctx.store.get("chat", [])).toHaveLength(3);
+    expect(byId["chatMessages"].innerHTML).toContain("Ask again");
+
+    await ctx.openChat();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(1);
+  });
+
+  it("sends nothing when the last bubble is his own", async () => {
+    const sent: any[] = [];
+    const { ctx } = loadApp({
+      fetch: async (_url: string, init: any) => {
+        sent.push(JSON.parse(init.body));
+        return { ok: true, json: async () => ({ reply: "hei" }) };
+      },
+    });
+    ctx.store.set("chat", [
+      { role: "marcus", text: "Hey!", ts: 1 },
+      { role: "user", text: "What should I do today?", ts: 2 },
+    ]);
+    await ctx.openChat();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(0);
+    expect(ctx.store.get("chat", [])).toHaveLength(2);
+  });
+
+  it("sends nothing on an answered thread", async () => {
+    const sent: any[] = [];
+    const { ctx } = loadApp({
+      fetch: async (_url: string, init: any) => {
+        sent.push(JSON.parse(init.body));
+        return { ok: true, json: async () => ({ reply: "hei" }) };
+      },
+    });
+    ctx.store.set("chat", [
+      { role: "user", text: "Hei", ts: 1 },
+      { role: "marcus", text: "Hei igjen!", ts: 2 },
+    ]);
+    await ctx.openChat();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(0);
   });
 });
