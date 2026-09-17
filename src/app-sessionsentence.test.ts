@@ -579,7 +579,10 @@ describe("the kilos reach the form, not just the summary", () => {
   });
 
   it("re-reads history when the exercise name is retyped", () => {
-    const { ctx, byId } = loadApp();
+    // Pinned to a Monday. On the real clock the log opens on today's plan row,
+    // and on a Thursday that row IS Back Squat, so the precondition below
+    // failed one day a week with nothing in the app having changed.
+    const { ctx, byId } = loadApp({ now: new Date(2026, 0, 12, 12) });
     ctx.store.set("plan", PLAN);
     ctx.store.set("sessions", [
       { id: "s1", date: "2026-01-05", kind: "strength", day: "Thursday",
