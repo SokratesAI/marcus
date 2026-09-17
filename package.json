@@ -24,7 +24,7 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/jsdom": "^30.0.0",
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.5.1",
     "@types/supertest": "^7.2.1",
     "jsdom": "^30.0.1",
     "supertest": "^7.0.0",
